@@ -12,22 +12,18 @@ var debug = false;
 
 const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
 
-// If modifying these scopes, delete token.json.
-//const SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"];
-const SCOPES = ["https://www.googleapis.com/auth/drive"];
-
-// The file token.json stores the user's access and refresh tokens, and is
-// created automatically when the authorization flow completes for the first
-// time.
+//this needs a setup
 const INTERVALL = 300; //Interval in seconds
-const TOKEN_PATH = path.join(process.cwd(), "token.json");
-const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json");
-const FOLDER_ID = process.env.DRIVE_FOLDER_ID;
-
+const FILE_FOLDER_NAME = "Adobe Scan";
 const ADOBE_USERNAME = process.env.ADOBE_USERNAME;
 const ADOBE_PASSWORD = process.env.ADOBE_PASSWORD;
-const FILE_FOLDER_NAME = "Adobe Scan";
+const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json");
+
+//dont need setup here
+const SCOPES = ["https://www.googleapis.com/auth/drive"];
 const COOKIES_FILE = "./cookies.json"; // Define path for where you will store the cookies
+const TOKEN_PATH = path.join(process.cwd(), "token.json");
+const FOLDER_ID = process.env.DRIVE_FOLDER_ID;
 
 function sleep(ms) {
   return new Promise((resolve) => {
