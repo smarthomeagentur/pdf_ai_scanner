@@ -32,23 +32,25 @@ function sleep(ms) {
 }
 
 async function init() {
-  //var loginState = await adobeLogin();
+  var isLoggedIn = await checkIfFileExists(COOKIES_FILE);
 
-  var loginState = { login: true }; //for testing
-
-  var googleClient = await authorize();
-  //var files = listFiles(googleClient);
-
-  if (loginState.login) {
+  if (isLoggedIn) {
+    var googleClient = await authorize();
     var driveData = await listNewestFiles(googleClient, FOLDER_ID);
     const fileNamesDrive = driveData.map((file) => file.name);
     var filesDownloaded = await adobeDownloadFile(fileNamesDrive);
-    if (filesDownloaded > 0) {
+
+    if (filesDownloaded.length > 0) {
       await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
       await emptyFolder(localDownloadFolder);
     }
+
     console.log("next run in " + INTERVALL + " seconds");
     return sleep(INTERVALL * 1000).then(() => init());
+  } else {
+    console.log("No credentials found. Do Adobe login");
+    await adobeLogin();
+    console.log("Adobe login done. Credentials saved. Please restart the script");
   }
 } //
 
@@ -105,32 +107,11 @@ async function authorize() {
   return client;
 }
 
-/**
- * Lists the names and IDs of up to 10 files.
- * @param {OAuth2Client} authClient An authorized OAuth2 client.
- */
-async function listFiles(authClient) {
-  const drive = google.drive({ version: "v3", auth: authClient });
-  const res = await drive.files.list({
-    pageSize: 10,
-    fields: "nextPageToken, files(id, name)",
-  });
-  const files = res.data.files;
-  if (files.length === 0) {
-    console.log("No files found.");
-    return;
-  }
-
-  console.log("Files:");
-  files.map((file) => {
-    console.log(`${file.name} (${file.id})`);
-  });
-}
-
-async function uploadFile(drive, filePath, folderId) {
+async function uploadFile(drive, filePath, folderId, name = undefined) {
   try {
+    let filename = name || path.basename(filePath);
     const fileMetadata = {
-      name: path.basename(filePath),
+      name: filename,
       parents: [folderId],
     };
     const media = {
@@ -142,7 +123,7 @@ async function uploadFile(drive, filePath, folderId) {
       media: media,
       fields: "id",
     });
-    if (debug) console.log(`Uploaded ${path.basename(filePath)} (ID: ${file.data.id})`);
+    if (debug) console.log(`Uploaded ${filename} (ID: ${file.data.id})`);
   } catch (error) {
     console.error(`Error uploading file ${filePath}:`, error);
   }
@@ -158,7 +139,7 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
     folderId = await findFolderId(drive, folderName);
     if (!folderId) {
       console.log(`Folder "${folderName}" not found.`);
-      return;
+      return { success: false, message: `Folder "${folderName}" not found.` };
     }
   }
 
@@ -276,6 +257,17 @@ async function emptyFolder(folderPath) {
   }
 }
 
+async function checkIfFileExists(filePath) {
+  try {
+    await fs.promises.access(filePath); // Check if the file is accessible
+    if (debug) console.log(`${filePath} exists.`);
+    return true;
+  } catch (error) {
+    if (debug) console.log(`${filePath} does not exist.`);
+    return false;
+  }
+}
+
 async function waitLoad(page) {
   return new Promise(async (resolve) => {
     try {
@@ -301,10 +293,9 @@ async function adobeLogin() {
     cookiesLoad = JSON.parse(cookiesString);
     await context.addCookies(cookiesLoad);
 
-    // 1. Navigate to Adobe Sign-in
-
+    // Navigate to Adobe Sign-in
     await page.goto("https://account.adobe.com");
-    await page.waitForLoadState("load");
+    await waitLoad(page);
     await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
 
     var checkUserLogin;
@@ -316,16 +307,13 @@ async function adobeLogin() {
       console.warn("Could not find the notificationIconOnEngine element within timeout period. Continuing without.");
     }
 
-    console.log(checkUserLogin);
-
     if (checkUserLogin > 0) return { login: true, loadedLogin: true };
 
-    // 2. Log in to your Adobe Account (Username)
+    // fill username
+    //TODO: update selectors
     await page.waitForSelector("#EmailPage-EmailField");
     await page.fill("#EmailPage-EmailField", ADOBE_USERNAME);
-
     await page.click("#EmailForm > section.EmailPage__submit.mod-submit > div.ta-right > button > span");
-
     await page.waitForSelector(
       "#App > div > div > section > div > div > section > div.Route > section > div > div > section.CardLayout.CardLayout--toaster-open > section.CardLayout__content > section.Page__actions.mt-xs-4 > button > span"
     );
@@ -333,12 +321,13 @@ async function adobeLogin() {
       "#App > div > div > section > div > div > section > div.Route > section > div > div > section.CardLayout.CardLayout--toaster-open > section.CardLayout__content > section.Page__actions.mt-xs-4 > button > span"
     );
 
+    // fill password
     await page.waitForSelector("#PasswordPage-PasswordField");
     await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
-
     await page.click("#PasswordForm > section.PasswordPage__action-buttons-wrapper > div:nth-child(2) > button > span");
 
-    await sleep(4000);
+    waitLoad(page);
+    await sleep(2000);
 
     const cookies = await context.cookies();
     await fs.promises.writeFile(COOKIES_FILE, JSON.stringify(cookies, null, 2));
@@ -467,13 +456,13 @@ async function adobeDownloadFile(filesArrayDrive) {
 
     //add logic to download the files
 
-    let downloadCount = 0;
+    var downloadedFilesArray = [];
     if (checkboxes.length > 0) {
       for (let index = 0; index < filesArrayAdobe.length; index++) {
         if (filesArrayAdobe[index].isDownloaded) {
+          downloadedFilesArray.push(filesArrayAdobe[index].fileName);
           await checkboxes[index].click();
           if (debug) console.log("File " + index + " Selected");
-          downloadCount++;
           await waitLoad(page);
         }
       }
@@ -481,8 +470,8 @@ async function adobeDownloadFile(filesArrayDrive) {
       console.warn("Could not find the checkboxes");
     }
 
-    if (downloadCount > 0) {
-      console.log("Files to Download: " + downloadCount);
+    if (downloadedFilesArray.length > 0) {
+      console.log("Files to Download: " + downloadedFilesArray.length);
       await page.waitForSelector('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]', { timeout: 10000 });
       await waitLoad(page);
       const downloadButton = await page.locator('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]').all();
@@ -500,7 +489,7 @@ async function adobeDownloadFile(filesArrayDrive) {
       }
     }
     await browser.close();
-    return downloadCount;
+    return downloadedFilesArray;
   } catch (error) {
     console.error("An error occurred:", error);
     await browser.close();

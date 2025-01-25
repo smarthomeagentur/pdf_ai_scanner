@@ -15,6 +15,11 @@ On the first login a browser will open and guide you trough the adobe login proc
 for google drive auth json check this: https://developers.google.com/drive/api/quickstart/nodejs . After you created this json best put it in the same folder as the script and set the path in the CREDENTIALS_PATH var.
 On the first start you will get the OAUTH Screen in your browser. select your google account and grand all the access to google drive. After that a token.json file will be created for login
 
+### PLAYWRIGHT WSL2
+
+dependencies
+sudo apt install libgtk-3-dev libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2 libgstreamer-plugins-bad1.0-0 gstreamer1.0-libav -y
+
 ### Notes
 
 The script is based on playwright. So you need to have a instance of it ready and setup. It definitly works also in WSL2 in windows 11.
