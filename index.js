@@ -1,0 +1,555 @@
+const { chromium } = require("playwright");
+const { authenticate } = require("@google-cloud/local-auth");
+const { google } = require("googleapis");
+const unzipper = require("unzipper");
+const fs = require("fs");
+const path = require("path");
+const process = require("process");
+const dotenv = require("dotenv");
+dotenv.config();
+
+var debug = false;
+
+const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
+
+// If modifying these scopes, delete token.json.
+//const SCOPES = ["https://www.googleapis.com/auth/drive.metadata.readonly"];
+const SCOPES = ["https://www.googleapis.com/auth/drive"];
+
+// The file token.json stores the user's access and refresh tokens, and is
+// created automatically when the authorization flow completes for the first
+// time.
+const INTERVALL = 300; //Interval in seconds
+const TOKEN_PATH = path.join(process.cwd(), "token.json");
+const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json");
+const FOLDER_ID = process.env.DRIVE_FOLDER_ID;
+
+const ADOBE_USERNAME = process.env.ADOBE_USERNAME;
+const ADOBE_PASSWORD = process.env.ADOBE_PASSWORD;
+const FILE_FOLDER_NAME = "Adobe Scan";
+const COOKIES_FILE = "./cookies.json"; // Define path for where you will store the cookies
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function init() {
+  //var loginState = await adobeLogin();
+
+  var loginState = { login: true }; //for testing
+
+  var googleClient = await authorize();
+  //var files = listFiles(googleClient);
+
+  if (loginState.login) {
+    var driveData = await listNewestFiles(googleClient, FOLDER_ID);
+    const fileNamesDrive = driveData.map((file) => file.name);
+    var filesDownloaded = await adobeDownloadFile(fileNamesDrive);
+    if (filesDownloaded > 0) {
+      await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
+      await emptyFolder(localDownloadFolder);
+    }
+    console.log("next run in " + INTERVALL + " seconds");
+    return sleep(INTERVALL * 1000).then(() => init());
+  }
+} //
+
+/**
+ * Reads previously authorized credentials from the save file.
+ *
+ * @return {Promise<OAuth2Client|null>}
+ */
+async function loadSavedCredentialsIfExist() {
+  try {
+    const content = await fs.promises.readFile(TOKEN_PATH);
+    const credentials = JSON.parse(content);
+    return google.auth.fromJSON(credentials);
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Serializes credentials to a file compatible with GoogleAuth.fromJSON.
+ *
+ * @param {OAuth2Client} client
+ * @return {Promise<void>}
+ */
+async function saveCredentials(client) {
+  const content = await fs.promises.readFile(CREDENTIALS_PATH);
+  const keys = JSON.parse(content);
+  const key = keys.installed || keys.web;
+  const payload = JSON.stringify({
+    type: "authorized_user",
+    client_id: key.client_id,
+    client_secret: key.client_secret,
+    refresh_token: client.credentials.refresh_token,
+  });
+  await fs.promises.writeFile(TOKEN_PATH, payload);
+}
+
+/**
+ * Load or request or authorization to call APIs.
+ *
+ */
+async function authorize() {
+  let client = await loadSavedCredentialsIfExist();
+  if (client) {
+    return client;
+  }
+  client = await authenticate({
+    scopes: SCOPES,
+    keyfilePath: CREDENTIALS_PATH,
+  });
+  if (client.credentials) {
+    await saveCredentials(client);
+  }
+  return client;
+}
+
+/**
+ * Lists the names and IDs of up to 10 files.
+ * @param {OAuth2Client} authClient An authorized OAuth2 client.
+ */
+async function listFiles(authClient) {
+  const drive = google.drive({ version: "v3", auth: authClient });
+  const res = await drive.files.list({
+    pageSize: 10,
+    fields: "nextPageToken, files(id, name)",
+  });
+  const files = res.data.files;
+  if (files.length === 0) {
+    console.log("No files found.");
+    return;
+  }
+
+  console.log("Files:");
+  files.map((file) => {
+    console.log(`${file.name} (${file.id})`);
+  });
+}
+
+async function uploadFile(drive, filePath, folderId) {
+  try {
+    const fileMetadata = {
+      name: path.basename(filePath),
+      parents: [folderId],
+    };
+    const media = {
+      mimeType: null,
+      body: fs.createReadStream(filePath), // Create a readable stream from the file path
+    };
+    const file = await drive.files.create({
+      resource: fileMetadata,
+      media: media,
+      fields: "id",
+    });
+    if (debug) console.log(`Uploaded ${path.basename(filePath)} (ID: ${file.data.id})`);
+  } catch (error) {
+    console.error(`Error uploading file ${filePath}:`, error);
+  }
+}
+
+async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFolderIdentifier) {
+  const drive = google.drive({ version: "v3", auth: authClient });
+  let folderId;
+  if (isValidGoogleDriveId(driveFolderIdentifier)) {
+    folderId = driveFolderIdentifier;
+  } else {
+    const folderName = driveFolderIdentifier;
+    folderId = await findFolderId(drive, folderName);
+    if (!folderId) {
+      console.log(`Folder "${folderName}" not found.`);
+      return;
+    }
+  }
+
+  try {
+    const files = await fs.promises.readdir(localFolderPath);
+    var uploadCount = 0;
+    for (const file of files) {
+      const filePath = path.join(localFolderPath, file);
+      const fileStat = await fs.promises.stat(filePath);
+      if (fileStat.isFile()) {
+        await uploadFile(drive, filePath, folderId);
+        uploadCount++;
+      } else if (fileStat.isDirectory()) {
+        console.log(`Skipping folder ${file}`);
+      }
+    }
+    console.log(`All (${uploadCount}) files from ${localFolderPath} uploaded to Google Drive folder with ID ${folderId}`);
+  } catch (error) {
+    console.error(`Error reading local folder or uploading files:`, error);
+  }
+}
+
+async function listNewestFiles(authClient, folderIdentifier, limit = 20) {
+  const drive = google.drive({ version: "v3", auth: authClient });
+  let folderId;
+  if (isValidGoogleDriveId(folderIdentifier)) {
+    folderId = folderIdentifier;
+  } else {
+    const folderName = folderIdentifier;
+    folderId = await findFolderId(drive, folderName);
+    if (!folderId) {
+      console.log(`Folder "${folderName}" not found.`);
+      return [];
+    }
+  }
+
+  let nextPageToken = null;
+  let allFiles = [];
+
+  do {
+    const res = await drive.files.list({
+      pageSize: 100, // Increased page size for efficiency
+      fields: "nextPageToken, files(id, name, modifiedTime)",
+      q: `'${folderId}' in parents`,
+      orderBy: "modifiedTime desc",
+      pageToken: nextPageToken,
+    });
+
+    if (res.data.files && res.data.files.length > 0) {
+      allFiles = allFiles.concat(res.data.files);
+    }
+
+    nextPageToken = res.data.nextPageToken;
+  } while (nextPageToken);
+
+  allFiles.sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
+  const newestFiles = allFiles.slice(0, limit);
+
+  return newestFiles;
+}
+
+async function findFolderId(drive, folderName) {
+  let nextPageToken = null;
+  do {
+    const res = await drive.files.list({
+      q: `mimeType='application/vnd.google-apps.folder' and name='${folderName}'`,
+      fields: "nextPageToken, files(id, name)",
+      pageToken: nextPageToken,
+    });
+    if (res.data.files && res.data.files.length > 0) {
+      return res.data.files[0].id;
+    }
+    nextPageToken = res.data.nextPageToken;
+  } while (nextPageToken);
+  return null;
+}
+
+function isValidGoogleDriveId(str) {
+  // A Google Drive ID is a string of alphanumeric characters and some special symbols
+  return typeof str === "string" && /^[a-zA-Z0-9_-]+$/.test(str) && str.length > 10;
+}
+
+async function emptyFolder(folderPath) {
+  try {
+    const folderExists = await fs.promises
+      .access(folderPath)
+      .then(() => true)
+      .catch(() => false);
+    if (!folderExists) {
+      console.error("Folder does not exist:", folderPath);
+      return;
+    }
+
+    // Read the contents of the folder
+    const files = await fs.promises.readdir(folderPath);
+
+    for (const file of files) {
+      const filePath = path.join(folderPath, file);
+      const stat = await fs.promises.lstat(filePath);
+
+      if (stat.isDirectory()) {
+        // Recursively remove subdirectory contents
+        await emptyFolder(filePath);
+        // Remove the directory itself
+        await fs.promises.rmdir(filePath);
+      } else {
+        // Delete the file
+        await fs.promises.unlink(filePath);
+      }
+    }
+
+    if (debug) console.log(`Emptied folder: ${folderPath}`);
+  } catch (error) {
+    console.error(`Error emptying folder: ${folderPath}`, error);
+  }
+}
+
+async function waitLoad(page) {
+  return new Promise(async (resolve) => {
+    try {
+      await page.waitForLoadState("domcontentloaded");
+      //await page.waitForLoadState("networkidle");
+      await sleep(1000);
+      resolve(true);
+    } catch (error) {
+      console.warn("timeout error");
+      resolve(false);
+    }
+  });
+}
+
+async function adobeLogin() {
+  const browser = await chromium.launch({ headless: false }); // Set to false to see the browser
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let cookiesLoad = [];
+
+  try {
+    const cookiesString = await fs.promises.readFile(COOKIES_FILE, "utf-8");
+    cookiesLoad = JSON.parse(cookiesString);
+    await context.addCookies(cookiesLoad);
+
+    // 1. Navigate to Adobe Sign-in
+
+    await page.goto("https://account.adobe.com");
+    await page.waitForLoadState("load");
+    await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
+
+    var checkUserLogin;
+    try {
+      // Wait for the specific element to be available on the page, if not found it will throw an exception.
+      await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
+      checkUserLogin = await page.locator("#notificationIconOnEngine > svg").count();
+    } catch (error) {
+      console.warn("Could not find the notificationIconOnEngine element within timeout period. Continuing without.");
+    }
+
+    console.log(checkUserLogin);
+
+    if (checkUserLogin > 0) return { login: true, loadedLogin: true };
+
+    // 2. Log in to your Adobe Account (Username)
+    await page.waitForSelector("#EmailPage-EmailField");
+    await page.fill("#EmailPage-EmailField", ADOBE_USERNAME);
+
+    await page.click("#EmailForm > section.EmailPage__submit.mod-submit > div.ta-right > button > span");
+
+    await page.waitForSelector(
+      "#App > div > div > section > div > div > section > div.Route > section > div > div > section.CardLayout.CardLayout--toaster-open > section.CardLayout__content > section.Page__actions.mt-xs-4 > button > span"
+    );
+    await page.click(
+      "#App > div > div > section > div > div > section > div.Route > section > div > div > section.CardLayout.CardLayout--toaster-open > section.CardLayout__content > section.Page__actions.mt-xs-4 > button > span"
+    );
+
+    await page.waitForSelector("#PasswordPage-PasswordField");
+    await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
+
+    await page.click("#PasswordForm > section.PasswordPage__action-buttons-wrapper > div:nth-child(2) > button > span");
+
+    await sleep(4000);
+
+    const cookies = await context.cookies();
+    await fs.promises.writeFile(COOKIES_FILE, JSON.stringify(cookies, null, 2));
+    console.log(`Cookies saved to: ${COOKIES_FILE}`);
+  } catch (error) {
+    console.error("An error occurred:", error);
+  } finally {
+    await browser.close();
+  }
+}
+async function adobeDownloadFile(filesArrayDrive) {
+  var settings;
+  if (debug) {
+    settings = { headless: false };
+  } else {
+    settings = { headless: true };
+  }
+  const browser = await chromium.launch(settings); // Set to false to see the browser
+  const context = await browser.newContext({
+    viewport: { width: 1500, height: 800 }, // Specify the browser viewport size
+  });
+  const page = await context.newPage();
+  let cookiesLoad = [];
+
+  try {
+    const cookiesString = await fs.promises.readFile(COOKIES_FILE, "utf-8");
+    cookiesLoad = JSON.parse(cookiesString);
+    await context.addCookies(cookiesLoad);
+
+    console.log("update files from adobe cloud");
+
+    // Navigate to Adobe Files and click Scan folder
+    await page.goto("https://acrobat.adobe.com/link/documents/files");
+
+    await waitLoad(page);
+
+    try {
+      await page.waitForSelector("#onetrust-accept-btn-handler", { timeout: 5000 }); //check for cookie notification
+      await page.click("#onetrust-accept-btn-handler");
+    } catch (error) {
+      if (debug) console.log("Skip Cookie notification");
+    }
+
+    try {
+      await page.waitForSelector('div[data-test-id="' + FILE_FOLDER_NAME + '"]', { timeout: 10000 }); //search file folder
+    } catch (error) {
+      console.warn("Error loading page, skipping download procedure. This may cause issues");
+      return;
+    }
+
+    await waitLoad(page);
+
+    if (debug) console.log("adobe files loaded");
+    const adobeScanFolder = page.locator('div[data-test-id="' + FILE_FOLDER_NAME + '"]').first();
+    if ((await adobeScanFolder.count()) > 0) {
+      if (debug) console.log(FILE_FOLDER_NAME + " folder found");
+      //You can do something with this folder, for instance click the folder to navigate inside
+      await adobeScanFolder.click();
+    } else {
+      console.warn(FILE_FOLDER_NAME + " folder not found.");
+    }
+    await waitLoad(page);
+
+    // Load the Files list and get the newest files
+    try {
+      await page.waitForSelector('div[data-scrollable="true"][role="rowgroup"] div[role="presentation"] div[role="presentation"]', {
+        timeout: 10000,
+      });
+    } catch (error) {
+      console.warn("Error loading list of files in the folder, skipping download procedure. This may cause issues");
+      return;
+    }
+    if (debug) console.log("Files List loaded");
+
+    await page.evaluate(() => {
+      document.body.style.transform = "scale(0.75)";
+    });
+
+    await waitLoad(page);
+    await sleep(4000);
+
+    const sortArrow = await page
+      .locator(
+        'div[data-test-id="table-view-wrapper"] div[role="row"] div[role="columnheader"][style*="display: flex;"][class*="spectrum-Table-headCell is-sortable"]:is([class*="is-sorted-asc"],[class*="is-sorted-desc"])'
+      )
+      .all();
+
+    const classNames = await sortArrow[0].evaluate((el) => el.className);
+
+    if (classNames.includes("is-sorted-asc")) {
+      console.log("The files are sorted in ascending order. Changing it");
+      //sortArrow.click();
+      await page.click('div[role="columnheader"] div[data-test-id="modified-table-header"]');
+      await waitLoad(page);
+      await page.click('div[role="presentation"] div[role="menuitem"][data-test-id="modified"]');
+      await waitLoad(page);
+    } else {
+      if (debug) console.log("The files are sorted in descending order. OK");
+    }
+
+    const items = await page.$$(
+      'div[data-scrollable="true"][role="rowgroup"] div[role="presentation"] div[role="presentation"] div[data-test-id][role="link"]'
+    );
+    var filesArrayAdobe = [];
+    for (const item of items.slice(0, 8)) {
+      let downloadFile = false;
+      const fileName = await item.getAttribute("data-test-id");
+
+      var isUpload = filesArrayDrive.indexOf(fileName);
+      if (isUpload < 0) downloadFile = true;
+
+      filesArrayAdobe.push({ fileName, isDownloaded: downloadFile });
+      if (debug) console.log(`File name: ${fileName} is download: ${downloadFile}`);
+    }
+
+    await waitLoad(page);
+
+    const checkboxes = await page
+      .locator(
+        'div[data-scrollable="true"][role="rowgroup"] div[role="presentation"] div[role="presentation"] input[type="checkbox"][class="spectrum-Checkbox-input"]'
+      )
+      .all();
+
+    const maxItemsToCheck = Math.min(checkboxes.length, filesArrayAdobe.length);
+    if (debug) console.log("Files Count: " + maxItemsToCheck);
+
+    //add logic to download the files
+
+    let downloadCount = 0;
+    if (checkboxes.length > 0) {
+      for (let index = 0; index < filesArrayAdobe.length; index++) {
+        if (filesArrayAdobe[index].isDownloaded) {
+          await checkboxes[index].click();
+          if (debug) console.log("File " + index + " Selected");
+          downloadCount++;
+          await waitLoad(page);
+        }
+      }
+    } else {
+      console.warn("Could not find the checkboxes");
+    }
+
+    if (downloadCount > 0) {
+      console.log("Files to Download: " + downloadCount);
+      await page.waitForSelector('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]', { timeout: 10000 });
+      await waitLoad(page);
+      const downloadButton = await page.locator('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]').all();
+
+      const [download] = await Promise.all([page.waitForEvent("download"), downloadButton[0].click()]);
+      const suggestedFilename = download.suggestedFilename();
+      const downloadPath = localDownloadFolder + `/${suggestedFilename}`;
+      await download.saveAs(downloadPath);
+      if (debug) console.log(`Downloaded: ${downloadPath}`);
+
+      if (suggestedFilename.endsWith(".zip")) {
+        if (debug) console.log("The filename ends with .zip. Doing a decompression first.");
+        await decompressAndMove(downloadPath);
+        fs.unlinkSync(downloadPath);
+      }
+    }
+    await browser.close();
+    return downloadCount;
+  } catch (error) {
+    console.error("An error occurred:", error);
+    await browser.close();
+  }
+}
+
+async function decompressFile(inputPath, outputPath) {
+  return new Promise((resolve) => {
+    fs.createReadStream(inputPath)
+      .pipe(unzipper.Extract({ path: outputPath }))
+      .on("close", () => {
+        console.log("Files unzipped successfully");
+        resolve(true);
+      });
+  });
+}
+
+async function decompressAndMove(inputPath) {
+  // Get the directory where the .zip file is located
+  const outputPath = path.dirname(inputPath);
+
+  return new Promise((resolve, reject) => {
+    fs.createReadStream(inputPath)
+      .pipe(unzipper.Parse()) // Parse each entry in the zip file
+      .on("entry", async (entry) => {
+        const entryName = entry.path;
+        const isInsideFolder = entryName.startsWith("Document Cloud/"); // Check if entry is inside "Document Cloud"
+
+        if (entry.type === "File" && isInsideFolder) {
+          const fileName = path.basename(entryName); // Extract file name
+          const outputFilePath = path.join(outputPath, fileName);
+          entry.pipe(fs.createWriteStream(outputFilePath));
+        } else {
+          entry.autodrain(); // Skip entries not in "Document Cloud"
+        }
+      })
+      .on("close", () => {
+        console.log("Files successfully extracted and moved.");
+        resolve(true);
+      })
+      .on("error", (err) => {
+        console.error("Error during extraction:", err);
+        reject(err);
+      });
+  });
+}
+
+init();

@@ -1,0 +1,8 @@
+/.env
+/adobe_cloud_downloader.code-workspace
+/cookies.json
+/downloads
+/gdrive_secret copy.json
+/gdrive_secret.json
+/node_modules
+/token.json

@@ -1,0 +1,23 @@
+{
+  "name": "adobe_cloud_downloader",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@google-cloud/local-auth": "^2.1.0",
+    "dotenv": "^16.4.7",
+    "googleapis": "^105.0.0",
+    "playwright": "^1.50.0",
+    "unzipper": "^0.12.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}
