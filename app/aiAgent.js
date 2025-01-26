@@ -12,7 +12,7 @@ async function generatePdfName(filename) {
 
   var fileTags = await getFilenameSuggestion(text);
   const category = fileTags.slice(0, 1).join("");
-  var firstThreeWords = fileTags.slice(1, 4).join("");
+  var firstThreeWords = fileTags.slice(1, 4).join(" ");
   firstThreeWords = firstThreeWords.trim();
 
   var company = await getCompanyName(text);
