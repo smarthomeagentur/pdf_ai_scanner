@@ -12,8 +12,10 @@
   "description": "",
   "dependencies": {
     "@google-cloud/local-auth": "^2.1.0",
+    "@huggingface/inference": "^3.1.2",
     "dotenv": "^16.4.7",
     "googleapis": "^105.0.0",
+    "pdf-parse": "^1.1.1",
     "playwright": "^1.50.0",
     "unzipper": "^0.12.3"
   },

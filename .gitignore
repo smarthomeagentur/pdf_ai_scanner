@@ -6,3 +6,4 @@
 /gdrive_secret.json
 /node_modules
 /token.json
+*.pdf

@@ -6,9 +6,12 @@ const fs = require("fs");
 const path = require("path");
 const process = require("process");
 const dotenv = require("dotenv");
+var aiAgent = require("./app/aiAgent.js");
+
 dotenv.config();
 
 var debug = false;
+var firststart = true;
 
 const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
 
@@ -18,12 +21,14 @@ const FILE_FOLDER_NAME = "Adobe Scan";
 const ADOBE_USERNAME = process.env.ADOBE_USERNAME;
 const ADOBE_PASSWORD = process.env.ADOBE_PASSWORD;
 const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json");
+const FOLDER_ID = process.env.DRIVE_FOLDER_ID; //ID of drive folder to sync to
+const FOLDER_ID_SORTED = process.env.DRIVE_FOLDER_ID_SORTED; //ID to Upload renamed sorted files
 
 //dont need setup here
 const SCOPES = ["https://www.googleapis.com/auth/drive"];
 const COOKIES_FILE = "./cookies.json"; // Define path for where you will store the cookies
 const TOKEN_PATH = path.join(process.cwd(), "token.json");
-const FOLDER_ID = process.env.DRIVE_FOLDER_ID;
+const HUGGING_FACE_API_KEY = process.env.HUGGING_FACE_API_KEY;
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -32,10 +37,17 @@ function sleep(ms) {
 }
 
 async function init() {
+  if (firststart) {
+    firststart = false;
+    aiAgent.init(HUGGING_FACE_API_KEY);
+  }
+
   var isLoggedIn = await checkIfFileExists(COOKIES_FILE);
+  //var filesDownloaded = ["a"]; //DEBUG
 
   if (isLoggedIn) {
     var googleClient = await authorize();
+
     var driveData = await listNewestFiles(googleClient, FOLDER_ID);
     const fileNamesDrive = driveData.map((file) => file.name);
     var filesDownloaded = await adobeDownloadFile(fileNamesDrive);
@@ -151,6 +163,11 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
       const fileStat = await fs.promises.stat(filePath);
       if (fileStat.isFile()) {
         await uploadFile(drive, filePath, folderId);
+        if (FOLDER_ID_SORTED) {
+          var sortedName = await aiAgent.getPdfName(filePath);
+          console.log(sortedName);
+          await uploadFile(drive, filePath, FOLDER_ID_SORTED, sortedName.full);
+        }
         uploadCount++;
       } else if (fileStat.isDirectory()) {
         console.log(`Skipping folder ${file}`);
