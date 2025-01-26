@@ -41,14 +41,17 @@ async function init() {
     firststart = false;
     aiAgent.init(HUGGING_FACE_API_KEY);
   }
+  //var sortedName = await aiAgent.getPdfName("1.pdf");
+  //console.log(sortedName);
+  //var filesDownloaded = ["a"]; //DEBUG
+  //return;
 
   var isLoggedIn = await checkIfFileExists(COOKIES_FILE);
-  //var filesDownloaded = ["a"]; //DEBUG
 
   if (isLoggedIn) {
     var googleClient = await authorize();
 
-    var driveData = await listNewestFiles(googleClient, FOLDER_ID);
+    var driveData = await listNewestFiles(googleClient, FOLDER_ID, 50);
     const fileNamesDrive = driveData.map((file) => file.name);
     var filesDownloaded = await adobeDownloadFile(fileNamesDrive);
 

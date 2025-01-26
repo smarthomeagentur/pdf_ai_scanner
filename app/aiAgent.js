@@ -14,6 +14,7 @@ async function generatePdfName(filename) {
   const category = fileTags.slice(0, 1).join("");
   var firstThreeWords = fileTags.slice(1, 4).join(" ");
   firstThreeWords = firstThreeWords.trim();
+  firstThreeWords = firstThreeWords.replace(/\s{2,}/g, " ");
 
   var company = await getCompanyName(text);
 
