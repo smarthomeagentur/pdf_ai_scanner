@@ -72,10 +72,10 @@ async function getCompanyName(text) {
       .map((entity) => entity.word); // Extract merged entity words
 
     var companyName = "unbekannt";
+    if (await containsAnyMatch(personName, searchTermsDaniel)) companyName = "daniel";
     if (await containsAnyMatch(companyNames, searchTermsTheWire)) companyName = "the wire";
     if (await containsAnyMatch(companyNames, searchTermsPolyxo)) companyName = "polyxo";
     if (await containsAnyMatch(companyNames, searchTermsWireWire)) companyName = "wirewire";
-    if (await containsAnyMatch(personName, searchTermsDaniel)) companyName = "daniel";
 
     resolve(companyName);
   });

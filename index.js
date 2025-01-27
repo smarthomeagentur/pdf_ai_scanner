@@ -56,7 +56,8 @@ async function init() {
     var filesDownloaded = await adobeDownloadFile(fileNamesDrive);
 
     if (filesDownloaded.length > 0) {
-      await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
+      var success = await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
+      if (!success) return;
       await emptyFolder(localDownloadFolder);
     }
 
@@ -165,20 +166,22 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
       const filePath = path.join(localFolderPath, file);
       const fileStat = await fs.promises.stat(filePath);
       if (fileStat.isFile()) {
-        await uploadFile(drive, filePath, folderId);
         if (FOLDER_ID_SORTED) {
           var sortedName = await aiAgent.getPdfName(filePath);
           console.log(sortedName);
           await uploadFile(drive, filePath, FOLDER_ID_SORTED, sortedName.full);
         }
+        await uploadFile(drive, filePath, folderId);
         uploadCount++;
       } else if (fileStat.isDirectory()) {
         console.log(`Skipping folder ${file}`);
       }
     }
     console.log(`All (${uploadCount}) files from ${localFolderPath} uploaded to Google Drive folder with ID ${folderId}`);
+    return true;
   } catch (error) {
     console.error(`Error reading local folder or uploading files:`, error);
+    return false;
   }
 }
 
