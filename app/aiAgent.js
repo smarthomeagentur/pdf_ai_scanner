@@ -23,10 +23,10 @@ async function generatePdfName(filename) {
 }
 
 async function getCompanyName(text) {
-  const searchTermsTheWire = ["the wir", "thewir", "he wire", "hewir"];
-  const searchTermsPolyxo = ["poly", "lyxo", "polyxo"];
-  const searchTermsWireWire = ["wirewire", "wire wire", "ire wir"];
-  const searchTermsDaniel = ["daniel", "daniel b", "boebe", "böber"];
+  const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
+  const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
+  const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew"];
+  const searchTermsDaniel = ["daniel", "daniel b", "boebe", "böbe"];
 
   return new Promise(async (resolve) => {
     const result = await hf.request({
