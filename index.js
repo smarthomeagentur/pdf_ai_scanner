@@ -55,7 +55,7 @@ async function init() {
     const fileNamesDrive = driveData.map((file) => file.name);
     var filesDownloaded = await adobeDownloadFile(fileNamesDrive);
 
-    if (filesDownloaded.length > 0) {
+    if (filesDownloaded?.length > 0) {
       var success = await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
       if (!success) return;
       await emptyFolder(localDownloadFolder);
