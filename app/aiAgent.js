@@ -93,7 +93,7 @@ function setFileDate(fileName) {
     const year = dateMatch[3].slice(2); // Extract last 2 digits of year (e.g., 25)
 
     // Combine into desired format
-    const formattedDate = `${day}${month}${year}`;
+    const formattedDate = `${year}${month}${day}`;
     return formattedDate;
     // Output: "200125"
   } else {
@@ -105,7 +105,7 @@ function setFileDate(fileName) {
     const year = String(today.getFullYear()).slice(2); // Get last 2 digits of year
 
     // Combine into the desired format
-    const formattedDate = `${day}${month}${year}`;
+    const formattedDate = `${year}${month}${day}`;
 
     return formattedDate;
   }
