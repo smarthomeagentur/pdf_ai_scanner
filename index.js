@@ -36,14 +36,18 @@ function sleep(ms) {
 }
 
 async function init() {
-  if (firststart) {
-    firststart = false;
-    aiAgent.init(HUGGING_FACE_API_KEY);
-  }
   console.log("starting script");
 
-  //var sortedName = await aiAgent.getPdfName("8.pdf");
-  //console.log(sortedName);
+  if (firststart) {
+    firststart = false;
+    aiAgent.init(HUGGING_FACE_API_KEY, debug);
+  }
+
+  /*for (var i = 1; i <= 14; i++) {
+    var sortedName = await aiAgent.getPdfName(i + ".pdf");
+    console.log(sortedName);
+  }*/
+
   //var filesDownloaded = ["a"]; //DEBUG
   //return;
 
