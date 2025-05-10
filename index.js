@@ -5,10 +5,11 @@ const path = require("path");
 const process = require("process");
 const dotenv = require("dotenv");
 var aiAgent = require("./app/aiAgent.js");
+const { google } = require("googleapis");
 
 dotenv.config();
 
-var debug = true;
+var debug = false;
 var firststart = true;
 
 const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
@@ -146,7 +147,6 @@ async function uploadFile(drive, filePath, folderId, name = undefined) {
 }
 
 async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFolderIdentifier) {
-  const { google } = require("googleapis");
   const drive = google.drive({ version: "v3", auth: authClient });
   let folderId;
   if (isValidGoogleDriveId(driveFolderIdentifier)) {
@@ -190,7 +190,6 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
 }
 
 async function listNewestFiles(authClient, folderIdentifier, limit = 20) {
-  const { google } = require("googleapis");
   const drive = google.drive({ version: "v3", auth: authClient });
   let folderId;
   if (isValidGoogleDriveId(folderIdentifier)) {
