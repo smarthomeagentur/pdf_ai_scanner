@@ -1,6 +1,4 @@
-const { chromium } = require("playwright");
 const { authenticate } = require("@google-cloud/local-auth");
-const { google } = require("googleapis");
 const unzipper = require("unzipper");
 const fs = require("fs");
 const path = require("path");
@@ -10,7 +8,7 @@ var aiAgent = require("./app/aiAgent.js");
 
 dotenv.config();
 
-var debug = false;
+var debug = true;
 var firststart = true;
 
 const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
@@ -41,7 +39,9 @@ async function init() {
     firststart = false;
     aiAgent.init(HUGGING_FACE_API_KEY);
   }
-  //var sortedName = await aiAgent.getPdfName("1.pdf");
+  console.log("starting script");
+
+  //var sortedName = await aiAgent.getPdfName("8.pdf");
   //console.log(sortedName);
   //var filesDownloaded = ["a"]; //DEBUG
   //return;
@@ -57,7 +57,7 @@ async function init() {
 
     if (filesDownloaded?.length > 0) {
       var success = await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
-      if (!success) return;
+      if (!success) sleep(INTERVALL * 1000).then(() => init());
       await emptyFolder(localDownloadFolder);
     }
 
@@ -146,6 +146,7 @@ async function uploadFile(drive, filePath, folderId, name = undefined) {
 }
 
 async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFolderIdentifier) {
+  const { google } = require("googleapis");
   const drive = google.drive({ version: "v3", auth: authClient });
   let folderId;
   if (isValidGoogleDriveId(driveFolderIdentifier)) {
@@ -169,6 +170,7 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
         if (FOLDER_ID_SORTED) {
           var sortedName = await aiAgent.getPdfName(filePath);
           console.log(sortedName);
+          if (sortedName.success == false) return false;
           await uploadFile(drive, filePath, FOLDER_ID_SORTED, sortedName.full);
         }
         await uploadFile(drive, filePath, folderId);
@@ -177,7 +179,9 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
         console.log(`Skipping folder ${file}`);
       }
     }
-    console.log(`All (${uploadCount}) files from ${localFolderPath} uploaded to Google Drive folder with ID ${folderId}`);
+    console.log(
+      `All (${uploadCount}) files from ${localFolderPath} uploaded to Google Drive folder with ID ${folderId}`
+    );
     return true;
   } catch (error) {
     console.error(`Error reading local folder or uploading files:`, error);
@@ -186,6 +190,7 @@ async function uploadFilesFromLocalFolder(authClient, localFolderPath, driveFold
 }
 
 async function listNewestFiles(authClient, folderIdentifier, limit = 20) {
+  const { google } = require("googleapis");
   const drive = google.drive({ version: "v3", auth: authClient });
   let folderId;
   if (isValidGoogleDriveId(folderIdentifier)) {
@@ -306,6 +311,7 @@ async function waitLoad(page) {
 }
 
 async function adobeLogin() {
+  const { chromium } = require("playwright");
   const browser = await chromium.launch({ headless: false }); // Set to false to see the browser
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -362,6 +368,7 @@ async function adobeLogin() {
   }
 }
 async function adobeDownloadFile(filesArrayDrive) {
+  const { chromium } = require("playwright");
   var settings;
   if (debug) {
     settings = { headless: false };
@@ -416,9 +423,12 @@ async function adobeDownloadFile(filesArrayDrive) {
 
     // Load the Files list and get the newest files
     try {
-      await page.waitForSelector('div[data-scrollable="true"][role="rowgroup"] div[role="presentation"] div[role="presentation"]', {
-        timeout: 10000,
-      });
+      await page.waitForSelector(
+        'div[data-scrollable="true"][role="rowgroup"] div[role="presentation"] div[role="presentation"]',
+        {
+          timeout: 10000,
+        }
+      );
     } catch (error) {
       console.warn("Error loading list of files in the folder, skipping download procedure. This may cause issues");
       return;
@@ -495,9 +505,14 @@ async function adobeDownloadFile(filesArrayDrive) {
 
     if (downloadedFilesArray.length > 0) {
       console.log("Files to Download: " + downloadedFilesArray.length);
-      await page.waitForSelector('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]', { timeout: 10000 });
+      await page.waitForSelector(
+        'div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]',
+        { timeout: 10000 }
+      );
       await waitLoad(page);
-      const downloadButton = await page.locator('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]').all();
+      const downloadButton = await page
+        .locator('div[data-test-id="context-board-wrapper"] button[data-test-id="download-action-button"]')
+        .all();
 
       const [download] = await Promise.all([page.waitForEvent("download"), downloadButton[0].click()]);
       const suggestedFilename = download.suggestedFilename();

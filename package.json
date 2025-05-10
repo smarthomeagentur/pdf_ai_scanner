@@ -16,7 +16,7 @@
     "dotenv": "^16.4.7",
     "googleapis": "^105.0.0",
     "pdf-parse": "^1.1.1",
-    "playwright": "^1.50.0",
+    "playwright": "^1.52.0",
     "unzipper": "^0.12.3"
   },
   "devDependencies": {
