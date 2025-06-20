@@ -40,6 +40,22 @@ async function init() {
 
   if (firststart) {
     firststart = false;
+    const args = process.argv.slice(2);
+    console.log(args);
+    if (args.includes("--debug")) {
+      debug = true;
+      console.log("[START] Debug mode enabled");
+    }
+    if (args.includes("--login")) {
+      console.log("[START] Do Adobe Login Script");
+      var isLoggedIn = await checkIfFileExists(COOKIES_FILE);
+      if (isLoggedIn) {
+        console.log("[START] Cookies already exist. Resetting them...");
+        await fs.promises.unlink(COOKIES_FILE);
+      }
+      await adobeLogin();
+      return true;
+    }
     aiAgent.init(HUGGING_FACE_API_KEY, debug);
   }
 
@@ -69,9 +85,7 @@ async function init() {
     console.log("next run in " + INTERVALL + " seconds");
     return sleep(INTERVALL * 1000).then(() => init());
   } else {
-    console.log("No credentials found. Do Adobe login");
-    await adobeLogin();
-    console.log("Adobe login done. Credentials saved. Please restart the script");
+    console.log("No credentials found. Do Adobe login via --login parameter");
   }
 } //
 
@@ -321,14 +335,14 @@ async function adobeLogin() {
   let cookiesLoad = [];
 
   try {
-    const cookiesString = await fs.promises.readFile(COOKIES_FILE, "utf-8");
-    cookiesLoad = JSON.parse(cookiesString);
-    await context.addCookies(cookiesLoad);
+    //const cookiesString = await fs.promises.readFile(COOKIES_FILE, "utf-8");
+    //cookiesLoad = JSON.parse(cookiesString);
+    //await context.addCookies(cookiesLoad);
 
     // Navigate to Adobe Sign-in
     await page.goto("https://account.adobe.com");
     await waitLoad(page);
-    await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
+    //await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
 
     var checkUserLogin;
     try {
@@ -336,36 +350,45 @@ async function adobeLogin() {
       await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
       checkUserLogin = await page.locator("#notificationIconOnEngine > svg").count();
     } catch (error) {
-      console.warn("Could not find the notificationIconOnEngine element within timeout period. Continuing without.");
+      console.warn("[LOGIN] Not logged in, continuing with login procedure");
     }
 
     if (checkUserLogin > 0) return { login: true, loadedLogin: true };
 
     // fill username
-    //TODO: update selectors
     await page.waitForSelector("#EmailPage-EmailField");
     await page.fill("#EmailPage-EmailField", ADOBE_USERNAME);
-    await page.click("#EmailForm > section.EmailPage__submit.mod-submit > div.ta-right > button > span");
-    await page.waitForSelector(
-      "#App > div > div > section > div > div > section > div.Route > section > div > div > section.CardLayout.CardLayout--toaster-open > section.CardLayout__content > section.Page__actions.mt-xs-4 > button > span"
-    );
-    await page.click(
-      "#App > div > div > section > div > div > section > div.Route > section > div > div > section.CardLayout.CardLayout--toaster-open > section.CardLayout__content > section.Page__actions.mt-xs-4 > button > span"
-    );
+    await page.click('[data-id="EmailPage-ContinueButton"]');
 
-    // fill password
-    await page.waitForSelector("#PasswordPage-PasswordField");
-    await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
-    await page.click("#PasswordForm > section.PasswordPage__action-buttons-wrapper > div:nth-child(2) > button > span");
-
-    waitLoad(page);
-    await sleep(2000);
-
+    // fill password if asked
+    var isPasswordPage = false;
+    try {
+      await page.waitForSelector("#PasswordPage-PasswordField", { timeout: 10000 });
+      isPasswordPage = true;
+    } catch (error) {
+      isPasswordPage = false;
+    }
+    if (isPasswordPage) {
+      console.log("[LOGIN] insert password");
+      await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
+      await page.click('[data-id="PasswordPage-ContinueButton"]');
+      waitLoad(page);
+    } else {
+      console.log("[LOGIN] No password page found, continuing without. Please fill email code");
+      await page.click('[data-id="Page-PrimaryButton"]');
+      waitLoad(page);
+      await page.waitForSelector("#PasswordPage-PasswordField", { timeout: 60000 });
+      console.log("[LOGIN] insert password");
+      await sleep(2000);
+      await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
+      await page.click('[data-id="PasswordPage-ContinueButton"]');
+    }
+    await sleep(10000);
     const cookies = await context.cookies();
     await fs.promises.writeFile(COOKIES_FILE, JSON.stringify(cookies, null, 2));
-    console.log(`Cookies saved to: ${COOKIES_FILE}`);
+    console.log(`[LOGIN] Cookies saved to: ${COOKIES_FILE}`);
   } catch (error) {
-    console.error("An error occurred:", error);
+    console.error("[LOGIN] An error occurred:", error);
   } finally {
     await browser.close();
   }
