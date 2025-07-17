@@ -59,7 +59,7 @@ async function init() {
     aiAgent.init(HUGGING_FACE_API_KEY, debug);
   }
 
-  /*for (var i = 1; i <= 14; i++) {
+  /*for (var i = 1; i <= 5; i++) {
     var sortedName = await aiAgent.getPdfName(i + ".pdf");
     console.log(sortedName);
   }*/

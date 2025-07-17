@@ -1,7 +1,7 @@
 const fs = require("fs");
 const pdf = require("pdf-parse");
 
-const { HfInference } = require("@huggingface/inference");
+const { InferenceClient } = require("@huggingface/inference");
 var hf; //hugging face client
 debug = false;
 
@@ -11,8 +11,10 @@ async function generatePdfName(filename) {
   var pdfData = await extractTextFromPdf(filename);
   var text = pdfData.substring(0, 700);
   if (debug) console.log("[AI] PDF Text text extracted");
+  if (debug) console.log(text);
   var fileTags = false;
   for (var i = 0; i < 5; i++) {
+    if (debug) console.log("[AI] Try File Name Loop: " + i);
     fileTags = await getFilenameSuggestion(text);
     if (fileTags != false) break;
   }
@@ -61,11 +63,11 @@ async function getCompanyName(text, model) {
   return new Promise(async (resolve) => {
     var result;
     try {
-      result = await hf.request({
-        inputs: text,
-        options: { wait_for_model: true },
-        //model: "dbmdz/bert-large-cased-finetuned-conll03-english",
+      result = await hf.tokenClassification({
         model: model,
+        inputs: text,
+        provider: "hf-inference",
+        options: { wait_for_model: true },
       });
     } catch (err) {
       console.log("Error generating company name:", err);
@@ -158,7 +160,7 @@ async function getFilenameSuggestion(pdfText) {
     return ["keine Inhalte", "unbekannt"];
   }
   const instruction =
-    "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Hier ist der Inhalt:\n " +
+    "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Hier ist der Inhalt:\n " +
     pdfText;
 
   try {
@@ -171,14 +173,17 @@ async function getFilenameSuggestion(pdfText) {
           content: instruction,
         },
       ],
-      provider: "hf-inference",
-      max_tokens: 800,
     });
+    if (debug) console.log(chatCompletion);
+    if (debug) console.log(chatCompletion.choices[0].message);
+    var chatString;
 
     var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
     chatString = chatString.trimStart();
-    const wordsArray = chatString.split(",");
+    chatString = chatString.split(",");
 
+    if (debug) console.log(chatString);
+    const wordsArray = chatString;
     return wordsArray;
   } catch (err) {
     console.log("Error generating filename suggestion:", err);
@@ -203,8 +208,6 @@ async function getCompanySuggestion(pdfText) {
           content: instruction,
         },
       ],
-      provider: "hf-inference",
-      max_tokens: 800,
     });
 
     var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
@@ -248,7 +251,7 @@ async function extractTextFromPdf(pdfPath) {
 
 module.exports = {
   init: function (api_key, setDebug = false) {
-    hf = new HfInference(api_key); // Replace with your Hugging Face API key
+    hf = new InferenceClient(api_key); // Replace with your Hugging Face API key
     debug = setDebug;
     return true;
   },
