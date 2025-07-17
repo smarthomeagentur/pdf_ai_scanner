@@ -84,12 +84,19 @@ async function init() {
 
     if (filesDownloaded?.length > 0) {
       var success = await uploadFilesFromLocalFolder(googleClient, localDownloadFolder, FOLDER_ID);
-      if (!success) sleep(INTERVALL * 1000).then(() => init());
+      if (!success)
+        sleep(INTERVALL * 1000).then(() => {
+          init();
+          return;
+        });
       await emptyFolder(localDownloadFolder);
     }
 
     console.log("next run in " + INTERVALL + " seconds");
-    return sleep(INTERVALL * 1000).then(() => init());
+    return sleep(INTERVALL * 1000).then(() => {
+      init();
+      return;
+    });
   } else {
     console.log("No credentials found. Do Adobe login via --login parameter");
   }
