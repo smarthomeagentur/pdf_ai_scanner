@@ -3,7 +3,7 @@ const pdf = require("pdf-parse");
 
 const { InferenceClient } = require("@huggingface/inference");
 var hf; //hugging face client
-debug = false;
+var debug = false;
 
 async function generatePdfName(filename) {
   var pdfFileName = "";
@@ -11,7 +11,7 @@ async function generatePdfName(filename) {
   var pdfData = await extractTextFromPdf(filename);
   var text = pdfData.substring(0, 700);
   if (debug) console.log("[AI] PDF Text text extracted");
-  if (debug) console.log(text);
+  //if (debug) console.log(text);
   var fileTags = false;
   for (var i = 0; i < 5; i++) {
     if (debug) console.log("[AI] Try File Name Loop: " + i);
@@ -21,13 +21,13 @@ async function generatePdfName(filename) {
   if (fileTags == false) return { success: false };
 
   if (debug) console.log("[AI] PDF Tags: ", fileTags);
-
   const category = fileTags.slice(0, 1).join("");
   var firstThreeWords = fileTags.slice(1, 4).join(" ");
   firstThreeWords = firstThreeWords.trim();
   firstThreeWords = firstThreeWords.replace(/\s{2,}/g, " ");
 
-  var company = false;
+  var company = await getCompanySuggestion(text);
+
   var models = [
     "Jean-Baptiste/roberta-large-ner-english",
     "dbmdz/bert-large-cased-finetuned-conll03-english",
@@ -35,12 +35,11 @@ async function generatePdfName(filename) {
   ];
   var selector = 0;
   for (var i = 0; i < 5; i++) {
+    if (company != false && company != "unbekannt") break;
     company = await getCompanyName(text, models[selector]);
     console.log("[AI] PDF Company: ", company, " Model: ", models[selector]);
-    if (company != false && company != "unbekannt") break;
     if (selector == 2 && company != false) {
-      company = await getCompanySuggestion(text);
-      console.log("[AI] PDF Company Backup: ", company);
+      company = "unbekannt";
       break;
     }
     selector++;
@@ -166,7 +165,8 @@ async function getFilenameSuggestion(pdfText) {
   try {
     const chatCompletion = await hf.chatCompletion({
       //model: "microsoft/Phi-3.5-mini-instruct",
-      model: "microsoft/phi-4",
+      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      provider: "together",
       messages: [
         {
           role: "user",
@@ -175,7 +175,7 @@ async function getFilenameSuggestion(pdfText) {
       ],
     });
     if (debug) console.log(chatCompletion);
-    if (debug) console.log(chatCompletion.choices[0].message);
+    if (debug) console.log("[AI] AI Response: " + chatCompletion.choices[0].message.content);
     var chatString;
 
     var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
@@ -193,7 +193,7 @@ async function getFilenameSuggestion(pdfText) {
 
 async function getCompanySuggestion(pdfText) {
   if (pdfText.length < 100) {
-    return "unbekannt";
+    return false;
   }
   const instruction =
     "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir die Firma oder Person nennst, an welche das Dokument gerichtet ist. Antworte nur mit diesen Möglichkeiten: wirewire, the wire, polyxo, daniel oder unbekannt, wenn keine der vorherigen passt. Gib mir nur die Zugehörigkeit als Wörter zurück. Hier ist der Inhalt:\n " +
@@ -201,7 +201,8 @@ async function getCompanySuggestion(pdfText) {
 
   try {
     const chatCompletion = await hf.chatCompletion({
-      model: "microsoft/phi-4",
+      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      provider: "together",
       messages: [
         {
           role: "user",
@@ -210,23 +211,36 @@ async function getCompanySuggestion(pdfText) {
       ],
     });
 
-    var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
-    chatString = chatString.trimStart();
-    const wordsArray = chatString.split(",");
+    var chatMessage = chatCompletion.choices[0].message.content;
 
-    switch (wordsArray[0]) {
-      case "daniel":
-      case "the wire":
-      case "polyxo":
-      case "wirewire":
-        return wordsArray[0]; // Return the matched string
-      default:
-        return "unbekannt";
-    }
+    if (debug) console.log(chatCompletion);
+    if (debug) console.log("[AI] Chat Message: " + chatMessage);
+
+    const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
+    const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
+    const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
+    const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
+
+    var companyName = false;
+
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsDaniel, "daniel");
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsTheWire, "the wire");
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsPolyxo, "polyxo");
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsWireWire, "wirewire");
+    return companyName;
   } catch (err) {
     console.log("Error generating filename suggestion:", err);
     return false;
   }
+}
+
+function searchNameInText(text, searchTerms, returnCompanyName = "unbekannt") {
+  for (const term of searchTerms) {
+    if (text.toLowerCase().includes(term)) {
+      return returnCompanyName;
+    }
+  }
+  return false;
 }
 
 function containsAnyMatch(array, searchTerms) {

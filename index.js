@@ -10,6 +10,7 @@ const { google } = require("googleapis");
 dotenv.config();
 
 var debug = false;
+var testrun = false;
 var firststart = true;
 
 const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
@@ -46,6 +47,10 @@ async function init() {
       debug = true;
       console.log("[START] Debug mode enabled");
     }
+    if (args.includes("--test")) {
+      testrun = true;
+      console.log("[START] Test mode enabled");
+    }
     if (args.includes("--login")) {
       console.log("[START] Do Adobe Login Script");
       var isLoggedIn = await checkIfFileExists(COOKIES_FILE);
@@ -59,13 +64,14 @@ async function init() {
     aiAgent.init(HUGGING_FACE_API_KEY, debug);
   }
 
-  /*for (var i = 1; i <= 5; i++) {
-    var sortedName = await aiAgent.getPdfName(i + ".pdf");
-    console.log(sortedName);
-  }*/
-
-  //var filesDownloaded = ["a"]; //DEBUG
-  //return;
+  if (testrun) {
+    for (var i = 1; i <= 5; i++) {
+      var sortedName = await aiAgent.getPdfName(i + ".pdf");
+      console.log(sortedName);
+    }
+    var filesDownloaded = ["a"]; //DEBUG
+    return;
+  }
 
   var isLoggedIn = await checkIfFileExists(COOKIES_FILE);
 
