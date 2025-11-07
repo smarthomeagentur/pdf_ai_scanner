@@ -464,7 +464,7 @@ async function adobeDownloadFile(filesArrayDrive) {
       await page.waitForSelector(
         'div[data-scrollable="true"][role="rowgroup"] div[role="presentation"] div[role="presentation"]',
         {
-          timeout: 10000,
+          timeout: 20000,
         }
       );
     } catch (error) {
