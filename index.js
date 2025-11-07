@@ -440,7 +440,7 @@ async function adobeDownloadFile(filesArrayDrive) {
     }
 
     try {
-      await page.waitForSelector('div[data-test-id="' + FILE_FOLDER_NAME + '"]', { timeout: 10000 }); //search file folder
+      await page.waitForSelector('div[data-test-id="' + FILE_FOLDER_NAME + '"]', { timeout: 20000 }); //search file folder
     } catch (error) {
       console.warn("Error loading page, skipping download procedure. This may cause issues");
       return;

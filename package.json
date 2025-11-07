@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node index.js --debug --test",
     "start": "node index.js",
-    "debug": "node index.js --debug"
+    "debug": "node index.js --debug",
+    "login": "node index.js --debug --login"
   },
   "keywords": [],
   "author": "",
