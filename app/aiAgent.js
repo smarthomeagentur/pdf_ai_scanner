@@ -159,14 +159,14 @@ async function getFilenameSuggestion(pdfText) {
     return ["keine Inhalte", "unbekannt"];
   }
   const instruction =
-    "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Hier ist der Inhalt:\n " +
+    "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Gib auch keine Anmerkungen oder Hinweise zurück. Nur die 4 Würter! Hier ist der Inhalt:\n " +
     pdfText;
 
   try {
     const chatCompletion = await hf.chatCompletion({
       //model: "microsoft/Phi-3.5-mini-instruct",
-      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      provider: "together",
+      model: "mistralai/Mistral-7B-Instruct-v0.2",
+      provider: "featherless-ai",
       messages: [
         {
           role: "user",
@@ -201,8 +201,8 @@ async function getCompanySuggestion(pdfText) {
 
   try {
     const chatCompletion = await hf.chatCompletion({
-      model: "mistralai/Mixtral-8x7B-Instruct-v0.1",
-      provider: "together",
+      model: "mistralai/Mistral-7B-Instruct-v0.2",
+      provider: "featherless-ai",
       messages: [
         {
           role: "user",

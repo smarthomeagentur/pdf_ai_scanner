@@ -65,7 +65,7 @@ async function init() {
   }
 
   if (testrun) {
-    for (var i = 1; i <= 5; i++) {
+    for (var i = 1; i <= 1; i++) {
       var sortedName = await aiAgent.getPdfName(i + ".pdf");
       console.log(sortedName);
     }
@@ -359,7 +359,7 @@ async function adobeLogin() {
     var checkUserLogin;
     try {
       // Wait for the specific element to be available on the page, if not found it will throw an exception.
-      await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 10000 }); // Wait for 10 seconds
+      await page.waitForSelector("#notificationIconOnEngine > svg", { timeout: 20000 }); // Wait for 10 seconds
       checkUserLogin = await page.locator("#notificationIconOnEngine > svg").count();
     } catch (error) {
       console.warn("[LOGIN] Not logged in, continuing with login procedure");
@@ -375,13 +375,14 @@ async function adobeLogin() {
     // fill password if asked
     var isPasswordPage = false;
     try {
-      await page.waitForSelector("#PasswordPage-PasswordField", { timeout: 10000 });
+      await page.waitForSelector("#PasswordPage-PasswordField", { timeout: 20000 });
       isPasswordPage = true;
     } catch (error) {
       isPasswordPage = false;
     }
+    await sleep(5000);
     if (isPasswordPage) {
-      console.log("[LOGIN] insert password");
+      console.log("[LOGIN] insert password no auth code");
       await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
       await page.click('[data-id="PasswordPage-ContinueButton"]');
       waitLoad(page);
@@ -390,7 +391,7 @@ async function adobeLogin() {
       await page.click('[data-id="Page-PrimaryButton"]');
       waitLoad(page);
       await page.waitForSelector("#PasswordPage-PasswordField", { timeout: 60000 });
-      console.log("[LOGIN] insert password");
+      console.log("[LOGIN] insert password auth code");
       await sleep(2000);
       await page.fill("#PasswordPage-PasswordField", ADOBE_PASSWORD);
       await page.click('[data-id="PasswordPage-ContinueButton"]');
