@@ -430,6 +430,7 @@ async function adobeDownloadFile(filesArrayDrive) {
 
     // Navigate to Adobe Files and click Scan folder
     await page.goto("https://acrobat.adobe.com/link/documents/files");
+    sleep(5000);
 
     await waitLoad(page);
 
