@@ -166,6 +166,7 @@ async function getFilenameSuggestion(pdfText) {
     const chatCompletion = await hf.chatCompletion({
       //model: "microsoft/Phi-3.5-mini-instruct",
       model: "mistralai/Mistral-7B-Instruct-v0.2",
+      max_tokens: 1500,
       provider: "featherless-ai",
       messages: [
         {
@@ -187,6 +188,9 @@ async function getFilenameSuggestion(pdfText) {
     return wordsArray;
   } catch (err) {
     console.log("Error generating filename suggestion:", err);
+    console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
+    console.log(JSON.stringify(err.httpResponse.body, null, 2));
+
     return false;
   }
 }
@@ -203,6 +207,7 @@ async function getCompanySuggestion(pdfText) {
     const chatCompletion = await hf.chatCompletion({
       model: "mistralai/Mistral-7B-Instruct-v0.2",
       provider: "featherless-ai",
+      max_tokens: 1500,
       messages: [
         {
           role: "user",
@@ -230,6 +235,7 @@ async function getCompanySuggestion(pdfText) {
     return companyName;
   } catch (err) {
     console.log("Error generating filename suggestion:", err);
+    console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
     return false;
   }
 }
