@@ -17,6 +17,7 @@
     "@huggingface/inference": "^4.5.2",
     "dotenv": "^16.4.7",
     "googleapis": "^105.0.0",
+    "ollama": "^0.6.3",
     "pdf-parse": "^1.1.1",
     "playwright": "^1.57.0",
     "unzipper": "^0.12.3"

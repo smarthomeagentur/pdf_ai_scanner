@@ -65,7 +65,7 @@ async function init() {
   }
 
   if (testrun) {
-    for (var i = 1; i <= 1; i++) {
+    for (var i = 1; i <= 5; i++) {
       var sortedName = await aiAgent.getPdfName(i + ".pdf");
       console.log(sortedName);
     }

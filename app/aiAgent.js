@@ -1,9 +1,11 @@
 const fs = require("fs");
 const pdf = require("pdf-parse");
-
+const { Ollama } = require("ollama");
 const { InferenceClient } = require("@huggingface/inference");
 var hf; //hugging face client
 var debug = false;
+const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST || "http://localhost:11434";
+const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
 async function generatePdfName(filename) {
   var pdfFileName = "";
@@ -11,40 +13,20 @@ async function generatePdfName(filename) {
   var pdfData = await extractTextFromPdf(filename);
   var text = pdfData.substring(0, 700);
   if (debug) console.log("[AI] PDF Text text extracted");
+
   //if (debug) console.log(text);
   var fileTags = false;
-  for (var i = 0; i < 5; i++) {
-    if (debug) console.log("[AI] Try File Name Loop: " + i);
-    fileTags = await getFilenameSuggestion(text);
-    if (fileTags != false) break;
-  }
-  if (fileTags == false) return { success: false };
+  var fileTags = await getFilenameSuggestionGemma(text);
+  if (fileTags == false) fileTags = ["no category", "no info"];
 
   if (debug) console.log("[AI] PDF Tags: ", fileTags);
-  const category = fileTags.slice(0, 1).join("");
+  var category = fileTags.slice(0, 1).join("");
   var firstThreeWords = fileTags.slice(1, 4).join(" ");
   firstThreeWords = firstThreeWords.trim();
   firstThreeWords = firstThreeWords.replace(/\s{2,}/g, " ");
 
-  var company = await getCompanySuggestion(text);
-
-  var models = [
-    "Jean-Baptiste/roberta-large-ner-english",
-    "dbmdz/bert-large-cased-finetuned-conll03-english",
-    "dslim/bert-large-NER",
-  ];
-  var selector = 0;
-  for (var i = 0; i < 5; i++) {
-    if (company != false && company != "unbekannt") break;
-    company = await getCompanyName(text, models[selector]);
-    console.log("[AI] PDF Company: ", company, " Model: ", models[selector]);
-    if (selector == 2 && company != false) {
-      company = "unbekannt";
-      break;
-    }
-    selector++;
-  }
-  if (company == false) return { success: false };
+  var company = await getCompanySuggestionGemma(pdfData);
+  if (company == false) company = "unbekannt";
 
   pdfFileName = `${pdfDate} -${category}- ${firstThreeWords} (${company})`;
   return { success: true, full: pdfFileName, date: pdfDate, category, tags: firstThreeWords, company };
@@ -158,7 +140,7 @@ async function getFilenameSuggestion(pdfText) {
   if (pdfText.length < 100) {
     return ["keine Inhalte", "unbekannt"];
   }
-  const instruction =
+  var instructionFileName =
     "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Gib auch keine Anmerkungen oder Hinweise zurück. Nur die 4 Würter! Hier ist der Inhalt:\n " +
     pdfText;
 
@@ -171,7 +153,69 @@ async function getFilenameSuggestion(pdfText) {
       messages: [
         {
           role: "user",
-          content: instruction,
+          content: instructionFileName,
+        },
+      ],
+    });
+    if (debug) console.log(chatCompletion);
+    if (debug) console.log("[AI] AI Response: " + chatCompletion.choices[0].message.content);
+    var chatString;
+
+    var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
+    chatString = chatString.trimStart();
+    chatString = chatString.split(",");
+
+    if (debug) console.log(chatString);
+    const wordsArray = chatString;
+    return wordsArray;
+  } catch (err) {
+    console.log("Error generating filename suggestion:", err);
+    console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
+    console.log(JSON.stringify(err.httpResponse.body, null, 2));
+
+    return false;
+  }
+}
+
+async function getFilenameSuggestionGemma(pdfText) {
+  if (pdfText.length < 100) {
+    return ["keine Inhalte", "unbekannt"];
+  }
+  var instructionFileName =
+    "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
+    pdfText +
+    "--- START DOKUMENT ---\n Ich möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. Wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Gib auch keine Anmerkungen oder Hinweise zurück. Nur die 4 Wörter!";
+  try {
+    const response = await ollama.chat({
+      model: "gemma4:e2b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
+      messages: [
+        {
+          role: "user",
+          content: instructionFileName,
+        },
+      ],
+    });
+    console.log(response.message.content);
+    var chatString = response.message.content.replace(/[-/]/g, " ");
+    chatString = chatString.trimStart();
+    chatString = chatString.split(",");
+    return chatString;
+  } catch (error) {
+    console.error("Es gab einen Fehler:", error);
+    console.error("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
+    return false;
+  }
+
+  try {
+    const chatCompletion = await hf.chatCompletion({
+      //model: "microsoft/Phi-3.5-mini-instruct",
+      model: "mistralai/Mistral-7B-Instruct-v0.2",
+      max_tokens: 1500,
+      provider: "featherless-ai",
+      messages: [
+        {
+          role: "user",
+          content: instructionFileName,
         },
       ],
     });
@@ -236,6 +280,47 @@ async function getCompanySuggestion(pdfText) {
   } catch (err) {
     console.log("Error generating filename suggestion:", err);
     console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
+    return false;
+  }
+}
+
+async function getCompanySuggestionGemma(pdfText) {
+  if (pdfText.length < 100) {
+    return false;
+  }
+  var instructionCompanySuggest =
+    "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
+    pdfText +
+    "--- START DOKUMENT ---\n Ich möchte, dass du mir die Firma oder Person nennst, an welche das Dokument gerichtet ist. Antworte nur mit diesen Möglichkeiten: wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel oder Unbekannt, wenn keine der vorherigen passt. Gib mir nur die Zugehörigkeit als Wörter zurück.";
+  try {
+    const response = await ollama.chat({
+      model: "gemma4:e2b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
+      messages: [
+        {
+          role: "user",
+          content: instructionCompanySuggest,
+        },
+      ],
+    });
+
+    var chatMessage = response.message.content;
+    console.log(chatMessage);
+
+    const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
+    const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
+    const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
+    const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
+
+    var companyName = false;
+
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsDaniel, "daniel");
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsTheWire, "the wire");
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsPolyxo, "polyxo");
+    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsWireWire, "wirewire");
+    return companyName;
+  } catch (error) {
+    console.error("Es gab einen Fehler:", error);
+    console.error("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
     return false;
   }
 }
