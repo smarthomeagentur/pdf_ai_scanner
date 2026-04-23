@@ -187,7 +187,7 @@ async function getFilenameSuggestionGemma(pdfText) {
     "--- START DOKUMENT ---\n Ich möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. Wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Gib auch keine Anmerkungen oder Hinweise zurück. Nur die 4 Wörter!";
   try {
     const response = await ollama.chat({
-      model: "gemma4:e2b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
+      model: "gemma4:e4b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
       messages: [
         {
           role: "user",
@@ -294,7 +294,7 @@ async function getCompanySuggestionGemma(pdfText) {
     "--- START DOKUMENT ---\n Ich möchte, dass du mir die Firma oder Person nennst, an welche das Dokument gerichtet ist. Antworte nur mit diesen Möglichkeiten: wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel oder Unbekannt, wenn keine der vorherigen passt. Gib mir nur die Zugehörigkeit als Wörter zurück.";
   try {
     const response = await ollama.chat({
-      model: "gemma4:e2b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
+      model: "gemma4:e4b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
       messages: [
         {
           role: "user",
