@@ -11,8 +11,10 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
         }
         .container {
             background: white;
@@ -21,7 +23,7 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             text-align: center;
             width: 100%;
-            max-width: 500px;
+            max-width: 600px;
         }
         #drop-area {
             border: 2px dashed #007bff;
@@ -62,29 +64,57 @@
         .error {
             color: #f44336;
         }
-        #result {
-            margin-top: 15px;
+        #job-list {
+            margin-top: 20px;
             text-align: left;
+        }
+        .job-item {
             background: #f8f9fa;
             padding: 15px;
             border-radius: 5px;
-            display: none;
+            margin-bottom: 10px;
             font-size: 14px;
+            border-left: 5px solid #ccc;
+        }
+        .job-item.pending { border-left-color: #ccc; }
+        .job-item.processing { border-left-color: #ff9800; }
+        .job-item.completed { border-left-color: #4caf50; }
+        .job-item.error { border-left-color: #f44336; }
+        
+        .job-title { font-weight: bold; margin-bottom: 5px; }
+        .job-status { font-size: 12px; color: #666; margin-bottom: 10px;}
+        .job-result { font-size: 13px; }
+        
+        .clear-btn {
+            background: #dc3545;
+            margin-top: 10px;
+            font-size: 14px;
+            padding: 5px 10px;
+        }
+        .clear-btn:hover {
+            background: #c82333;
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Dokument hochladen</h2>
+    <h2>Dokument(e) hochladen</h2>
     <div id="drop-area">
-        <p>Datei hier ablegen oder</p>
-        <button id="browse-btn">Datei auswählen</button>
-        <input type="file" id="file-input" accept=".pdf,.jpeg,.jpg,.png">
+        <p>Datei(en) hier ablegen oder</p>
+        <button id="browse-btn">Dateien auswählen</button>
+        <input type="file" id="file-input" accept=".pdf,.jpeg,.jpg,.png" multiple>
     </div>
 
     <div id="status"></div>
-    <div id="result"></div>
+    
+    <div id="job-list-container" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+            <h3 style="margin: 0;">Upload Status</h3>
+            <button id="clear-jobs-btn" class="clear-btn">Liste leeren</button>
+        </div>
+        <div id="job-list"></div>
+    </div>
 </div>
 
 <script>
@@ -92,7 +122,19 @@
     const fileInput = document.getElementById('file-input');
     const browseBtn = document.getElementById('browse-btn');
     const statusDiv = document.getElementById('status');
-    const resultDiv = document.getElementById('result');
+    const jobListContainer = document.getElementById('job-list-container');
+    const jobList = document.getElementById('job-list');
+    const clearJobsBtn = document.getElementById('clear-jobs-btn');
+    
+    let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
+    let pollingInterval = null;
+
+    // Load initial jobs
+    if (activeJobs.length > 0) {
+        jobListContainer.style.display = 'block';
+        renderJobs();
+        startPolling();
+    }
 
     // Drag & Drop Events
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -117,22 +159,31 @@
     function handleDrop(e) {
         let dt = e.dataTransfer;
         let files = dt.files;
-        if (files.length > 0) uploadFile(files[0]);
+        if (files.length > 0) uploadFiles(files);
     }
 
     browseBtn.addEventListener('click', () => fileInput.click());
 
     fileInput.addEventListener('change', function() {
-        if (this.files.length > 0) uploadFile(this.files[0]);
+        if (this.files.length > 0) uploadFiles(this.files);
+    });
+    
+    clearJobsBtn.addEventListener('click', () => {
+        activeJobs = [];
+        localStorage.removeItem('uploadJobs');
+        jobListContainer.style.display = 'none';
+        statusDiv.innerHTML = '';
+        renderJobs();
     });
 
-    async function uploadFile(file) {
+    async function uploadFiles(files) {
         let formData = new FormData();
-        formData.append('file', file);
+        for (let i = 0; i < files.length; i++) {
+            formData.append('files', files[i]);
+        }
 
-        statusDiv.innerHTML = 'Verarbeite Datei lokal mit KI... Bitte warten.';
+        statusDiv.innerHTML = 'Lade Dateien hoch... Bitte warten.';
         statusDiv.className = 'loading';
-        resultDiv.style.display = 'none';
 
         try {
             const response = await fetch('/api/upload', {
@@ -143,26 +194,117 @@
             const data = await response.json();
 
             if (data.success) {
-                statusDiv.innerHTML = 'Datei erfolgreich verarbeitet und auf Drive hochgeladen!';
+                statusDiv.innerHTML = 'Dateien hochgeladen & in der Warteschlange!';
                 statusDiv.className = 'success';
                 
-                // Show AI Info
-                resultDiv.style.display = 'block';
-                resultDiv.innerHTML = `
-                    <strong>Generierter Dateiname:</strong> <br>${data.aiInfo.full}<br><br>
-                    <strong>Kategorie:</strong> ${data.aiInfo.category}<br>
-                    <strong>Tags:</strong> ${data.aiInfo.tags.join(', ')}<br>
-                    <strong>Unternehmen:</strong> ${data.aiInfo.company}<br>
-                    <strong>Ist Rechnung:</strong> ${data.aiInfo.isInvoice ? 'Ja' : 'Nein'}
-                `;
+                // Add new jobs to active jobs
+                const newJobs = data.jobs.map(job => ({
+                    id: job.id,
+                    originalName: job.originalName,
+                    status: job.status,
+                    result: job.result,
+                    error: job.error
+                }));
+                
+                activeJobs = [...newJobs, ...activeJobs];
+                localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
+                
+                jobListContainer.style.display = 'block';
+                renderJobs();
+                startPolling();
+                
+                setTimeout(() => {
+                    if(statusDiv.className === 'success') {
+                        statusDiv.innerHTML = '';
+                    }
+                }, 3000);
             } else {
                 statusDiv.innerHTML = 'Fehler: ' + (data.error || 'Unbekannter Fehler');
                 statusDiv.className = 'error';
             }
         } catch (error) {
-            statusDiv.innerHTML = 'Verbindungsfehler aufgetreten.';
+            statusDiv.innerHTML = 'Verbindungsfehler beim Hochladen aufgetreten.';
             statusDiv.className = 'error';
         }
+        
+        // Reset file input
+        fileInput.value = '';
+    }
+    
+    function startPolling() {
+        if (pollingInterval) return;
+        
+        pollingInterval = setInterval(async () => {
+            const pendingJobs = activeJobs.filter(j => j.status === 'pending' || j.status === 'processing');
+            if (pendingJobs.length === 0) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+                return;
+            }
+            
+            const ids = pendingJobs.map(j => j.id).join(',');
+            try {
+                const res = await fetch(`/api/status?ids=${ids}`);
+                const data = await res.json();
+                
+                if (data.success) {
+                    let updated = false;
+                    data.statuses.forEach(serverJob => {
+                        const localJob = activeJobs.find(j => j.id === serverJob.id);
+                        if (localJob && localJob.status !== serverJob.status) {
+                            localJob.status = serverJob.status;
+                            localJob.result = serverJob.result;
+                            localJob.error = serverJob.error;
+                            updated = true;
+                        }
+                    });
+                    
+                    if (updated) {
+                        localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
+                        renderJobs();
+                    }
+                }
+            } catch (err) {
+                console.error("Polling error", err);
+            }
+        }, 2000);
+    }
+    
+    function renderJobs() {
+        jobList.innerHTML = '';
+        if (activeJobs.length === 0) {
+            jobListContainer.style.display = 'none';
+            return;
+        }
+        
+        activeJobs.forEach(job => {
+            const div = document.createElement('div');
+            div.className = `job-item ${job.status}`;
+            
+            let statusText = job.status === 'pending' ? 'In der Warteschlange...' : 
+                             job.status === 'processing' ? 'Wird verarbeitet (KI)...' : 
+                             job.status === 'completed' ? 'Erfolgreich abgeschlossen' : 'Fehlergeschlagen';
+            
+            let resultHtml = '';
+            if (job.status === 'completed' && job.result) {
+                resultHtml = `
+                    <div class="job-result">
+                        <strong>Neuer Name:</strong> ${job.result.full}<br>
+                        <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
+                        <strong>Unternehmen:</strong> ${job.result.company || '-'}
+                    </div>
+                `;
+            } else if (job.status === 'error') {
+                resultHtml = `<div class="job-result error">${job.error || 'Unbekannter Fehler'}</div>`;
+            }
+            
+            div.innerHTML = `
+                <div class="job-title">${job.originalName}</div>
+                <div class="job-status">${statusText}</div>
+                ${resultHtml}
+            `;
+            jobList.appendChild(div);
+        });
     }
 </script>
 

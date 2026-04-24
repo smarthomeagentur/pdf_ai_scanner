@@ -36,46 +36,100 @@ const upload = multer({ storage: storage });
 
 app.use(express.static("public"));
 
-app.post("/api/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "Es wurde keine Datei hochgeladen." });
+const uploadJobs = {};
+const uploadQueue = [];
+let isProcessingQueue = false;
+
+app.post("/api/upload", upload.array("files"), async (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: "Es wurden keine Dateien hochgeladen." });
   }
-  console.log("[WEB] File upload started...");
-  const filePath = req.file.path;
-  try {
-    const authClient = await authorize();
-    const drive = google.drive({ version: "v3", auth: authClient });
 
-    let folderId;
-    if (isValidGoogleDriveId(FOLDER_ID)) {
-      folderId = FOLDER_ID;
-    } else {
-      folderId = await findFolderId(drive, FOLDER_ID);
-    }
-
-    var sortedName = await aiAgent.getPdfName(filePath);
-
-    if (sortedName.success === false) {
-      return res.status(500).json({ error: "KI Verarbeitung fehlgeschlagen." });
-    }
-
-    if (FOLDER_ID_SORTED) {
-      await uploadFile(drive, filePath, FOLDER_ID_SORTED, sortedName.full);
-    }
-    await uploadFile(drive, filePath, folderId);
-
-    console.log("[WEB] File uploaded to Drive:");
-    console.log(sortedName);
-
-    // Delete file after upload
-    await fs.promises.unlink(filePath);
-
-    res.json({ success: true, aiInfo: sortedName, file: req.file.filename });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
+  const jobs = [];
+  for (const file of req.files) {
+    const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+    const job = {
+      id: jobId,
+      originalName: file.originalname,
+      status: "pending",
+      result: null,
+      error: null,
+      filePath: file.path,
+    };
+    uploadJobs[jobId] = job;
+    uploadQueue.push(jobId);
+    jobs.push(job);
   }
+
+  // Start processing if not already
+  processQueue();
+
+  res.json({ success: true, jobs: jobs });
 });
+
+app.get("/api/status", (req, res) => {
+  const ids = req.query.ids ? req.query.ids.split(",") : [];
+  const statuses = ids.map((id) => uploadJobs[id]).filter(Boolean);
+  res.json({ success: true, statuses: statuses });
+});
+
+async function processQueue() {
+  if (isProcessingQueue) return;
+  isProcessingQueue = true;
+
+  while (uploadQueue.length > 0) {
+    const jobId = uploadQueue.shift();
+    const job = uploadJobs[jobId];
+    if (!job) continue;
+
+    job.status = "processing";
+
+    try {
+      console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
+      const authClient = await authorize();
+      const drive = google.drive({ version: "v3", auth: authClient });
+
+      let folderId;
+      if (isValidGoogleDriveId(FOLDER_ID)) {
+        folderId = FOLDER_ID;
+      } else {
+        folderId = await findFolderId(drive, FOLDER_ID);
+      }
+
+      var sortedName = await aiAgent.getPdfName(job.filePath);
+
+      if (sortedName.success === false) {
+        throw new Error("KI Verarbeitung fehlgeschlagen.");
+      }
+
+      if (FOLDER_ID_SORTED) {
+        await uploadFile(drive, job.filePath, FOLDER_ID_SORTED, sortedName.full);
+      }
+      await uploadFile(drive, job.filePath, folderId);
+
+      console.log(`[WEB] Job ${jobId} finished. File uploaded to Drive:`);
+      console.log(sortedName);
+
+      // Delete file after upload
+      await fs.promises.unlink(job.filePath);
+
+      job.status = "completed";
+      job.result = sortedName;
+    } catch (error) {
+      console.error(`[WEB] Error processing job ${jobId}:`, error);
+      job.status = "error";
+      job.error = error.message;
+      // Try to clean up file on error
+      try {
+        if (fs.existsSync(job.filePath)) {
+          await fs.promises.unlink(job.filePath);
+        }
+      } catch (e) {}
+    }
+  }
+
+  isProcessingQueue = false;
+}
 
 //this needs a setup
 const INTERVALL = 300; //Interval in seconds
