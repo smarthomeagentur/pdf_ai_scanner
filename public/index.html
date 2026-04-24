@@ -124,7 +124,7 @@
     
     <div id="job-list-container" style="display: none;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
-            <h3 style="margin: 0;">Upload Status</h3>
+            <h3 style="margin: 0;">Upload Status <span id="active-job-count" style="font-size: 14px; font-weight: normal; color: #666; margin-left: 10px;"></span></h3>
             <button id="clear-jobs-btn" class="clear-btn">Liste leeren</button>
         </div>
         <div id="job-list"></div>
@@ -292,6 +292,12 @@
     }
     
     function renderJobs() {
+        const countSpan = document.getElementById('active-job-count');
+        if (countSpan) {
+            const activeCount = activeJobs.filter(j => j.status === 'pending' || j.status === 'processing').length;
+            countSpan.innerHTML = activeCount > 0 ? `(${activeCount} in Arbeit)` : '';
+        }
+
         jobList.innerHTML = '';
         if (activeJobs.length === 0) {
             jobListContainer.style.display = 'none';

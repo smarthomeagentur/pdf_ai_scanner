@@ -8,6 +8,7 @@ var aiAgent = require("./app/aiAgent.js");
 const { google } = require("googleapis");
 const express = require("express");
 const multer = require("multer");
+const { exec } = require("child_process");
 
 dotenv.config();
 
@@ -57,6 +58,8 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
       filePath: file.path,
       uploadDate: new Date().toISOString(),
     };
+    console.log("[WEB] Add new upload job for " + file.originalname + " with ID " + jobId);
+
     uploadJobs[jobId] = job;
     uploadQueue.push(jobId);
     jobs.push(job);
@@ -72,6 +75,43 @@ app.get("/api/status", (req, res) => {
   const ids = req.query.ids ? req.query.ids.split(",") : [];
   const statuses = ids.map((id) => uploadJobs[id]).filter(Boolean);
   res.json({ success: true, statuses: statuses });
+});
+
+app.post("/api/scan", upload.single("image"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "Kein Bild hochgeladen." });
+  }
+
+  const inputPath = req.file.path;
+  const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
+  const coords = req.body.coords || ""; // Optional gesendete Koordinaten
+
+  console.log(`[SCANNER] Starte Verarbeitung für ${req.file.originalname}`);
+
+  // Python Skript ausführen (Nutzt das Virtual Environment)
+  const pythonProcess = exec(
+    `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputPdfPath}" "${coords}"`,
+    (error, stdout, stderr) => {
+      // Lösche das originale Foto nach der Verarbeitung, falls vorhanden
+      if (fs.existsSync(inputPath)) {
+        fs.unlinkSync(inputPath);
+      }
+
+      if (error) {
+        console.error(`[SCANNER ERROR]: ${error.message}`);
+        console.error(stderr);
+        return res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
+      }
+
+      console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
+      // PDF an den User als Download senden
+      res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
+        if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
+        // Optional: PDF nach dem Senden löschen:
+        // if (fs.existsSync(outputPdfPath)) fs.unlinkSync(outputPdfPath);
+      });
+    }
+  );
 });
 
 async function processQueue() {
