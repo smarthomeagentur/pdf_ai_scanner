@@ -94,6 +94,20 @@
         .clear-btn:hover {
             background: #c82333;
         }
+        .progress-container {
+            width: 100%;
+            background-color: #e9ecef;
+            border-radius: 5px;
+            height: 10px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #ff9800;
+            width: 0%;
+            transition: width 0.5s linear;
+        }
     </style>
 </head>
 <body>
@@ -252,10 +266,15 @@
                     let updated = false;
                     data.statuses.forEach(serverJob => {
                         const localJob = activeJobs.find(j => j.id === serverJob.id);
-                        if (localJob && localJob.status !== serverJob.status) {
+                        // Check if status changed or it just started processing
+                        if (localJob && (
+                            localJob.status !== serverJob.status || 
+                            (!localJob.processingStartedAt && serverJob.processingStartedAt)
+                        )) {
                             localJob.status = serverJob.status;
                             localJob.result = serverJob.result;
                             localJob.error = serverJob.error;
+                            if (serverJob.processingStartedAt) localJob.processingStartedAt = serverJob.processingStartedAt;
                             if (serverJob.uploadDate && !localJob.uploadDate) localJob.uploadDate = serverJob.uploadDate;
                             updated = true;
                         }
@@ -307,6 +326,19 @@
                 `;
             } else if (job.status === 'error') {
                 resultHtml = `<div class="job-result error">${job.error || 'Unbekannter Fehler'}</div>`;
+            } else if (job.status === 'processing') {
+                let progressStyles = '';
+                if (job.processingStartedAt) {
+                    const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
+                    // Max 95% while processing
+                    const progress = Math.min(elapsedSec, 95);
+                    progressStyles = `width: ${progress}%;`;
+                }
+                resultHtml = `
+                    <div class="progress-container">
+                        <div class="progress-bar" data-job-id="${job.id}" style="${progressStyles}"></div>
+                    </div>
+                `;
             }
             
             div.innerHTML = `
@@ -320,6 +352,22 @@
             jobList.appendChild(div);
         });
     }
+    
+    // Update progress bars periodically based on time elapsed
+    setInterval(() => {
+        const bars = document.querySelectorAll('.progress-bar');
+        bars.forEach(bar => {
+            const jobId = bar.getAttribute('data-job-id');
+            const job = activeJobs.find(j => j.id === jobId);
+            
+            if (job && job.processingStartedAt && job.status === 'processing') {
+                const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
+                // Since user requested 0 to 100 in 100 seconds, we just bounded it slightly below 100 while processing
+                const progressProgress = Math.min(elapsedSec, 99);
+                bar.style.width = progressProgress + '%';
+            }
+        });
+    }, 500);
 </script>
 
 </body>

@@ -84,6 +84,7 @@ async function processQueue() {
     if (!job) continue;
 
     job.status = "processing";
+    job.processingStartedAt = Date.now();
 
     try {
       console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
