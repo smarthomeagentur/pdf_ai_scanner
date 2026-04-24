@@ -96,6 +96,9 @@
 
             <label class="form-label mb-0 mt-1 small">Kanten 2: <span id="canny2Val">200</span></label>
             <input type="range" class="form-range" style="height: 10px;" id="canny2Slider" min="0" max="255" value="200">
+
+            <label class="form-label mb-0 mt-1 small text-primary">Rahmen-Trägheit (Anti-Flicker): <span id="smoothingVal">8%</span></label>
+            <input type="range" class="form-range bg-primary" style="height: 10px;" id="smoothingSlider" min="1" max="100" value="8">
         </div>
     </details>
 
@@ -157,6 +160,7 @@
     document.getElementById('blurSlider').oninput = function() { optBlur = parseInt(this.value); document.getElementById('blurVal').innerText = optBlur; }
     document.getElementById('canny1Slider').oninput = function() { optCanny1 = parseInt(this.value); document.getElementById('canny1Val').innerText = optCanny1; }
     document.getElementById('canny2Slider').oninput = function() { optCanny2 = parseInt(this.value); document.getElementById('canny2Val').innerText = optCanny2; }
+    document.getElementById('smoothingSlider').oninput = function() { SMOOTHING_FACTOR = parseInt(this.value) / 100.0; document.getElementById('smoothingVal').innerText = this.value + '%'; }
 
     let streaming = false;
 
@@ -175,7 +179,7 @@
     let smoothedCornersRaw = null;
     let framesWithoutDetection = 0;
     const MAX_FRAMES_LOSE_TRACK = 12; // Halbe Sekunde Toleranz
-    const SMOOTHING_FACTOR = 0.08; // Nur 8% vom neuen Frame aufnehmen (extrem starkes Glätten, "klebriger" Klebe-Effekt)
+    let SMOOTHING_FACTOR = 0.08; // 8% Default, einstellbar über Slider
 
     // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
     function sortAndOrderCorners(ptsData32S) {
@@ -586,12 +590,18 @@
         const ctx = document.getElementById('reviewOverlay').getContext('2d');
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
+        // Dynamische Skalierung für hochauflösende Canvas, damit die Anfasser auf dem Handy immer groß genug sind
+        const scaleFactor = Math.max(ctx.canvas.width, ctx.canvas.height) / 1000;
+        const outerRadius = 30 * scaleFactor;
+        const innerRadius = 10 * scaleFactor;
+        const strokeWidth = 4 * scaleFactor;
+
         // Grün schimmerndes Polygon
         ctx.beginPath();
         ctx.moveTo(reviewState.corners[0].x, reviewState.corners[0].y);
         for(let i=1; i<4; i++) ctx.lineTo(reviewState.corners[i].x, reviewState.corners[i].y);
         ctx.closePath();
-        ctx.lineWidth = 2; // Dünner, da man jetzt nah rangezoomt hat
+        ctx.lineWidth = Math.max(1, strokeWidth / 2); // Dünner, da man jetzt nah rangezoomt hat
         ctx.strokeStyle = '#28a745';
         ctx.fillStyle = 'rgba(40, 167, 69, 0.15)';
         ctx.fill();
@@ -600,14 +610,14 @@
         // 4 Weiße Anfass-Punkte mit grünen Kernen
         reviewState.corners.forEach(c => {
             ctx.beginPath();
-            ctx.arc(c.x, c.y, 20, 0, 2*Math.PI);
+            ctx.arc(c.x, c.y, outerRadius, 0, 2*Math.PI);
             ctx.fillStyle = 'rgba(255,255,255,0.8)';
             ctx.fill();
-            ctx.lineWidth = 2;
+            ctx.lineWidth = strokeWidth;
             ctx.stroke();
 
             ctx.beginPath();
-            ctx.arc(c.x, c.y, 6, 0, 2*Math.PI);
+            ctx.arc(c.x, c.y, innerRadius, 0, 2*Math.PI);
             ctx.fillStyle = '#28a745';
             ctx.fill();
         });
@@ -632,9 +642,12 @@
         e.preventDefault();
         const pos = getInternalPos(e);
         reviewState.activeCorner = -1;
+        
+        // Dynamischer Fangradius basierend auf der enormen HD-Pixelzahl der Leinwand
+        const catchRadius = Math.max(reviewOverlay.width, reviewOverlay.height) * 0.08; 
+
         for (let i = 0; i < 4; i++) {
-            // Großer "Fangradius" von 50px (virtuell) für dicke Finger auf Handys
-            if (Math.hypot(reviewState.corners[i].x - pos.x, reviewState.corners[i].y - pos.y) < 50) {
+            if (Math.hypot(reviewState.corners[i].x - pos.x, reviewState.corners[i].y - pos.y) < catchRadius) {
                 reviewState.activeCorner = i;
                 break;
             }
