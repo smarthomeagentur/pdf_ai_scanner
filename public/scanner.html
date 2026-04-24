@@ -449,45 +449,35 @@
         const canvasHighRes = document.createElement('canvas');
         
         if (photoWasUsed) {
-            // Wenn XXL-Rohfoto: Wir übergeben das gesamte Sensor-Bild unbeschnitten in den manuellen Review (für bestes Cropping).
+            // Wir übergeben das gesamte Sensor-Bild in den manuellen Review.
             canvasHighRes.width = originalWidth;
             canvasHighRes.height = originalHeight;
             const ctxHighRes = canvasHighRes.getContext('2d');
             ctxHighRes.drawImage(highResBitmap, 0, 0);
 
-            if (frozenCorners) {
-                // COMPLEX MAPPING: Kamera-Sensor (Photo, z.B. 4:3 Format) -> Video-Stream (z.B. 16:9 Format) -> CSS DOM ("object-fit: cover").
+            if (frozenCorners && streaming && video) {
                 const rect = video.getBoundingClientRect();
                 
-                // 1. CSS DOM: Welche Pixel des Videostreams sieht der User überhaupt?
-                const vScale = Math.min(video.videoWidth / rect.width, video.videoHeight / rect.height);
-                const sWidth_v = rect.width * vScale;
-                const sHeight_v = rect.height * vScale;
-                const sx_v = (video.videoWidth - sWidth_v) / 2;
-                const sy_v = (video.videoHeight - sHeight_v) / 2;
+                // Wir berechnen, welcher Ausschnitt des hochauflösenden Fotos eigentlich in der DOM-Vorschau sichtbar war.
+                // Annahme: Das Foto verhält sich zum DOM-Rechteck wie "object-fit: cover" (zentrierter Anschnitt).
+                const scale = Math.min(originalWidth / rect.width, originalHeight / rect.height);
+                
+                const visibleWidthInPhoto = rect.width * scale;
+                const visibleHeightInPhoto = rect.height * scale;
+                
+                // Offset berechnen (Ränder, die im Vorschau-Video abgeschnitten waren)
+                const offsetX = (originalWidth - visibleWidthInPhoto) / 2;
+                const offsetY = (originalHeight - visibleHeightInPhoto) / 2;
 
-                // 2. Video-Ebene: Wir transformieren die vom user gesehenen Punkte (0.0 bis 1.0) auf die absoluten (1920x1080p) Videopixel
-                let videoRawCorners = frozenCorners.map(fc => {
+                // Die relativen Ecken der Vorschau (0.0 - 1.0) auf das asymmetrische hochauflösende Foto umrechnen
+                frozenCorners = frozenCorners.map(fc => {
+                    let absoluteX = offsetX + (fc.x * visibleWidthInPhoto);
+                    let absoluteY = offsetY + (fc.y * visibleHeightInPhoto);
+                    
+                    // Bezogen auf das große Originalfoto als neue relative Werte speichern
                     return {
-                        x: sx_v + (fc.x * sWidth_v),
-                        y: sy_v + (fc.y * sHeight_v)
-                    };
-                });
-
-                // 3. Sensor-Ebene: Smartphone Sensoren entnehmen den Videostream als physikalischen Zentrierten Anschnitt aus der vollen Foto-Matrix.
-                const scaleVidToPhoto = Math.max(originalWidth / video.videoWidth, originalHeight / video.videoHeight); 
-                const physVideoWidthInPhoto = video.videoWidth * scaleVidToPhoto;
-                const physVideoHeightInPhoto = video.videoHeight * scaleVidToPhoto;
-                const offsetX_vp = (originalWidth - physVideoWidthInPhoto) / 2;
-                const offsetY_vp = (originalHeight - physVideoHeightInPhoto) / 2;
-
-                // 4. Transformieren der Videosensor Koordinaten zurück auf Relativ (0.0 bis 1.0) der vollen Foto-Dimensionen (originalWidth/originalHeight)
-                frozenCorners = videoRawCorners.map(vc => {
-                    let photoX = offsetX_vp + (vc.x * scaleVidToPhoto);
-                    let photoY = offsetY_vp + (vc.y * scaleVidToPhoto);
-                    return {
-                        x: photoX / originalWidth,
-                        y: photoY / originalHeight
+                        x: absoluteX / originalWidth,
+                        y: absoluteY / originalHeight
                     };
                 });
             }
