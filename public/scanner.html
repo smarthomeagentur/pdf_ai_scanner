@@ -71,8 +71,11 @@
     </div>
 
     <!-- Upload Button -- Floating und Sticky am unteren Rand -->
-    <div class="mt-auto position-sticky bottom-0 bg-white border-top" style="z-index: 10; padding: 15px 15px calc(15px + env(safe-area-inset-bottom, 20px)); margin: 0 -20px -20px -20px;">
-        <button id="upload-selected-btn" class="btn btn-success w-100 py-3 shadow" style="font-size: 1.1rem; border-radius: 12px; font-weight: bold;" disabled>Hochladen für KI-Sortierung</button>
+    <div class="mt-auto position-sticky bottom-0 bg-white border-top" style="z-index: 10; padding: 15px 15px calc(35px + env(safe-area-inset-bottom, 20px)); margin: 0 -20px -20px -20px;">
+        <div class="d-flex gap-2">
+            <button id="download-selected-btn" class="btn btn-outline-primary py-3 shadow-sm" style="flex: 1; font-weight: bold; border-radius: 12px;" disabled>Laden (0)</button>
+            <button id="upload-selected-btn" class="btn btn-success py-3 shadow" style="flex: 2; font-size: 1.1rem; border-radius: 12px; font-weight: bold;" disabled>KI-Sortierung (0)</button>
+        </div>
         <div id="server-upload-status" class="alert alert-info mt-2 p-2 text-center" style="display:none;"></div>
     </div>
 </div>
@@ -110,6 +113,13 @@
 
             <label class="form-label mb-0 mt-1 small text-primary">Rahmen-Trägheit (Anti-Flicker): <span id="smoothingVal">8%</span></label>
             <input type="range" class="form-range bg-primary" style="height: 10px;" id="smoothingSlider" min="1" max="100" value="20">
+
+            <hr class="my-3">
+            <h6 class="text-secondary mb-2 small fw-bold">💾 Handyspeicher Verhalten</h6>
+            <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" id="autoDownloadPdf">
+                <label class="form-check-label small fw-bold" for="autoDownloadPdf">Gescanntes PDF sofort herunterladen</label>
+            </div>
         </div>
     </details>
 
@@ -935,15 +945,18 @@
 
                 if (response.ok) {
                     const pdfBlob = await response.blob();
-                    const downloadUrl = window.URL.createObjectURL(pdfBlob);
-                    const a = document.createElement('a');
-                    a.href = downloadUrl;
-                    a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
                     
-                    loaderStatus.innerText = "Fertig! Speichern erfolgreich.";
+                    if (document.getElementById('autoDownloadPdf').checked) {
+                        const downloadUrl = window.URL.createObjectURL(pdfBlob);
+                        const a = document.createElement('a');
+                        a.href = downloadUrl;
+                        a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                    }
+                    
+                    loaderStatus.innerText = "Fertig! Verarbeitung erfolgreich.";
                     loadSavedScans();
 
                     setTimeout(() => {
@@ -1049,12 +1062,39 @@
     // Zeigt den Upload-Button, wenn was ausgewählt wurde
     function checkSelections() {
         const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
-        const btn = document.getElementById('upload-selected-btn');
-        if(btn) {
-           btn.disabled = checkboxes.length === 0;
-           btn.innerText = `Hochladen (${checkboxes.length})`;
+
+        const btnUpload = document.getElementById('upload-selected-btn');
+        if (btnUpload) {
+           btnUpload.disabled = checkboxes.length === 0;
+           btnUpload.innerText = `KI-Sortierung (${checkboxes.length})`;
+        }
+
+        const btnDownload = document.getElementById('download-selected-btn');
+        if (btnDownload) {
+           btnDownload.disabled = checkboxes.length === 0;
+           btnDownload.innerText = `Speichern (${checkboxes.length})`;
         }
     }
+
+    // Ausgewählte direkt als Kopie herunterladen
+    document.getElementById('download-selected-btn')?.addEventListener('click', () => {
+        const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
+        const selectedFiles = Array.from(checkboxes).map(c => c.value);
+        if (selectedFiles.length === 0) return;
+
+        let delay = 0;
+        selectedFiles.forEach(file => {
+            setTimeout(() => {
+                const a = document.createElement('a');
+                a.href = `/downloads/${file}`;
+                a.download = `Manuell_${file}`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }, delay);
+            delay += 500;
+        });
+    });
 
     // Ausgewählte PDFs an die Upload-Pipeline in index.js pingen
     document.getElementById('upload-selected-btn')?.addEventListener('click', async () => {
