@@ -423,60 +423,98 @@
         let frozenCorners = currentRelativeDocumentCorners ? JSON.parse(JSON.stringify(currentRelativeDocumentCorners)) : null;
         captureBtn.disabled = true;
         loader.style.display = 'block';
-        loaderStatus.innerText = "Dokument wird in Höchstauflösung fotografiert...";
+        loaderStatus.innerText = "Dokumentbereich für lokalen Zuschnitt wird berechnet...";
 
-        let highResBitmap = null;
         let originalWidth = video.videoWidth;
         let originalHeight = video.videoHeight;
+        let photoWasUsed = false;
+        let highResBitmap = null;
 
-        // Versuche über neue ImageCapture API die echte volle Foto-Sensor-Auflösung abzurufen (die oft höher ist als der 4K Videostream!)
+        // Versuche über aktuelle ImageCapture API die echte volle Foto-Sensor-Auflösung abzurufen
         if (window.ImageCapture && videoTrack) {
             try {
                 const imageCapture = new ImageCapture(videoTrack);
-                // Foto-Funktion abfragen, erlaubt meist echte 12MP/24MP Sensordaten anstelle von 4K Videodaten
+                loaderStatus.innerText = "Foto in Höchstauflösung wird belichtet...";
                 const blob = await imageCapture.takePhoto(); 
                 highResBitmap = await createImageBitmap(blob);
                 originalWidth = highResBitmap.width;
                 originalHeight = highResBitmap.height;
-                console.log(`Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight}`);
+                photoWasUsed = true;
+                console.log(`Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight} gegenüber Video: ${video.videoWidth}x${video.videoHeight}`);
             } catch (e) {
                 console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
             }
         }
 
-        // Snapshot in voller Videoauflösung nehmen
         const canvasHighRes = document.createElement('canvas');
         
-        let cropWidth = originalWidth;
-        let cropHeight = originalHeight;
+        if (photoWasUsed) {
+            // Wenn XXL-Rohfoto: Wir übergeben das gesamte Sensor-Bild unbeschnitten in den manuellen Review (für bestes Cropping).
+            canvasHighRes.width = originalWidth;
+            canvasHighRes.height = originalHeight;
+            const ctxHighRes = canvasHighRes.getContext('2d');
+            ctxHighRes.drawImage(highResBitmap, 0, 0);
 
-        // Wenn "object-fit: cover" das visuelle Video zugeschnitten hat, müssen wir denselben 
-        // Bereich aus dem Quell-Stream holen, sonst stimmen unsere Overlay-Ecken nicht mehr überein!
-        if (streaming && video) {
-            const rect = video.getBoundingClientRect();
-            const wScale = originalWidth / rect.width;
-            const hScale = originalHeight / rect.height;
-            const scale = Math.min(wScale, hScale);
-            
-            cropWidth = rect.width * scale;
-            cropHeight = rect.height * scale;
-        }
+            if (frozenCorners) {
+                // COMPLEX MAPPING: Kamera-Sensor (Photo, z.B. 4:3 Format) -> Video-Stream (z.B. 16:9 Format) -> CSS DOM ("object-fit: cover").
+                const rect = video.getBoundingClientRect();
+                
+                // 1. CSS DOM: Welche Pixel des Videostreams sieht der User überhaupt?
+                const vScale = Math.min(video.videoWidth / rect.width, video.videoHeight / rect.height);
+                const sWidth_v = rect.width * vScale;
+                const sHeight_v = rect.height * vScale;
+                const sx_v = (video.videoWidth - sWidth_v) / 2;
+                const sy_v = (video.videoHeight - sHeight_v) / 2;
 
-        canvasHighRes.width = cropWidth;
-        canvasHighRes.height = cropHeight;
-        
-        const ctxHighRes = canvasHighRes.getContext('2d');
-        const sourceX = (originalWidth - cropWidth) / 2;
-        const sourceY = (originalHeight - cropHeight) / 2;
-        
-        if (highResBitmap) {
-            ctxHighRes.drawImage(highResBitmap, sourceX, sourceY, cropWidth, cropHeight, 0, 0, canvasHighRes.width, canvasHighRes.height);
+                // 2. Video-Ebene: Wir transformieren die vom user gesehenen Punkte (0.0 bis 1.0) auf die absoluten (1920x1080p) Videopixel
+                let videoRawCorners = frozenCorners.map(fc => {
+                    return {
+                        x: sx_v + (fc.x * sWidth_v),
+                        y: sy_v + (fc.y * sHeight_v)
+                    };
+                });
+
+                // 3. Sensor-Ebene: Smartphone Sensoren entnehmen den Videostream als physikalischen Zentrierten Anschnitt aus der vollen Foto-Matrix.
+                const scaleVidToPhoto = Math.max(originalWidth / video.videoWidth, originalHeight / video.videoHeight); 
+                const physVideoWidthInPhoto = video.videoWidth * scaleVidToPhoto;
+                const physVideoHeightInPhoto = video.videoHeight * scaleVidToPhoto;
+                const offsetX_vp = (originalWidth - physVideoWidthInPhoto) / 2;
+                const offsetY_vp = (originalHeight - physVideoHeightInPhoto) / 2;
+
+                // 4. Transformieren der Videosensor Koordinaten zurück auf Relativ (0.0 bis 1.0) der vollen Foto-Dimensionen (originalWidth/originalHeight)
+                frozenCorners = videoRawCorners.map(vc => {
+                    let photoX = offsetX_vp + (vc.x * scaleVidToPhoto);
+                    let photoY = offsetY_vp + (vc.y * scaleVidToPhoto);
+                    return {
+                        x: photoX / originalWidth,
+                        y: photoY / originalHeight
+                    };
+                });
+            }
         } else {
+            // FALLBACK auf Videostream-Ausschnitt, wenn kein raw Foto genutzt werden konnte
+            let cropWidth = originalWidth;
+            let cropHeight = originalHeight;
+            let sourceX = 0;
+            let sourceY = 0;
+
+            if (streaming && video) {
+                const rect = video.getBoundingClientRect();
+                const vScale = Math.min(originalWidth / rect.width, originalHeight / rect.height);
+                cropWidth = rect.width * vScale;
+                cropHeight = rect.height * vScale;
+                sourceX = (originalWidth - cropWidth) / 2;
+                sourceY = (originalHeight - cropHeight) / 2;
+            }
+            
+            canvasHighRes.width = cropWidth;
+            canvasHighRes.height = cropHeight;
+            const ctxHighRes = canvasHighRes.getContext('2d');
             ctxHighRes.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, canvasHighRes.width, canvasHighRes.height);
+            // Die bereits gespeicherten relativen frozenCorners stimmen hierbei noch, weil das Bild wie vom user gesehen exakt beschnitten wird.
         }
 
-        // Falls absolut kein Dokument im Live-Video gefunden wurde, setzen wir ein 10% Dummy-Rechteck ein, damit 
-        // der User trotzdem manuell zuschneiden kann anstatt einen harten Fehler zu bekommen.
+        // Falls absolut kein Dokument gefunden
         if (!frozenCorners) {
             frozenCorners = [
                 {x: 0.1, y: 0.1}, {x: 0.9, y: 0.1}, {x: 0.9, y: 0.9}, {x: 0.1, y: 0.9}
