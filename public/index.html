@@ -330,8 +330,8 @@
                 let progressStyles = '';
                 if (job.processingStartedAt) {
                     const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
-                    // Max 95% while processing
-                    const progress = Math.min(elapsedSec, 95);
+                    // 0 to 100% over 200 seconds, max out at 99% while processing
+                    const progress = Math.min((elapsedSec / 200) * 100, 99);
                     progressStyles = `width: ${progress}%;`;
                 }
                 resultHtml = `
@@ -362,8 +362,8 @@
             
             if (job && job.processingStartedAt && job.status === 'processing') {
                 const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
-                // Since user requested 0 to 100 in 100 seconds, we just bounded it slightly below 100 while processing
-                const progressProgress = Math.min(elapsedSec, 99);
+                // 0 to 100% over 200 seconds, max out at 99% while processing
+                const progressProgress = Math.min((elapsedSec / 200) * 100, 99);
                 bar.style.width = progressProgress + '%';
             }
         });
