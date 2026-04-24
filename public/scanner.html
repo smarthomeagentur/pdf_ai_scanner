@@ -71,7 +71,7 @@
     </div>
 
     <!-- Upload Button -- Floating und Sticky am unteren Rand -->
-    <div class="mt-auto position-sticky bottom-0 bg-white py-3 border-top" style="z-index: 10;">
+    <div class="mt-auto position-sticky bottom-0 bg-white border-top" style="z-index: 10; padding: 15px 15px calc(15px + env(safe-area-inset-bottom, 20px)); margin: 0 -20px -20px -20px;">
         <button id="upload-selected-btn" class="btn btn-success w-100 py-3 shadow" style="font-size: 1.1rem; border-radius: 12px; font-weight: bold;" disabled>Hochladen für KI-Sortierung</button>
         <div id="server-upload-status" class="alert alert-info mt-2 p-2 text-center" style="display:none;"></div>
     </div>
@@ -227,15 +227,13 @@
 
     async function startCamera() {
         try {
-            // Wir fragen das Device nach der absolut höchsten Auflösung für Photo+Video
-            // Wenn das Gerät "advanced" Einstellungen erlaubt, zwingen wir es in den Hi-Res Modus
+            // Wir fragen das Device ideal nach HD für die flüssige Echtzeitvorschau
+            // Das hochauflösende Foto wird ja sowieso über ImageCapture in voller Sensorauflösung gemacht
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: "environment", 
-                    width: { ideal: 4096 }, // Versuch 4K Video Stream
-                    height: { ideal: 2160 },
-                    // Manche Browser unterstützen "advanced" Tags um die echten Sensor-Limits freizuschalten
-                    advanced: [{ width: 4096, height: 2160 }] 
+                    width: { ideal: 1920 }, // Nur noch HD für Vorschau
+                    height: { ideal: 1080 }
                 },
                 audio: false
             });
@@ -243,10 +241,10 @@
             videoTrack = stream.getVideoTracks()[0];
             video.play();
         } catch (err) {
-            // Fallback, wenn der Sensor die advanced Features nicht parsen kann
+            // Fallback auf 720p, wenn 1080p fehlschlägt
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
                     audio: false
                 });
                 video.srcObject = stream;
