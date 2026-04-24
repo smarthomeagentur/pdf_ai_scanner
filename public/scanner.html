@@ -123,9 +123,13 @@
             <canvas id="reviewOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; touch-action: none;"></canvas>
         </div>
         
-        <div class="mt-3 d-flex w-100 gap-2 mb-3" style="max-width: 500px;">
+        <div class="mt-3 w-100 d-flex justify-content-center" style="max-width: 500px;">
+            <button class="btn btn-warning w-100 py-2 fw-bold text-dark mb-2 shadow-sm" id="rescanBtn">🔄 KI-Erkennung wiederholen</button>
+        </div>
+
+        <div class="d-flex w-100 gap-2 mb-3" style="max-width: 500px;">
             <button class="btn btn-outline-secondary w-50 py-2" id="cancelReviewBtn">Abbrechen</button>
-            <button class="btn btn-success fw-bold w-50 py-2" id="confirmReviewBtn">Scan bestätigen</button>
+            <button class="btn btn-success fw-bold w-50 py-2 shadow-sm" id="confirmReviewBtn">Scan bestätigen</button>
         </div>
     </div>
 
@@ -179,7 +183,7 @@
     let smoothedCornersRaw = null;
     let framesWithoutDetection = 0;
     const MAX_FRAMES_LOSE_TRACK = 12; // Halbe Sekunde Toleranz
-    let SMOOTHING_FACTOR = 0.08; // 8% Default, einstellbar über Slider
+    let SMOOTHING_FACTOR = 0.20; // 8% Default, einstellbar über Slider
 
     // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
     function sortAndOrderCorners(ptsData32S) {
@@ -426,8 +430,10 @@
         // und das Bild durch Verwackeln sonst verloren ginge!
         let frozenCorners = currentRelativeDocumentCorners ? JSON.parse(JSON.stringify(currentRelativeDocumentCorners)) : null;
         captureBtn.disabled = true;
-        loader.style.display = 'block';
-        loaderStatus.innerText = "Dokumentbereich für lokalen Zuschnitt wird berechnet...";
+        
+        // Deaktiviertes Verändern des Layouts durch Loader, damit der Rahmen nicht springt!
+        // loader.style.display = 'block';
+        // loaderStatus.innerText = "Dokumentbereich für lokalen Zuschnitt wird berechnet...";
 
         let originalWidth = video.videoWidth;
         let originalHeight = video.videoHeight;
@@ -438,7 +444,6 @@
         if (window.ImageCapture && videoTrack) {
             try {
                 const imageCapture = new ImageCapture(videoTrack);
-                loaderStatus.innerText = "Foto in Höchstauflösung wird belichtet...";
                 const blob = await imageCapture.takePhoto(); 
                 highResBitmap = await createImageBitmap(blob);
                 originalWidth = highResBitmap.width;
@@ -530,6 +535,85 @@
             frozenCorners = [
                 {x: 0.1, y: 0.1}, {x: 0.9, y: 0.1}, {x: 0.9, y: 0.9}, {x: 0.1, y: 0.9}
             ];
+        }
+
+        // --- NEUER RESCAN AUF DEM FERTIGEN FOTO ---
+        // Das Bild ist nun als hochauflösendes Foto in 'canvasHighRes' (egal ob vom Foto oder Video).
+        // Wir jagen das fertig knackscharfe Bild nochmal durch OpenCV um Wackler vor dem Klick auszugleichen.
+        try {
+            ctxProcess.imageSmoothingEnabled = true;
+            ctxProcess.imageSmoothingQuality = 'high';
+            ctxProcess.drawImage(canvasHighRes, 0, 0, processWidth, processHeight);
+            let imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
+            src.data.set(imageData.data);
+
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+            cv.GaussianBlur(gray, blurred, new cv.Size(optBlur, optBlur), 0, 0, cv.BORDER_DEFAULT);
+            cv.Canny(blurred, edges, optCanny1, optCanny2);
+
+            let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+            cv.dilate(edges, edges, kernel);
+            cv.erode(edges, edges, kernel);
+            kernel.delete();
+
+            cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+            let bestCntRaw = null;
+            let maxAreaRaw = 0;
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                // Such-Toleranz auf 3% gesenkt, falls das Rohfoto mehr Rand hat
+                if (area > (processWidth * processHeight * 0.03)) {
+                    let peri = cv.arcLength(cnt, true);
+                    
+                    // Mehrere Ecken-Glättungen probieren, falls das 12MP Foto leicht gebogene Ränder hat
+                    let foundValid = false;
+                    for (let eps of [0.03, 0.05, 0.08, 0.10, 0.12]) {
+                        if (foundValid) break;
+                        let approx = new cv.Mat();
+                        cv.approxPolyDP(cnt, approx, eps * peri, true);
+                        
+                        if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
+                            let maxCosine = 0;
+                            for (let j = 2; j < 6; j++) {
+                                let pt1Source = (j % 4) * 2; let pt2Source = ((j - 2) % 4) * 2; let pt0Source = ((j - 1) % 4) * 2;
+                                let pt1 = { x: approx.data32S[pt1Source], y: approx.data32S[pt1Source + 1] };
+                                let pt2 = { x: approx.data32S[pt2Source], y: approx.data32S[pt2Source + 1] };
+                                let pt0 = { x: approx.data32S[pt0Source], y: approx.data32S[pt0Source + 1] };
+                                let dx1 = pt1.x - pt0.x; let dy1 = pt1.y - pt0.y;
+                                let dx2 = pt2.x - pt0.x; let dy2 = pt2.y - pt0.y;
+                                let cosine = Math.abs((dx1*dx2 + dy1*dy2) / Math.sqrt((dx1*dx1 + dy1*dy1)*(dx2*dx2 + dy2*dy2) + 1e-10));
+                                maxCosine = Math.max(maxCosine, cosine);
+                            }
+                            // Toleranz erhöht auf 0.9 (ca. 25-155 Grad) für perspektivisch sehr schräge Zettel
+                            if (maxCosine < 0.9) {
+                                maxAreaRaw = area;
+                                if (bestCntRaw) bestCntRaw.delete();
+                                bestCntRaw = approx.clone();
+                                foundValid = true;
+                            }
+                        }
+                        approx.delete();
+                    }
+                }
+            }
+
+            if (bestCntRaw) {
+                let sorted = sortAndOrderCorners(bestCntRaw.data32S);
+                bestCntRaw.delete();
+                
+                // Wenn wir im gestochen scharfen Bild Ecken gefunden haben, 
+                // überschreiben wir gnadenlos die wackeligen Videokoordinaten
+                frozenCorners = sorted.map(c => ({
+                    x: c.x / processWidth,
+                    y: c.y / processHeight
+                }));
+                console.log("Erfolgreicher Post-Scan! Alte wackelige Video-Koordinaten mit knackscharfem Rescan überschrieben.");
+            }
+        } catch(e) {
+            console.error("Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:", e);
         }
 
         // Zeige Editier-Ansicht ("Manual Review")
@@ -675,6 +759,99 @@
     reviewOverlay.addEventListener('touchstart', onDragStart, {passive: false});
     reviewOverlay.addEventListener('touchmove', onDragMove, {passive: false});
     reviewOverlay.addEventListener('touchend', onDragEnd);
+
+    // Klick auf "KI-Erkennung wiederholen" -> Scannt das aktuelle Standbild noch einmal
+    document.getElementById('rescanBtn').addEventListener('click', () => {
+        if (!reviewState.highResCanvas) return;
+        
+        let neueEcken = null;
+        const orgBtnText = document.getElementById('rescanBtn').innerHTML;
+        document.getElementById('rescanBtn').innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Bitte warten...`;
+        document.getElementById('rescanBtn').disabled = true;
+
+        // Kleines Timeout, damit der UI-Loader im Browser sichtbar wird, bevor wir OpenCV blockieren
+        setTimeout(() => {
+            try {
+                ctxProcess.imageSmoothingEnabled = true;
+                ctxProcess.imageSmoothingQuality = 'high';
+                ctxProcess.drawImage(reviewState.highResCanvas, 0, 0, processWidth, processHeight);
+                let imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
+                src.data.set(imageData.data);
+
+                cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+                cv.GaussianBlur(gray, blurred, new cv.Size(optBlur, optBlur), 0, 0, cv.BORDER_DEFAULT);
+                cv.Canny(blurred, edges, optCanny1, optCanny2);
+
+                let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+                cv.dilate(edges, edges, kernel);
+                cv.erode(edges, edges, kernel);
+                kernel.delete();
+
+                cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+                let bestCntRaw = null;
+                let maxAreaRaw = 0;
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    if (area > (processWidth * processHeight * 0.03)) { // Erweitert auf 3% Mindestgröße
+                        let peri = cv.arcLength(cnt, true);
+                        
+                        let foundValid = false;
+                        for (let eps of [0.03, 0.05, 0.08, 0.10, 0.12]) {
+                            if (foundValid) break;
+                            let approx = new cv.Mat();
+                            cv.approxPolyDP(cnt, approx, eps * peri, true);
+                            
+                            if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
+                                let maxCosine = 0;
+                                for (let j = 2; j < 6; j++) {
+                                    let pt1Source = (j % 4) * 2; let pt2Source = ((j - 2) % 4) * 2; let pt0Source = ((j - 1) % 4) * 2;
+                                    let pt1 = { x: approx.data32S[pt1Source], y: approx.data32S[pt1Source + 1] };
+                                    let pt2 = { x: approx.data32S[pt2Source], y: approx.data32S[pt2Source + 1] };
+                                    let pt0 = { x: approx.data32S[pt0Source], y: approx.data32S[pt0Source + 1] };
+                                    let dx1 = pt1.x - pt0.x; let dy1 = pt1.y - pt0.y;
+                                    let dx2 = pt2.x - pt0.x; let dy2 = pt2.y - pt0.y;
+                                    let cosine = Math.abs((dx1*dx2 + dy1*dy2) / Math.sqrt((dx1*dx1 + dy1*dy1)*(dx2*dx2 + dy2*dy2) + 1e-10));
+                                    maxCosine = Math.max(maxCosine, cosine);
+                                }
+                                if (maxCosine < 0.9) {
+                                    maxAreaRaw = area;
+                                    if (bestCntRaw) bestCntRaw.delete();
+                                    bestCntRaw = approx.clone();
+                                    foundValid = true;
+                                }
+                            }
+                            approx.delete();
+                        }
+                    }
+                }
+
+                if (bestCntRaw) {
+                    let sorted = sortAndOrderCorners(bestCntRaw.data32S);
+                    bestCntRaw.delete();
+                    
+                    neueEcken = sorted.map(c => ({
+                        x: c.x / processWidth,
+                        y: c.y / processHeight
+                    }));
+                }
+            } catch(e) {
+                console.error("Manueler Re-Scan fehlgeschlagen:", e);
+            }
+
+            document.getElementById('rescanBtn').innerHTML = orgBtnText;
+            document.getElementById('rescanBtn').disabled = false;
+
+            if (neueEcken) {
+                // Zeichnet das Bild mit neuem Puffer/Beschnitt und den neuen Ecken neu
+                showManualReview(reviewState.highResCanvas, neueEcken);
+            } else {
+                alert("Auf diesem Foto konnte die KI kein eindeutiges Dokument erkennen. Bitte justiere die Kanten manuell.");
+            }
+        }, 50);
+    });
 
     // Klick auf "Abbrechen"
     document.getElementById('cancelReviewBtn').addEventListener('click', () => {
