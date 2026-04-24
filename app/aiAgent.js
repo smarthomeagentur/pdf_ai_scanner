@@ -6,7 +6,21 @@ const dotenv = require("dotenv");
 dotenv.config();
 var debug = false;
 const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
-const ollama = new Ollama({ host: LOCAL_AI_HOST });
+
+// Custom fetch to retry on timeout, which happens often on slow machines or when model cold-starts
+const customFetch = async (url, options) => {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (error.cause && error.cause.code === "UND_ERR_HEADERS_TIMEOUT") {
+      console.log("[AI] Headers Timeout Error (Modell lädt eventuell noch). Zweiter Versuch...");
+      return await fetch(url, options);
+    }
+    throw error;
+  }
+};
+
+const ollama = new Ollama({ host: LOCAL_AI_HOST, fetch: customFetch });
 
 async function generatePdfName(filename) {
   var pdfFileName = "";
@@ -101,7 +115,7 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false) {
     'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean}"\n';
 
   var aiSettings = {
-    model: "gemma4:e4b",
+    model: "gemma4:e2b",
     messages: [
       {
         role: "user",
