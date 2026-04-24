@@ -125,6 +125,10 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     // Wenn mehrere Dateien, dann per pdf-lib mergen, ansonsten einfach umbenennen
     if (tempPdfs.length === 1) {
       fs.renameSync(tempPdfs[0], outputPdfPath);
+      let tempJpg = tempPdfs[0].replace(".pdf", ".jpg");
+      if (fs.existsSync(tempJpg)) {
+        fs.renameSync(tempJpg, outputPdfPath.replace(".pdf", ".jpg"));
+      }
     } else {
       const mergedPdf = await PDFDocument.create();
       for (const pdfPath of tempPdfs) {
