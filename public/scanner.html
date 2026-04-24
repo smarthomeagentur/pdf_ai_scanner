@@ -8,9 +8,9 @@
     <style>
         body { background-color: #f8f9fa; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
         .scanner-container { max-width: 600px; width: 100%; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
-        .video-wrapper { position: relative; width: 100%; max-width: 100%; border-radius: 8px; overflow: hidden; background: #000; display: none; }
-        #video { width: 100%; height: auto; display: block; }
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+    .video-wrapper { position: relative; width: 100%; max-width: 100%; border-radius: 8px; overflow: hidden; background: #000; display: none; aspect-ratio: 3/4; }
+    #video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
         #loader { display: none; }
         .back-link { margin-bottom: 20px; text-decoration: none; color: #6c757d; font-weight: 500; }
         .back-link:hover { color: #495057; }
@@ -235,12 +235,23 @@
 
     video.addEventListener('canplay', function() {
         if (!streaming && video.videoWidth > 0) {
-            // Set overlay resolution matching the video display resolution mapping
-            overlay.width = video.videoWidth;
-            overlay.height = video.videoHeight;
+            // Overlay and drawing must match the ACTUAL display size, not the internal video size,
+            // because we use object-fit: cover which crops the visual representation.
+            const rect = video.getBoundingClientRect();
+            overlay.width = rect.width;
+            overlay.height = rect.height;
             streaming = true;
             captureBtn.disabled = false;
             
+            // Handle window resize dynamically to keep canvas tracking over video feed
+            window.addEventListener('resize', () => {
+                if (streaming && video) {
+                    const newRect = video.getBoundingClientRect();
+                    overlay.width = newRect.width;
+                    overlay.height = newRect.height;
+                }
+            });
+
             // OpenCV Matrizen einmalig anlegen für Memory Management
             src = new cv.Mat(processHeight, processWidth, cv.CV_8UC4);
             gray = new cv.Mat();
@@ -258,8 +269,20 @@
         if (!streaming) return;
 
         try {
-            // Video-Frame auf niedrige Auflösung zum Verarbeiten zeichnen
-            ctxProcess.drawImage(video, 0, 0, processWidth, processHeight);
+            // Because video uses object-fit: cover, the displayed center is cropped from the native 16:9/4:3 stream.
+            // We calculate scaling to properly feed ONLY the visible part of the stream into OpenCV.
+            const rect = video.getBoundingClientRect();
+            const wScale = video.videoWidth / rect.width;
+            const hScale = video.videoHeight / rect.height;
+            const scale = Math.min(wScale, hScale);
+
+            const sWidth = rect.width * scale;
+            const sHeight = rect.height * scale;
+            const sx = (video.videoWidth - sWidth) / 2;
+            const sy = (video.videoHeight - sHeight) / 2;
+
+            // Video-Frame (nur den sichtbaren Teil!) auf unsere OpenCV Arbeitsfläche zeichnen
+            ctxProcess.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, processWidth, processHeight);
             
             // Frame an OpenCV übergeben
             let imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
@@ -412,16 +435,35 @@
             }
         }
 
-        // Snapshot in voller Video/Fotoauflösung auf Leinwand pinseln
+        // Snapshot in voller Videoauflösung nehmen
         const canvasHighRes = document.createElement('canvas');
-        canvasHighRes.width = originalWidth;
-        canvasHighRes.height = originalHeight;
+        
+        let cropWidth = originalWidth;
+        let cropHeight = originalHeight;
+
+        // Wenn "object-fit: cover" das visuelle Video zugeschnitten hat, müssen wir denselben 
+        // Bereich aus dem Quell-Stream holen, sonst stimmen unsere Overlay-Ecken nicht mehr überein!
+        if (streaming && video) {
+            const rect = video.getBoundingClientRect();
+            const wScale = originalWidth / rect.width;
+            const hScale = originalHeight / rect.height;
+            const scale = Math.min(wScale, hScale);
+            
+            cropWidth = rect.width * scale;
+            cropHeight = rect.height * scale;
+        }
+
+        canvasHighRes.width = cropWidth;
+        canvasHighRes.height = cropHeight;
+        
         const ctxHighRes = canvasHighRes.getContext('2d');
+        const sourceX = (originalWidth - cropWidth) / 2;
+        const sourceY = (originalHeight - cropHeight) / 2;
         
         if (highResBitmap) {
-            ctxHighRes.drawImage(highResBitmap, 0, 0, originalWidth, originalHeight);
+            ctxHighRes.drawImage(highResBitmap, sourceX, sourceY, cropWidth, cropHeight, 0, 0, canvasHighRes.width, canvasHighRes.height);
         } else {
-            ctxHighRes.drawImage(video, 0, 0, originalWidth, originalHeight);
+            ctxHighRes.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, canvasHighRes.width, canvasHighRes.height);
         }
 
         let finalImageCanvas = canvasHighRes;
