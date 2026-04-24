@@ -124,7 +124,11 @@
             <input type="range" class="form-range bg-primary" style="height: 10px;" id="smoothingSlider" min="1" max="100" value="20">
 
             <hr class="my-3">
-            <h6 class="text-secondary mb-2 small fw-bold">💾 Handyspeicher Verhalten</h6>
+            <h6 class="text-secondary mb-2 small fw-bold">💾 Handyspeicher & KI Verhalten</h6>
+            <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" id="autoQueueScan" checked>
+                <label class="form-check-label small fw-bold" for="autoQueueScan">Scan nach Abschluss direkt in KI Pipeline übertragen</label>
+            </div>
             <div class="form-check form-switch mt-2">
                 <input class="form-check-input" type="checkbox" id="autoDownloadPdf">
                 <label class="form-check-label small fw-bold" for="autoDownloadPdf">Gescanntes PDF sofort herunterladen</label>
@@ -1019,6 +1023,7 @@
             const toastEl = document.getElementById(toastId);
 
             if (response.ok) {
+                const fileName = response.headers.get('X-File-Name');
                 const pdfBlob = await response.blob();
                 
                 if (document.getElementById('autoDownloadPdf').checked) {
@@ -1030,8 +1035,35 @@
                     a.click();
                     a.remove();
                 }
+
+                if (document.getElementById('autoQueueScan').checked && fileName) {
+                    toastEl.innerText = "⏳ Dokument gescannt. Übergebe an KI Pipeline...";
+                    try {
+                        const aiResponse = await fetch('/api/upload-scan', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ filenames: [fileName] })
+                        });
+                        if (aiResponse.ok) {
+                            const aiData = await aiResponse.json();
+                            if (aiData.jobs) {
+                                let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
+                                activeJobs.unshift(...aiData.jobs);
+                                localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
+                            }
+                            toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
+                        } else {
+                            toastEl.innerText = "❌ Scanner OK, aber Übergabe an KI fehlgeschlagen.";
+                            toastEl.classList.replace('bg-dark', 'bg-danger');
+                        }
+                    } catch(e) {
+                         toastEl.innerText = "❌ KI Upload Netzwerkfehler.";
+                         toastEl.classList.replace('bg-dark', 'bg-danger');
+                    }
+                } else {
+                    toastEl.innerText = "✅ Dokument verarbeitet und sicher im Menü!";
+                }
                 
-                toastEl.innerText = "✅ Dokument verarbeitet und sicher im Menü!";
                 toastEl.classList.replace('bg-dark', 'bg-success');
                 loadSavedScans();
 
