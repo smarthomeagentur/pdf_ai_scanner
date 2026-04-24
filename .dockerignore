@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+.env
+.git
+.gitmodules
+cookies.json
+token.json
+gdrive_secret.json
+downloads/

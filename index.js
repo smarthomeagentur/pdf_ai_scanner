@@ -6,6 +6,8 @@ const process = require("process");
 const dotenv = require("dotenv");
 var aiAgent = require("./app/aiAgent.js");
 const { google } = require("googleapis");
+const express = require("express");
+const multer = require("multer");
 
 dotenv.config();
 
@@ -14,6 +16,66 @@ var testrun = false;
 var firststart = true;
 
 const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
+
+// Webserver setup
+const app = express();
+const port = process.env.PORT || 3000;
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    if (!fs.existsSync(localDownloadFolder)) {
+      fs.mkdirSync(localDownloadFolder, { recursive: true });
+    }
+    cb(null, localDownloadFolder);
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + "-" + file.originalname);
+  },
+});
+const upload = multer({ storage: storage });
+
+app.use(express.static("public"));
+
+app.post("/api/upload", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "Es wurde keine Datei hochgeladen." });
+  }
+  console.log("[WEB] File upload started...");
+  const filePath = req.file.path;
+  try {
+    const authClient = await authorize();
+    const drive = google.drive({ version: "v3", auth: authClient });
+
+    let folderId;
+    if (isValidGoogleDriveId(FOLDER_ID)) {
+      folderId = FOLDER_ID;
+    } else {
+      folderId = await findFolderId(drive, FOLDER_ID);
+    }
+
+    var sortedName = await aiAgent.getPdfName(filePath);
+
+    if (sortedName.success === false) {
+      return res.status(500).json({ error: "KI Verarbeitung fehlgeschlagen." });
+    }
+
+    if (FOLDER_ID_SORTED) {
+      await uploadFile(drive, filePath, FOLDER_ID_SORTED, sortedName.full);
+    }
+    await uploadFile(drive, filePath, folderId);
+
+    console.log("[WEB] File uploaded to Drive:");
+    console.log(sortedName);
+
+    // Delete file after upload
+    await fs.promises.unlink(filePath);
+
+    res.json({ success: true, aiInfo: sortedName, file: req.file.filename });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 //this needs a setup
 const INTERVALL = 300; //Interval in seconds
@@ -41,6 +103,9 @@ async function init() {
 
   if (firststart) {
     firststart = false;
+    app.listen(port, "0.0.0.0", () => {
+      console.log(`Web UI läuft auf http://0.0.0.0:${port}`);
+    });
     const args = process.argv.slice(2);
     console.log(args);
     if (args.includes("--debug")) {
@@ -65,6 +130,7 @@ async function init() {
   }
 
   if (testrun) {
+    return;
     for (var i = 1; i <= 10; i++) {
       var sortedName = await aiAgent.getPdfName(i + ".pdf");
       console.log(sortedName);
@@ -169,7 +235,7 @@ async function uploadFile(drive, filePath, folderId, name = undefined) {
       media: media,
       fields: "id",
     });
-    if (debug) console.log(`Uploaded ${filename} (ID: ${file.data.id})`);
+    if (debug) console.log(`[DRIVE] Uploaded ${filename} (ID: ${file.data.id})`);
   } catch (error) {
     console.error(`Error uploading file ${filePath}:`, error);
   }
