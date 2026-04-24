@@ -65,11 +65,10 @@ async function init() {
   }
 
   if (testrun) {
-    for (var i = 1; i <= 5; i++) {
+    for (var i = 1; i <= 10; i++) {
       var sortedName = await aiAgent.getPdfName(i + ".pdf");
       console.log(sortedName);
     }
-    var filesDownloaded = ["a"]; //DEBUG
     return;
   }
 

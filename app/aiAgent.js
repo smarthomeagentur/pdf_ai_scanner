@@ -1,22 +1,43 @@
 const fs = require("fs");
 const pdf = require("pdf-parse");
+const { fromPath } = require("pdf2pic");
 const { Ollama } = require("ollama");
-const { InferenceClient } = require("@huggingface/inference");
-var hf; //hugging face client
+const dotenv = require("dotenv");
+dotenv.config();
 var debug = false;
-const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST || "http://localhost:11434";
+const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
 const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
 async function generatePdfName(filename) {
   var pdfFileName = "";
   var pdfDate = setFileDate();
   var pdfData = await extractTextFromPdf(filename);
-  var text = pdfData.substring(0, 700);
-  if (debug) console.log("[AI] PDF Text text extracted");
+  //var text = pdfData.substring(0, 700);
+  if (debug) console.log("[AI] PDF Text text extracted: " + pdfData.length + " characters");
+  var pdfContentData;
+  if (pdfData.length < 100) {
+    var pdfImageBuffer = await getPdfImageBuffer(filename);
+    pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer);
+  } else {
+    pdfContentData = await getFileDataJSONGemma(pdfData);
+  }
+
+  var firstThreeWords = pdfContentData.tags.slice(0, 3).join(" ");
+  pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
+
+  return {
+    success: true,
+    full: pdfFileName,
+    date: pdfDate,
+    category: pdfContentData.category,
+    tags: pdfContentData.tags,
+    company: pdfContentData.company,
+    isInvoice: pdfContentData.isInvoice,
+  };
 
   //if (debug) console.log(text);
   var fileTags = false;
-  var fileTags = await getFilenameSuggestionGemma(text);
+  var fileTags = await getFilenameSuggestionGemma(pdfData);
   if (fileTags == false) fileTags = ["no category", "no info"];
 
   if (debug) console.log("[AI] PDF Tags: ", fileTags);
@@ -32,79 +53,6 @@ async function generatePdfName(filename) {
   return { success: true, full: pdfFileName, date: pdfDate, category, tags: firstThreeWords, company };
 }
 
-async function getCompanyName(text, model) {
-  if (text.length < 100) {
-    return "unbekannt";
-  }
-  const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
-  const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
-  const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
-  const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
-
-  return new Promise(async (resolve) => {
-    var result;
-    try {
-      result = await hf.tokenClassification({
-        model: model,
-        inputs: text,
-        provider: "hf-inference",
-        options: { wait_for_model: true },
-      });
-    } catch (err) {
-      console.log("Error generating company name:", err);
-      resolve(false);
-    }
-
-    if (debug) console.log(result);
-
-    const companyNames = result
-      .reduce((acc, entity) => {
-        if (entity.entity_group === "ORG") {
-          const prev = acc[acc.length - 1];
-
-          // Merge consecutive ORG tokens
-          if (prev && prev.end === entity.start) {
-            prev.word += entity.word.replace(/^##/, ""); // Append and remove leading ##
-            prev.end = entity.end;
-          } else {
-            // Start a new entity
-            acc.push({ ...entity });
-          }
-        }
-        return acc;
-      }, [])
-      .map((entity) => entity.word); // Extract merged entity words
-    if (debug) console.log(companyNames);
-
-    const personName = result
-      .reduce((acc, entity) => {
-        if (entity.entity_group === "PER") {
-          const prev = acc[acc.length - 1];
-
-          // Merge consecutive ORG tokens
-          if (prev && prev.end === entity.start) {
-            prev.word += entity.word.replace(/^##/, ""); // Append and remove leading ##
-            prev.end = entity.end;
-          } else {
-            // Start a new entity
-            acc.push({ ...entity });
-          }
-        }
-        return acc;
-      }, [])
-      .map((entity) => entity.word); // Extract merged entity words
-    if (debug) console.log(personName);
-
-    var companyName = "unbekannt";
-    if (await containsAnyMatch(personName, searchTermsDaniel)) companyName = "daniel";
-    if (await containsAnyMatch(companyNames, searchTermsDaniel)) companyName = "daniel";
-    if (await containsAnyMatch(companyNames, searchTermsTheWire)) companyName = "the wire";
-    if (await containsAnyMatch(companyNames, searchTermsPolyxo)) companyName = "polyxo";
-    if (await containsAnyMatch(companyNames, searchTermsWireWire)) companyName = "wirewire";
-
-    resolve(companyName);
-  });
-}
 function setFileDate(fileName) {
   // Extract the date using a regular expression
   var dateMatch;
@@ -136,43 +84,55 @@ function setFileDate(fileName) {
   }
 }
 
-async function getFilenameSuggestion(pdfText) {
-  if (pdfText.length < 100) {
-    return ["keine Inhalte", "unbekannt"];
+async function getFileDataJSONGemma(pdfText, imageBuffer = false) {
+  if (pdfText.length < 100 && imageBuffer == false) {
+    console.log("[AI] PDF Text too short for analysis and no image buffer available");
+    return false;
   }
   var instructionFileName =
-    "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Gib auch keine Anmerkungen oder Hinweise zurück. Nur die 4 Würter! Hier ist der Inhalt:\n " +
-    pdfText;
+    "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den untenstehenden Text und extrahiere die angeforderten Informationen.\n" +
+    "Gib das Ergebnis AUSSCHLIESSLICH als valides JSON aus.Füge keinen Text vor oder nach dem JSON hinzu.Verwende keine Markdown-Formatierung (kein ```json).\n" +
+    "Regeln für die Datengewinnung:\n" +
+    '1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind AUSSCHLIESSLICH: "wirewire GmbH", "The Wire UG", "Polyxo Studios GmbH", "Daniel" oder "Unbekannt" (wenn keine der vorherigen Optionen passt).\n' +
+    '2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments Nutze Folgende Kategorien: Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat. Wenn keine dieser passt vergib die Kategorie "Sonstige"\n' +
+    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein. Gib diese als Array von Strings zurück.\n' +
+    'WICHTIG: Wenn es keinen passenden Inhalt für Kategorie und Tags gibt, setze "category" auf "unknown" und "tags" auf ["none"].\n' +
+    '4. "isInvoice": Boolean. Setze den Wert auf true, wenn es sich bei dem Dokument um eine Rechnung handelt, wenn eine Zahlung vorgenommen werden muss oder das Dokument irgend einen buchhalterischen Bezug hat. Andernfalls false.\n' +
+    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean}"\n';
 
+  var aiSettings = {
+    model: "gemma4:e4b",
+    messages: [
+      {
+        role: "user",
+        content: instructionFileName,
+      },
+    ],
+  };
+  if (imageBuffer != false) {
+    console.log("[AI] use PDF image Buffer");
+    aiSettings.messages[0].images = [imageBuffer];
+    aiSettings.messages[0].content = aiSettings.messages[0].content + "Hier ist der Inhalt eines Dokuments als Bild";
+  } else {
+    aiSettings.messages[0].content =
+      aiSettings.messages[0].content +
+      "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
+      pdfText +
+      "\n--- END DOKUMENT ---";
+  }
   try {
-    const chatCompletion = await hf.chatCompletion({
-      //model: "microsoft/Phi-3.5-mini-instruct",
-      model: "mistralai/Mistral-7B-Instruct-v0.2",
-      max_tokens: 1500,
-      provider: "featherless-ai",
-      messages: [
-        {
-          role: "user",
-          content: instructionFileName,
-        },
-      ],
-    });
-    if (debug) console.log(chatCompletion);
-    if (debug) console.log("[AI] AI Response: " + chatCompletion.choices[0].message.content);
-    var chatString;
-
-    var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
-    chatString = chatString.trimStart();
-    chatString = chatString.split(",");
-
-    if (debug) console.log(chatString);
-    const wordsArray = chatString;
-    return wordsArray;
-  } catch (err) {
-    console.log("Error generating filename suggestion:", err);
-    console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
-    console.log(JSON.stringify(err.httpResponse.body, null, 2));
-
+    const response = await ollama.chat(aiSettings);
+    if (debug) console.log("[AI] Response: " + response.message.content);
+    try {
+      var chatString = JSON.parse(response.message.content);
+      return chatString;
+    } catch (error) {
+      console.log("[ERROR] No JSON response from AI. Response was: " + response.message.content);
+      return false;
+    }
+  } catch (error) {
+    console.log("Es gab einen Fehler:", error);
+    console.log("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
     return false;
   }
 }
@@ -203,83 +163,6 @@ async function getFilenameSuggestionGemma(pdfText) {
   } catch (error) {
     console.error("Es gab einen Fehler:", error);
     console.error("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
-    return false;
-  }
-
-  try {
-    const chatCompletion = await hf.chatCompletion({
-      //model: "microsoft/Phi-3.5-mini-instruct",
-      model: "mistralai/Mistral-7B-Instruct-v0.2",
-      max_tokens: 1500,
-      provider: "featherless-ai",
-      messages: [
-        {
-          role: "user",
-          content: instructionFileName,
-        },
-      ],
-    });
-    if (debug) console.log(chatCompletion);
-    if (debug) console.log("[AI] AI Response: " + chatCompletion.choices[0].message.content);
-    var chatString;
-
-    var chatString = chatCompletion.choices[0].message.content.replace(/[-/]/g, " ");
-    chatString = chatString.trimStart();
-    chatString = chatString.split(",");
-
-    if (debug) console.log(chatString);
-    const wordsArray = chatString;
-    return wordsArray;
-  } catch (err) {
-    console.log("Error generating filename suggestion:", err);
-    console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
-    console.log(JSON.stringify(err.httpResponse.body, null, 2));
-
-    return false;
-  }
-}
-
-async function getCompanySuggestion(pdfText) {
-  if (pdfText.length < 100) {
-    return false;
-  }
-  const instruction =
-    "Ich habe eine PDF mit folgendem Inhalt und möchte, dass du mir die Firma oder Person nennst, an welche das Dokument gerichtet ist. Antworte nur mit diesen Möglichkeiten: wirewire, the wire, polyxo, daniel oder unbekannt, wenn keine der vorherigen passt. Gib mir nur die Zugehörigkeit als Wörter zurück. Hier ist der Inhalt:\n " +
-    pdfText;
-
-  try {
-    const chatCompletion = await hf.chatCompletion({
-      model: "mistralai/Mistral-7B-Instruct-v0.2",
-      provider: "featherless-ai",
-      max_tokens: 1500,
-      messages: [
-        {
-          role: "user",
-          content: instruction,
-        },
-      ],
-    });
-
-    var chatMessage = chatCompletion.choices[0].message.content;
-
-    if (debug) console.log(chatCompletion);
-    if (debug) console.log("[AI] Chat Message: " + chatMessage);
-
-    const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
-    const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
-    const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
-    const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
-
-    var companyName = false;
-
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsDaniel, "daniel");
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsTheWire, "the wire");
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsPolyxo, "polyxo");
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsWireWire, "wirewire");
-    return companyName;
-  } catch (err) {
-    console.log("Error generating filename suggestion:", err);
-    console.log(JSON.stringify(err.httpRequest.body.messages, null, 2));
     return false;
   }
 }
@@ -325,6 +208,35 @@ async function getCompanySuggestionGemma(pdfText) {
   }
 }
 
+async function getPdfImageBuffer(pdfPath) {
+  try {
+    const options = {
+      density: 150,
+      saveFilename: "pdfPic",
+      savePath: ".",
+      format: "png",
+      width: 800,
+      height: 1100,
+    };
+
+    const convert = fromPath(pdfPath, options);
+    const pageToConvertAsImage = 1;
+
+    // Lass dir direkt Base64 zurückgeben anstatt eines Buffers
+    const result = await convert(pageToConvertAsImage, { responseType: "base64" });
+
+    if (!result || !result.base64) {
+      console.log("[Fehler] pdf2pic hat kein valides Base64-Ergebnis geliefert.");
+      return false;
+    }
+
+    return result.base64;
+  } catch (err) {
+    console.error("Fehler bei der pdf2pic Konvertierung:", err);
+    return false;
+  }
+}
+
 function searchNameInText(text, searchTerms, returnCompanyName = "unbekannt") {
   for (const term of searchTerms) {
     if (text.toLowerCase().includes(term)) {
@@ -356,7 +268,6 @@ async function extractTextFromPdf(pdfPath) {
 
 module.exports = {
   init: function (api_key, setDebug = false) {
-    hf = new InferenceClient(api_key); // Replace with your Hugging Face API key
     debug = setDebug;
     return true;
   },
