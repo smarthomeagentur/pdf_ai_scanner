@@ -1,6 +1,6 @@
 FROM node:20-bookworm
 
-# System packages for pdf2pic and Playwright
+# System packages for pdf2pic, Playwright, Python and Tesseract OCR
 RUN apt-get update && apt-get install -y \
     graphicsmagick \
     ghostscript \
@@ -10,9 +10,18 @@ RUN apt-get update && apt-get install -y \
     libxss1 \
     libasound2 \
     xdg-utils \
+    python3 \
+    python3-venv \
+    tesseract-ocr \
+    tesseract-ocr-deu \
+    tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# Setup Python Virtual Environment and install dependencies
+RUN python3 -m venv ./venv && \
+    ./venv/bin/pip install --no-cache-dir opencv-python-headless numpy pytesseract
 
 # Copy package files and install dependencies
 COPY package*.json ./
