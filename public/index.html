@@ -2,8 +2,17 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dokument Upload (AI Agent)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Dokument Scanner</title>
+    
+    <!-- PWA Meta Tags -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#f4f7f6">
+    <link rel="apple-touch-icon" href="/icon.svg">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Scanner">
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -108,14 +117,64 @@
             width: 0%;
             transition: width 0.5s linear;
         }
+
+        /* Mobile Adjustments */
+        .live-scanner-btn {
+            display: flex; /* Changed from inline-block to flex for easier centering if needed */
+            justify-content: center;
+            align-items: center;
+            background: #28a745;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+            width: 100%;
+            box-sizing: border-box;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .live-scanner-btn:hover {
+            background: #218838;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 0;
+                align-items: flex-start; /* Start from top on mobile */
+            }
+            .container {
+                box-shadow: none;
+                border-radius: 0;
+                padding: 20px 15px;
+                min-height: 100vh; /* Fill entire screen */
+            }
+            .live-scanner-btn {
+                padding: 16px 20px;
+                font-size: 1.3rem; /* Make the button bigger */
+            }
+            #drop-area {
+                padding: 25px 15px; /* Make the file upload area smaller */
+            }
+            #drop-area p {
+                margin: 0;
+                font-size: 14px;
+            }
+            button#browse-btn {
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Dokument(e) hochladen</h2>
+    <h2>AI Dokument Scanner</h2>
     
-    <a href="/scanner.html" style="display: inline-block; background: #28a745; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; margin-bottom: 20px;">📷 Live Scanner öffnen</a>
+    <a href="/scanner.html" class="live-scanner-btn">Live Scanner</a>
 
     <div id="drop-area">
         <p>Datei(en) hier ablegen oder</p>
@@ -324,14 +383,17 @@
                 const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : '-';
                 
                 resultHtml = `
-                    <div class="job-result">
-                        <strong>Neuer Name:</strong> ${job.result.full}<br>
-                        <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
-                        <strong>Unternehmen:</strong> ${job.result.company || '-'}<br>
-                        <strong>Tags:</strong> ${tagsStr}<br>
-                        <strong>Rechnung:</strong> ${isInvoiceStr}<br>
-                        <strong style="color: #007bff;">KI-Verarbeitungsdauer:</strong> ${durationStr}
-                    </div>
+                    <details class="job-result" style="margin-top: 10px;">
+                        <summary style="cursor: pointer; color: #007bff; font-weight: bold; margin-bottom: 5px;">Details anzeigen</summary>
+                        <div style="margin-top: 5px; padding: 10px; background: #fff; border-radius: 5px; border: 1px solid #eee;">
+                            <strong style="color: #4caf50;">Neuer Name:</strong> ${job.result.full}<br>
+                            <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
+                            <strong>Unternehmen:</strong> ${job.result.company || '-'}<br>
+                            <strong>Tags:</strong> ${tagsStr}<br>
+                            <strong>Rechnung:</strong> ${isInvoiceStr}<br>
+                            <br><strong style="color: #007bff;">KI-Verarbeitungsdauer:</strong> ${durationStr}
+                        </div>
+                    </details>
                 `;
             } else if (job.status === 'error') {
                 resultHtml = `<div class="job-result error">${job.error || 'Unbekannter Fehler'}</div>`;
@@ -377,6 +439,15 @@
             }
         });
     }, 500);
+
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js')
+                .then(registration => console.log('ServiceWorker registration successful'))
+                .catch(err => console.log('ServiceWorker registration failed: ', err));
+        });
+    }
 </script>
 
 </body>
