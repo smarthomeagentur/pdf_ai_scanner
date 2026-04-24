@@ -55,6 +55,7 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
       result: null,
       error: null,
       filePath: file.path,
+      uploadDate: new Date().toISOString(),
     };
     uploadJobs[jobId] = job;
     uploadQueue.push(jobId);
@@ -96,7 +97,11 @@ async function processQueue() {
         folderId = await findFolderId(drive, FOLDER_ID);
       }
 
+      const aiStartTime = Date.now();
       var sortedName = await aiAgent.getPdfName(job.filePath);
+      const aiEndTime = Date.now();
+      const aiDurationMs = aiEndTime - aiStartTime;
+      sortedName.duration = (aiDurationMs / 1000).toFixed(2); // save duration in seconds
 
       if (sortedName.success === false) {
         throw new Error("KI Verarbeitung fehlgeschlagen.");

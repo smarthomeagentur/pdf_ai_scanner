@@ -203,7 +203,8 @@
                     originalName: job.originalName,
                     status: job.status,
                     result: job.result,
-                    error: job.error
+                    error: job.error,
+                    uploadDate: job.uploadDate
                 }));
                 
                 activeJobs = [...newJobs, ...activeJobs];
@@ -255,6 +256,7 @@
                             localJob.status = serverJob.status;
                             localJob.result = serverJob.result;
                             localJob.error = serverJob.error;
+                            if (serverJob.uploadDate && !localJob.uploadDate) localJob.uploadDate = serverJob.uploadDate;
                             updated = true;
                         }
                     });
@@ -285,13 +287,22 @@
                              job.status === 'processing' ? 'Wird verarbeitet (KI)...' : 
                              job.status === 'completed' ? 'Erfolgreich abgeschlossen' : 'Fehlergeschlagen';
             
+            const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString('de-DE') : '-';
+
             let resultHtml = '';
             if (job.status === 'completed' && job.result) {
+                const tagsStr = (job.result.tags && Array.isArray(job.result.tags)) ? job.result.tags.join(', ') : '-';
+                const isInvoiceStr = job.result.isInvoice ? 'Ja' : 'Nein';
+                const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : '-';
+                
                 resultHtml = `
                     <div class="job-result">
                         <strong>Neuer Name:</strong> ${job.result.full}<br>
                         <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
-                        <strong>Unternehmen:</strong> ${job.result.company || '-'}
+                        <strong>Unternehmen:</strong> ${job.result.company || '-'}<br>
+                        <strong>Tags:</strong> ${tagsStr}<br>
+                        <strong>Rechnung:</strong> ${isInvoiceStr}<br>
+                        <strong style="color: #007bff;">KI-Verarbeitungsdauer:</strong> ${durationStr}
                     </div>
                 `;
             } else if (job.status === 'error') {
@@ -299,7 +310,10 @@
             }
             
             div.innerHTML = `
-                <div class="job-title">${job.originalName}</div>
+                <div class="job-title" style="display: flex; justify-content: space-between;">
+                    <span>${job.originalName}</span>
+                    <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
+                </div>
                 <div class="job-status">${statusText}</div>
                 ${resultHtml}
             `;
