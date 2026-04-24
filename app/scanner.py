@@ -35,7 +35,7 @@ def four_point_transform(image, pts):
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
     return warped
 
-def scan_document(image_path, output_pdf_path, coords_str=""):
+def scan_document(image_path, output_pdf_path, coords_str="", algorithm="white_paper"):
     # 1. Bild laden...
     image = cv2.imread(image_path)
     if image is None:
@@ -80,33 +80,75 @@ def scan_document(image_path, output_pdf_path, coords_str=""):
         # Die Datei ist bereits der beschnittene Bereich aus dem Frontend
         warped = orig
 
-    # 5. Bild für Textoptimierung aufbereiten (Graustufen & Kontrast)
+    # 5. Bild für Textoptimierung aufbereiten
     warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
     
-    # 5.1 Kontrast erhöhen statt hartem Schwarz-Weiß-Filter
-    # Wir nutzen CLAHE (Contrast Limited Adaptive Histogram Equalization) 
-    # Dadurch bleiben kleine Details der Buchstaben erhalten, Schatten verschwinden trotzdem meist.
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    enhanced = clahe.apply(warped_gray)
-    
-    # 5.2 Scharfzeichnen der Buchstaben
-    kernel = np.array([[0, -1, 0], 
-                       [-1, 5,-1], 
-                       [0, -1, 0]])
-    processed = cv2.filter2D(enhanced, -1, kernel)
+    if algorithm == "white_paper":
+        # 5.1 Schattenrechnung "Weißes Papier" Scanner-Effekt (Background Normalization)
+        # Erstellt ein Hintergrundbild (Morphologische Dilatation verwischt alle schwarzen Buchstaben komplett 
+        # und behält nur das gräuliche Hintergrundpapier inklusive Schatten).
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+        background = cv2.morphologyEx(warped_gray, cv2.MORPH_DILATE, kernel)
+        
+        # Teilen wir nun das originale Grau-Bild durch das berechnete Hintergrund-Papier:
+        # -> Wo das Papier grau mit Schatten war, ist (grau / grau) = 1 (Also Weiß im Zielbild)
+        # -> Wo Text war (dunkel / hell) = Ein Bereich nahe 0 (bleibt Schwarzbruch)
+        diff = cv2.divide(warped_gray, background, scale=255)
+        
+        # 5.2 Lineare Kontrast-Streckung (Weißpunkt / Schwarzpunkt)
+        # Da das Papier schon sehr gut homogen war, definieren wir nun einen fixen Wertebereich.
+        # Alles, was heller als 200 ist (Papier/Hintergrund), wird reines Weiß (255).
+        # Alles, was dunkler als 150 ist (Text/Tinte), wird reines Schwarz (0).
+        # Die Abstufungen dazwischen (150-200) dienen der Kantenglättung der Buchstaben, 
+        # damit die Schrift natürlich und lesbar, aber nicht "fett" wirkt.
+        black_point = 150
+        white_point = 200
+        
+        processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
+
+    elif algorithm == "bw_adaptive":
+        # Herkömmlicher hart-schwarz-weiß-Modus (gut für sehr schwacht gedruckte Bons)
+        #blurred = cv2.GaussianBlur(warped_gray, (5, 5), 0)
+        processed = cv2.adaptiveThreshold(warped_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 15)
+
+    elif algorithm == "clahe_sharp":
+        # Lokale Kontrasterhöhung und Kanten-Sharpening, bewahrt kleine Graustufendetails
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(warped_gray)
+        kernel = np.array([[0, -1, 0], [-1, 5,-1], [0, -1, 0]])
+        processed = cv2.filter2D(enhanced, -1, kernel)
+
+    elif algorithm == "grayscale":
+        # Einfach Graustufen ohne Filter, optimal für Bilder 
+        processed = warped_gray
+        
+    elif algorithm == "color":
+        # Originalfarbe beibehalten (für Farbdokumente)
+        processed = warped
+        
+    else:
+        # Fallback
+        processed = warped_gray
 
     # 6. OCR mit Tesseract und als durchsuchbares PDF speichern
     pdf_bytes = pytesseract.image_to_pdf_or_hocr(processed, extension='pdf', lang='deu+eng')
     with open(output_pdf_path, 'wb') as f:
         f.write(pdf_bytes)
 
+    # Preview-Bild (Thumbnail) für das Frontend-Menü generieren
+    # .pdf zu .jpg machen und Bild schreiben
+    output_jpg_path = output_pdf_path.replace('.pdf', '.jpg')
+    preview_img = cv2.resize(processed, (400, int(400 * (processed.shape[0] / processed.shape[1]))))
+    cv2.imwrite(output_jpg_path, preview_img)
+
     print(f"Gespeichert in: {output_pdf_path}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Benutzung: python scanner.py <eingabe_bild> <ausgabe_pdf> [coords]")
+        print("Benutzung: python scanner.py <eingabe_bild> <ausgabe_pdf> [coords] [algorithm]")
         sys.exit(1)
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     coords = sys.argv[3] if len(sys.argv) > 3 else ""
-    scan_document(input_file, output_file, coords)
+    algorithm = sys.argv[4] if len(sys.argv) > 4 else "white_paper"
+    scan_document(input_file, output_file, coords, algorithm)

@@ -21,6 +21,7 @@ const customFetch = async (url, options) => {
 };
 
 const ollama = new Ollama({ host: LOCAL_AI_HOST, fetch: customFetch });
+//const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
 async function generatePdfName(filename) {
   var pdfFileName = "";

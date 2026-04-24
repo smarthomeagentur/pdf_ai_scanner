@@ -36,6 +36,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 app.use(express.static("public"));
+app.use("/downloads", express.static(localDownloadFolder)); // Neu: Um Thumbnails der PDFs anzeigen zu können
 
 const uploadJobs = {};
 const uploadQueue = [];
@@ -85,12 +86,13 @@ app.post("/api/scan", upload.single("image"), (req, res) => {
   const inputPath = req.file.path;
   const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
   const coords = req.body.coords || ""; // Optional gesendete Koordinaten
+  const algorithm = req.body.algorithm || "white_paper"; // Neuer Backend Algorithmus-Parameter
 
-  console.log(`[SCANNER] Starte Verarbeitung für ${req.file.originalname}`);
+  console.log(`[SCANNER] Starte Verarbeitung für ${req.file.originalname} mit Modus ${algorithm}`);
 
   // Python Skript ausführen (Nutzt das Virtual Environment)
   const pythonProcess = exec(
-    `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputPdfPath}" "${coords}"`,
+    `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputPdfPath}" "${coords}" "${algorithm}"`,
     (error, stdout, stderr) => {
       // Lösche das originale Foto nach der Verarbeitung, falls vorhanden
       if (fs.existsSync(inputPath)) {
@@ -104,14 +106,71 @@ app.post("/api/scan", upload.single("image"), (req, res) => {
       }
 
       console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
-      // PDF an den User als Download senden
+      // PDF an den User als Download senden, aber Datei auf dem Server behalten für spätere Uploads
       res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
         if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
-        // Optional: PDF nach dem Senden löschen:
-        // if (fs.existsSync(outputPdfPath)) fs.unlinkSync(outputPdfPath);
       });
     }
   );
+});
+
+// Neu: Liste aller lokal gescannten Dateien abrufen
+app.get("/api/scans", (req, res) => {
+  if (!fs.existsSync(localDownloadFolder)) {
+    return res.json({ success: true, files: [] });
+  }
+
+  const files = fs
+    .readdirSync(localDownloadFolder)
+    .filter((file) => file.startsWith("Scanned_") && file.endsWith(".pdf"))
+    .map((file) => {
+      const stats = fs.statSync(path.join(localDownloadFolder, file));
+      const hasThumbnail = fs.existsSync(path.join(localDownloadFolder, file.replace(".pdf", ".jpg")));
+      return {
+        name: file,
+        path: path.join(localDownloadFolder, file),
+        date: stats.mtime,
+        size: stats.size,
+        hasThumbnail: hasThumbnail,
+      };
+    })
+    .sort((a, b) => b.date - a.date); // Neueste zuerst
+
+  res.json({ success: true, files: files });
+});
+
+// Neu: Bereits existierende gescannte Datei in die KI-Pipeline werfen
+app.post("/api/upload-scan", express.json(), (req, res) => {
+  const filenames = req.body.filenames;
+  if (!filenames || !Array.isArray(filenames) || filenames.length === 0) {
+    return res.status(400).json({ error: "Keine Dateien ausgewählt." });
+  }
+
+  const jobs = [];
+  for (const filename of filenames) {
+    const filePath = path.join(localDownloadFolder, filename);
+    if (!fs.existsSync(filePath)) continue;
+
+    const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+    const job = {
+      id: jobId,
+      originalName: filename,
+      status: "pending",
+      result: null,
+      error: null,
+      // Datei bleibt am originalen Ort, wird nach erfolgreichem Upload gelöscht
+      filePath: filePath,
+      uploadDate: new Date().toISOString(),
+    };
+
+    console.log("[WEB] Add local scan to upload job: " + filename);
+    uploadJobs[jobId] = job;
+    uploadQueue.push(jobId);
+    jobs.push(job);
+  }
+
+  processQueue();
+  res.json({ success: true, jobs: jobs });
 });
 
 async function processQueue() {
@@ -159,6 +218,9 @@ async function processQueue() {
       // Delete file after upload
       await fs.promises.unlink(job.filePath);
 
+      const jpgPath = job.filePath.replace(".pdf", ".jpg");
+      if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath);
+
       job.status = "completed";
       job.result = sortedName;
     } catch (error) {
@@ -170,6 +232,8 @@ async function processQueue() {
         if (fs.existsSync(job.filePath)) {
           await fs.promises.unlink(job.filePath);
         }
+        const jpgPath = job.filePath.replace(".pdf", ".jpg");
+        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath);
       } catch (e) {}
     }
   }

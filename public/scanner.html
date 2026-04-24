@@ -15,11 +15,61 @@
         .back-link { margin-bottom: 20px; text-decoration: none; color: #6c757d; font-weight: 500; }
         .back-link:hover { color: #495057; }
         #opencv-loading { color: #0d6efd; font-weight: bold; margin-top: 15px; }
+
+        /* Scans Menu Sidebar */
+        .scans-menu {
+            position: fixed;
+            top: 0; left: -100%;
+            width: 85vw; max-width: 400px; height: 100vh;
+            background: #fff;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.2);
+            transition: left 0.3s ease;
+            z-index: 1050; /* Über allem andern */
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .scans-menu.open { left: 0; }
+        
+        .scan-item-label { display: flex; align-items: center; cursor: pointer; width: 100%; }
+        .scan-thumb { width: 50px; height: 70px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; margin-right: 15px; background: #eee; }
+        
+        .overlay-bg {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1040;
+        }
+        .overlay-bg.show { display: block; }
+        #server-upload-status { display: none; font-size: 0.9em;}
     </style>
 </head>
 <body>
 
-<a href="/" class="back-link">&larr; Zurück zur Startseite</a>
+<!-- Hintergrund Dark-Overlay wenn Menü auf -->
+<div id="overlay-bg" class="overlay-bg" onclick="toggleMenu()"></div>
+
+<!-- Seitenmenü mit allen bisher gescannten Dateien auf dem Server -->
+<div id="scans-menu" class="scans-menu">
+    <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+        <h5 class="m-0">📂 Gespeicherte Scans</h5>
+        <button class="btn-close" onclick="toggleMenu()"></button>
+    </div>
+    
+    <div id="scan-list-container">
+        <!-- Gefüllt über JS aus /api/scans -->
+        <p class="text-muted small">Lade Dateien...</p>
+    </div>
+
+    <!-- Upload Button -->
+    <button id="upload-selected-btn" class="btn btn-success w-100 mt-3" disabled>In die KI zum Sortieren pushen</button>
+    <div id="server-upload-status" class="alert alert-info mt-2 p-2 text-center"></div>
+</div>
+
+<div class="w-100 d-flex justify-content-between" style="max-width: 600px; margin: 0 auto; margin-bottom: 20px;">
+    <a href="/" class="back-link mb-0">&larr; Zurück zur Startseite</a>
+    <button class="btn btn-sm btn-outline-secondary" onclick="toggleMenu()">Auswählen & Hochladen &rarr;</button>
+</div>
 
 <div class="scanner-container">
     <h3>📄 Live Scanner</h3>
@@ -35,9 +85,24 @@
         <canvas id="overlay"></canvas>
     </div>
 
-    <!-- Live Scanner Einstellungen -->
-    <div class="mt-3 text-start bg-light p-3 rounded border">
-        <h6 class="text-secondary">Einstellung Kantenerkennung</h6>
+    <!-- Einstellungen -->
+    <details class="mt-3 text-start bg-light p-3 rounded border">
+        <summary class="text-secondary fw-bold" style="cursor: pointer;">⚙️ Erweiterte Scan-Einstellungen</summary>
+
+        <div class="mt-3">
+            <label class="form-label fw-bold text-dark">🎨 Bild-Filter (Backend)</label>
+            <select id="algorithmSelect" class="form-select mb-3">
+                <option value="white_paper" selected>Reinweißes Papier (Standard Scanner)</option>
+                <option value="bw_adaptive">Schwarz/Weiß Hart (Quittungen / Kassenzettel)</option>
+                <option value="clahe_sharp">Graustufen Schärfen (Besseres Detail bei dunkler Schrift)</option>
+                <option value="grayscale">Einfache Graustufen (kein Filter)</option>
+                <option value="color">Original in Farbe (unbearbeitet)</option>
+            </select>
+        </div>
+
+        <hr>
+
+        <h6 class="text-secondary mt-3">📏 Empfindlichkeit Kantenerkennung (Frontend)</h6>
         
         <label class="form-label mb-0 mt-2">Unschärfe (Rauschfilter): <span id="blurVal">5</span></label>
         <input type="range" class="form-range" id="blurSlider" min="1" max="15" step="2" value="5">
@@ -47,7 +112,7 @@
 
         <label class="form-label mb-0 mt-2">Kanten Kontrast 2: <span id="canny2Val">200</span></label>
         <input type="range" class="form-range" id="canny2Slider" min="0" max="255" value="200">
-    </div>
+    </details>
 
     <!-- Result / Preview UI -->
     <div id="preview-section" class="mt-3" style="display: none;">
@@ -56,12 +121,13 @@
         <p class="text-success small mt-1">✓ Datei wird jetzt vom KI-Server verarbeitet...</p>
     </div>
 
-    <div id="loader" class="mt-3">
+    <div id="loader" class="mt-3 mb-5">
         <div class="spinner-border text-primary" role="status"></div>
         <p class="mt-2 text-muted" id="loader-status">Dokument wird beschnitten und OCR-verarbeitet...</p>
     </div>
 
-    <button id="captureBtn" class="btn btn-primary w-100 mt-3" style="display: none;" disabled>📸 Dokument scannen</button>
+    <!-- Floating Button für besseres Mobile-Bedienen -->
+    <button id="captureBtn" class="btn btn-primary" style="display: none; position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 999; max-width: 500px; width: calc(100% - 60px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); font-size: 1.1rem; padding: 14px;" disabled>📸 Dokument scannen</button>
 </div>
 
 <!-- OpenCV.js asynchron laden -->
@@ -132,17 +198,38 @@
         };
     }
 
+    let videoTrack = null;
+
     async function startCamera() {
         try {
-            // Bevorzuge Rückkamera und eine möglichst hohe Auflösung für den späteren Snapshot
+            // Wir fragen das Device nach der absolut höchsten Auflösung für Photo+Video
+            // Wenn das Gerät "advanced" Einstellungen erlaubt, zwingen wir es in den Hi-Res Modus
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+                video: { 
+                    facingMode: "environment", 
+                    width: { ideal: 4096 }, // Versuch 4K Video Stream
+                    height: { ideal: 2160 },
+                    // Manche Browser unterstützen "advanced" Tags um die echten Sensor-Limits freizuschalten
+                    advanced: [{ width: 4096, height: 2160 }] 
+                },
                 audio: false
             });
             video.srcObject = stream;
+            videoTrack = stream.getVideoTracks()[0];
             video.play();
         } catch (err) {
-            alert("Kamera konnte nicht gestartet werden: " + err);
+            // Fallback, wenn der Sensor die advanced Features nicht parsen kann
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+                    audio: false
+                });
+                video.srcObject = stream;
+                videoTrack = stream.getVideoTracks()[0];
+                video.play();
+            } catch (fallbackErr) {
+                alert("Kamera konnte nicht gestartet werden: " + fallbackErr);
+            }
         }
     }
 
@@ -299,19 +386,43 @@
         requestAnimationFrame(processVideo);
     }
 
-    captureBtn.addEventListener('click', () => {
+    captureBtn.addEventListener('click', async () => {
         if (!streaming) return;
 
         captureBtn.disabled = true;
         loader.style.display = 'block';
-        loaderStatus.innerText = "Dokument wird entzerrt und hochaufgelöst generiert...";
+        loaderStatus.innerText = "Dokument wird in Höchstauflösung fotografiert...";
 
-        // Snapshot in voller Videoauflösung nehmen
+        let highResBitmap = null;
+        let originalWidth = video.videoWidth;
+        let originalHeight = video.videoHeight;
+
+        // Versuche über neue ImageCapture API die echte volle Foto-Sensor-Auflösung abzurufen (die oft höher ist als der 4K Videostream!)
+        if (window.ImageCapture && videoTrack) {
+            try {
+                const imageCapture = new ImageCapture(videoTrack);
+                // Foto-Funktion abfragen, erlaubt meist echte 12MP/24MP Sensordaten anstelle von 4K Videodaten
+                const blob = await imageCapture.takePhoto(); 
+                highResBitmap = await createImageBitmap(blob);
+                originalWidth = highResBitmap.width;
+                originalHeight = highResBitmap.height;
+                console.log(`Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight}`);
+            } catch (e) {
+                console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
+            }
+        }
+
+        // Snapshot in voller Video/Fotoauflösung auf Leinwand pinseln
         const canvasHighRes = document.createElement('canvas');
-        canvasHighRes.width = video.videoWidth;
-        canvasHighRes.height = video.videoHeight;
+        canvasHighRes.width = originalWidth;
+        canvasHighRes.height = originalHeight;
         const ctxHighRes = canvasHighRes.getContext('2d');
-        ctxHighRes.drawImage(video, 0, 0, canvasHighRes.width, canvasHighRes.height);
+        
+        if (highResBitmap) {
+            ctxHighRes.drawImage(highResBitmap, 0, 0, originalWidth, originalHeight);
+        } else {
+            ctxHighRes.drawImage(video, 0, 0, originalWidth, originalHeight);
+        }
 
         let finalImageCanvas = canvasHighRes;
 
@@ -376,6 +487,11 @@
         pctx.drawImage(finalImageCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
         
         previewSection.style.display = 'block';
+        
+        // Verberge die Live-Vorschau nach exakt 3 Sekunden (3000ms)
+        setTimeout(() => {
+            previewSection.style.display = 'none';
+        }, 3000);
 
         // Canvas (jetzt perfekt zugeschnitten) zu File-Blob machen
         finalImageCanvas.toBlob(async (blob) => {
@@ -386,6 +502,9 @@
             if (currentRelativeDocumentCorners) {
                 formData.append('coords', 'frontend_cropped');
             }
+            
+            // Backend-Filter anfügen
+            formData.append('algorithm', document.getElementById('algorithmSelect').value);
 
             loaderStatus.innerText = "Gescanntes Bild wird hochgeladen. Cloud-KI arbeitet (OCR)...";
 
@@ -408,6 +527,10 @@
                     a.remove();
                     
                     loaderStatus.innerText = "Fertig! Speichern erfolgreich.";
+                    
+                    // Lade Liste im Side-Menu neu, um die neue Scanned_ Datei sofort anzuzeigen
+                    loadSavedScans();
+
                     setTimeout(() => {
                         loader.style.display = 'none';
                         captureBtn.disabled = false;
@@ -426,6 +549,122 @@
             }
         }, 'image/jpeg', 0.95);
     });
+
+    // Menü-Steuerung
+    function toggleMenu() {
+        const menu = document.getElementById('scans-menu');
+        const bg = document.getElementById('overlay-bg');
+        if (menu.classList.contains('open')) {
+            menu.classList.remove('open');
+            bg.classList.remove('show');
+        } else {
+            menu.classList.add('open');
+            bg.classList.add('show');
+            loadSavedScans();
+        }
+    }
+
+    // Scans laden
+    async function loadSavedScans() {
+        try {
+            const resp = await fetch('/api/scans');
+            const data = await resp.json();
+            let html = "";
+            let htmlForm = "<form id='scanSelectionForm'>";
+
+            if(!data.files || data.files.length === 0) {
+               html = '<p class="text-muted small">Noch keine Scans vorhanden.</p>';
+            } else {
+               data.files.forEach((f, idx) => {
+                  let imgHtml = f.hasThumbnail ? 
+                    `<img src="/downloads/${f.name.replace('.pdf', '.jpg')}" class="scan-thumb" onerror="this.style.display='none'"/>` : 
+                    `<div class="scan-thumb d-flex justify-content-center align-items-center bg-light border"><small class="text-muted">PDF</small></div>`;
+                    
+                  htmlForm += `
+                  <div class="form-check border-bottom pb-3 mb-2 d-flex align-items-center">
+                      <input class="form-check-input me-3" type="checkbox" name="scans" value="${f.name}" id="scan_${idx}" onchange="checkSelections()" style="transform: scale(1.5);">
+                      <label class="form-check-label scan-item-label" for="scan_${idx}">
+                          ${imgHtml}
+                          <div style="line-height:1.2; word-break: break-all;">
+                              <strong>📄 ${f.name.replace('Scanned_', '').replace('.pdf','')}</strong><br>
+                              <small class="text-muted">${new Date(f.date).toLocaleDateString()} ${new Date(f.date).toLocaleTimeString()} - ${(f.size/1024).toFixed(1)} kb</small>
+                          </div>
+                      </label>
+                  </div>`;
+               });
+               htmlForm += "</form>";
+            }
+
+            document.getElementById('scan-list-container').innerHTML = html || htmlForm;
+            checkSelections();
+        } catch(e) {
+            console.error(e);
+        }
+    }
+
+    // Zeigt den Upload-Button, wenn was ausgewählt wurde
+    function checkSelections() {
+        const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
+        const btn = document.getElementById('upload-selected-btn');
+        if(btn) {
+           btn.disabled = checkboxes.length === 0;
+           btn.innerText = `Hochladen (${checkboxes.length})`;
+        }
+    }
+
+    // Ausgewählte PDFs an die Upload-Pipeline in index.js pingen
+    document.getElementById('upload-selected-btn')?.addEventListener('click', async () => {
+        const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
+        const selectedFiles = Array.from(checkboxes).map(c => c.value);
+        
+        if (selectedFiles.length === 0) return;
+
+        const info = document.getElementById('server-upload-status');
+        const btn = document.getElementById('upload-selected-btn');
+        btn.disabled = true;
+
+        info.style.display = 'block';
+        info.innerText = 'Übertrage ' + selectedFiles.length + ' Datei(en) in die AI Pipeline...';
+
+        try {
+            const response = await fetch('/api/upload-scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filenames: selectedFiles })
+            });
+
+            if (response.ok) {
+                const resData = await response.json();
+                
+                // Jobs im LocalStorage ablegen, damit das Start-Portal die Queue sofort kennt!
+                if (resData.jobs) {
+                    let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
+                    activeJobs.push(...resData.jobs);
+                    localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
+                }
+
+                info.innerText = 'Erfolgreich! Leite zum Upload-Portal weiter...';
+                info.classList.replace('alert-info', 'alert-success');
+                
+                // Sobald erfolgreich: Seite wechseln!
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 800);
+                
+            } else {
+                info.innerText = 'Fehler beim Übergeben an die Pipeline.';
+                info.classList.replace('alert-info', 'alert-danger');
+            }
+        } catch (e) {
+            info.innerText = 'Server Verbindungsfehler.';
+            info.classList.replace('alert-info', 'alert-danger');
+        }
+        
+        setTimeout(() => {
+            info.style.display = 'none';
+        }, 5000);
+    });
+
 </script>
 
 </body>
