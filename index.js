@@ -153,8 +153,8 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     }
 
     console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
-    res.set('X-File-Name', path.basename(outputPdfPath));
-    res.set('Access-Control-Expose-Headers', 'X-File-Name');
+    res.set("X-File-Name", path.basename(outputPdfPath));
+    res.set("Access-Control-Expose-Headers", "X-File-Name");
     res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
       if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
     });
