@@ -19,19 +19,28 @@
         /* Scans Menu Sidebar */
         .scans-menu {
             position: fixed;
-            top: 0; left: -100%;
-            width: 85vw; max-width: 400px; height: 100vh;
+            top: 0; left: -100vw;
+            width: 100vw; height: 100vh;
             background: #fff;
             box-shadow: 2px 0 10px rgba(0,0,0,0.2);
             transition: left 0.3s ease;
             z-index: 1050; /* Über allem andern */
             padding: 20px;
             overflow-y: auto;
+            display: flex;
+            flex-direction: column;
         }
         .scans-menu.open { left: 0; }
         
-        .scan-item-label { display: flex; align-items: center; cursor: pointer; width: 100%; }
-        .scan-thumb { width: 50px; height: 70px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd; margin-right: 15px; background: #eee; }
+        .scan-item-label { display: flex; align-items: center; cursor: pointer; width: 100%; flex-grow: 1; }
+        .scan-thumb { width: 60px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd; margin-right: 15px; background: #eee; cursor: zoom-in; transition: transform 0.2s;}
+        
+        /* Fullscreen Image Preview class */
+        .fs-preview {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            object-fit: contain; background: rgba(0,0,0,0.9); z-index: 2000;
+            padding: 20px; cursor: zoom-out;
+        }
         
         .overlay-bg {
             display: none;
@@ -51,19 +60,21 @@
 
 <!-- Seitenmenü mit allen bisher gescannten Dateien auf dem Server -->
 <div id="scans-menu" class="scans-menu">
-    <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+    <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3 sticky-top bg-white" style="z-index: 10;">
         <h5 class="m-0">📂 Gespeicherte Scans</h5>
         <button class="btn-close" onclick="toggleMenu()"></button>
     </div>
     
-    <div id="scan-list-container">
+    <div id="scan-list-container" class="flex-grow-1 overflow-auto">
         <!-- Gefüllt über JS aus /api/scans -->
         <p class="text-muted small">Lade Dateien...</p>
     </div>
 
-    <!-- Upload Button -->
-    <button id="upload-selected-btn" class="btn btn-success w-100 mt-3" disabled>In die KI zum Sortieren pushen</button>
-    <div id="server-upload-status" class="alert alert-info mt-2 p-2 text-center"></div>
+    <!-- Upload Button -- Floating und Sticky am unteren Rand -->
+    <div class="mt-auto position-sticky bottom-0 bg-white py-3 border-top" style="z-index: 10;">
+        <button id="upload-selected-btn" class="btn btn-success w-100 py-3 shadow" style="font-size: 1.1rem; border-radius: 12px; font-weight: bold;" disabled>Hochladen für KI-Sortierung</button>
+        <div id="server-upload-status" class="alert alert-info mt-2 p-2 text-center" style="display:none;"></div>
+    </div>
 </div>
 
 <div class="scanner-container">
@@ -98,7 +109,7 @@
             <input type="range" class="form-range" style="height: 10px;" id="canny2Slider" min="0" max="255" value="200">
 
             <label class="form-label mb-0 mt-1 small text-primary">Rahmen-Trägheit (Anti-Flicker): <span id="smoothingVal">8%</span></label>
-            <input type="range" class="form-range bg-primary" style="height: 10px;" id="smoothingSlider" min="1" max="100" value="8">
+            <input type="range" class="form-range bg-primary" style="height: 10px;" id="smoothingSlider" min="1" max="100" value="20">
         </div>
     </details>
 
@@ -988,19 +999,22 @@
             } else {
                data.files.forEach((f, idx) => {
                   let imgHtml = f.hasThumbnail ? 
-                    `<img src="/downloads/${f.name.replace('.pdf', '.jpg')}" class="scan-thumb" onerror="this.style.display='none'"/>` : 
+                    `<img src="/downloads/${f.name.replace('.pdf', '.jpg')}" class="scan-thumb" onclick="toggleFullscreen(event, this)" onerror="this.style.display='none'"/>` : 
                     `<div class="scan-thumb d-flex justify-content-center align-items-center bg-light border"><small class="text-muted">PDF</small></div>`;
                     
                   htmlForm += `
-                  <div class="form-check border-bottom pb-3 mb-2 d-flex align-items-center">
-                      <input class="form-check-input me-3" type="checkbox" name="scans" value="${f.name}" id="scan_${idx}" onchange="checkSelections()" style="transform: scale(1.5);">
-                      <label class="form-check-label scan-item-label" for="scan_${idx}">
-                          ${imgHtml}
-                          <div style="line-height:1.2; word-break: break-all;">
-                              <strong>📄 ${f.name.replace('Scanned_', '').replace('.pdf','')}</strong><br>
-                              <small class="text-muted">${new Date(f.date).toLocaleDateString()} ${new Date(f.date).toLocaleTimeString()} - ${(f.size/1024).toFixed(1)} kb</small>
-                          </div>
-                      </label>
+                  <div class="form-check border-bottom pb-3 mb-2 d-flex align-items-center justify-content-between" style="padding-left: 0; padding-right: 10px;">
+                      <div class="d-flex align-items-center flex-grow-1" style="min-width: 0;">
+                          <input class="form-check-input ms-2 me-3" type="checkbox" name="scans" value="${f.name}" id="scan_${idx}" onchange="checkSelections()" style="transform: scale(1.5); flex-shrink: 0; margin-top: 0;">
+                          <label class="form-check-label scan-item-label pe-2" for="scan_${idx}" style="min-width: 0;">
+                              ${imgHtml}
+                              <div style="line-height:1.2; word-break: break-word; overflow-wrap: anywhere;">
+                                  <strong>📄 ${f.name.replace('Scanned_', '').replace('.pdf','')}</strong><br>
+                                  <small class="text-muted">${new Date(f.date).toLocaleDateString()} ${new Date(f.date).toLocaleTimeString()} - ${(f.size/1024).toFixed(1)} kb</small>
+                              </div>
+                          </label>
+                      </div>
+                      <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteScan('${f.name}')" title="Scan löschen">🗑️</button>
                   </div>`;
                });
                htmlForm += "</form>";
@@ -1010,6 +1024,27 @@
             checkSelections();
         } catch(e) {
             console.error(e);
+        }
+    }
+
+    function toggleFullscreen(e, img) {
+        e.preventDefault(); // Checkbox Klick verhindern
+        e.stopPropagation();
+        img.classList.toggle('fs-preview');
+    }
+
+    async function deleteScan(filename) {
+        if (!confirm(`Möchtest du '${filename}' wirklich löschen?`)) return;
+        try {
+            const res = await fetch(`/api/scans/${filename}`, { method: 'DELETE' });
+            if (res.ok) {
+                loadSavedScans();
+            } else {
+                alert('Fehler beim Löschen.');
+            }
+        } catch(e) {
+            console.error(e);
+            alert('Server Verbindungsfehler.');
         }
     }
 

@@ -139,6 +139,26 @@ app.get("/api/scans", (req, res) => {
   res.json({ success: true, files: files });
 });
 
+// Neu: Datei löschen
+app.delete("/api/scans/:filename", (req, res) => {
+  const filename = req.params.filename;
+  if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf")) {
+    return res.status(400).json({ error: "Ungültiger Dateiname" });
+  }
+
+  const pdfPath = path.join(localDownloadFolder, filename);
+  const jpgPath = path.join(localDownloadFolder, filename.replace(".pdf", ".jpg"));
+
+  try {
+    if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+    if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Error deleting scan:", err);
+    res.status(500).json({ error: "Fehler beim Löschen" });
+  }
+});
+
 // Neu: Bereits existierende gescannte Datei in die KI-Pipeline werfen
 app.post("/api/upload-scan", express.json(), (req, res) => {
   const filenames = req.body.filenames;
