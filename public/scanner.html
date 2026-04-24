@@ -6,15 +6,15 @@
     <title>Live Dokumentenscanner</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f8f9fa; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
-        .scanner-container { max-width: 600px; width: 100%; padding: 20px; background: white; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center; }
-    .video-wrapper { position: relative; width: 100%; max-width: 100%; border-radius: 8px; overflow: hidden; background: #000; display: none; aspect-ratio: 3/4; }
-    #video { width: 100%; height: 100%; object-fit: cover; display: block; }
-    #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        body { background-color: #fff; margin: 0; padding: 0; display: block; }
+        .scanner-container { max-width: 800px; width: 100%; margin: 0 auto; background: #fff; text-align: center; display: flex; flex-direction: column; min-height: 100vh; }
+        .video-wrapper { position: relative; width: 100%; flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; overflow: hidden; background: #fff; }
+        #video { width: 100%; height: 100%; max-height: 100%; object-fit: cover; display: block; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
         #loader { display: none; }
-        .back-link { margin-bottom: 20px; text-decoration: none; color: #6c757d; font-weight: 500; }
-        .back-link:hover { color: #495057; }
-        #opencv-loading { color: #0d6efd; font-weight: bold; margin-top: 15px; }
+        .back-link { text-decoration: none; color: #495057; font-weight: bold; }
+        .back-link:hover { color: #000; }
+        #opencv-loading { color: #0d6efd; font-weight: bold; margin-top: 50px; }
 
         /* Scans Menu Sidebar */
         .scans-menu {
@@ -66,62 +66,68 @@
     <div id="server-upload-status" class="alert alert-info mt-2 p-2 text-center"></div>
 </div>
 
-<div class="w-100 d-flex justify-content-between" style="max-width: 600px; margin: 0 auto; margin-bottom: 20px;">
-    <a href="/" class="back-link mb-0">&larr; Zurück zur Startseite</a>
-    <button class="btn btn-sm btn-outline-secondary" onclick="toggleMenu()">Auswählen & Hochladen &rarr;</button>
-</div>
-
 <div class="scanner-container">
-    <h3>📄 Live Scanner</h3>
-    <p class="text-muted">Richte die Kamera auf das Dokument.</p>
-    
-    <div id="opencv-loading">
-        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-        Kamera und KI-Module werden geladen...
+    <!-- Sticky Header -->
+    <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
+        <a href="/" class="back-link m-0">&larr; Startseite</a>
+        <button class="btn btn-sm btn-outline-primary" style="font-weight: bold;" onclick="toggleMenu()">📂 Auswahl & Upload</button>
     </div>
 
-    <div class="video-wrapper" id="video-wrapper">
-        <video id="video" autoplay playsinline></video>
-        <canvas id="overlay"></canvas>
-    </div>
-
-    <!-- Einstellungen -->
-    <details class="mt-3 text-start bg-light p-3 rounded border">
-        <summary class="text-secondary fw-bold" style="cursor: pointer;">⚙️ Erweiterte Scan-Einstellungen</summary>
-
-        <div class="mt-3">
-            <label class="form-label fw-bold text-dark">🎨 Bild-Filter (Backend)</label>
-            <select id="algorithmSelect" class="form-select mb-3">
+    <!-- Dropdown Einstellungen (Sticky directly below header) -->
+    <details class="bg-light text-start shadow-sm position-sticky" style="top: 60px; z-index: 1020; border-bottom: 2px solid #ddd;">
+        <summary class="text-secondary fw-bold p-3 m-0" style="cursor: pointer; background: #f8f9fa;">⚙️ Filtereinstellungen anzeigen</summary>
+        <div class="px-3 pb-3 border-top pt-2">
+            <label class="form-label fw-bold text-dark small mb-1">🎨 Bild-Filter (Backend)</label>
+            <select id="algorithmSelect" class="form-select form-select-sm mb-2">
                 <option value="white_paper" selected>Reinweißes Papier (Standard Scanner)</option>
                 <option value="bw_adaptive">Schwarz/Weiß Hart (Quittungen / Kassenzettel)</option>
                 <option value="clahe_sharp">Graustufen Schärfen (Besseres Detail bei dunkler Schrift)</option>
                 <option value="grayscale">Einfache Graustufen (kein Filter)</option>
                 <option value="color">Original in Farbe (unbearbeitet)</option>
             </select>
+
+            <h6 class="text-secondary mt-2 mb-1 small fw-bold">📏 Kanten-Empfindlichkeit</h6>
+            
+            <label class="form-label mb-0 mt-1 small">Unschärfe: <span id="blurVal">5</span></label>
+            <input type="range" class="form-range" style="height: 10px;" id="blurSlider" min="1" max="15" step="2" value="5">
+
+            <label class="form-label mb-0 mt-1 small">Kanten 1: <span id="canny1Val">75</span></label>
+            <input type="range" class="form-range" style="height: 10px;" id="canny1Slider" min="0" max="255" value="75">
+
+            <label class="form-label mb-0 mt-1 small">Kanten 2: <span id="canny2Val">200</span></label>
+            <input type="range" class="form-range" style="height: 10px;" id="canny2Slider" min="0" max="255" value="200">
         </div>
-
-        <hr>
-
-        <h6 class="text-secondary mt-3">📏 Empfindlichkeit Kantenerkennung (Frontend)</h6>
-        
-        <label class="form-label mb-0 mt-2">Unschärfe (Rauschfilter): <span id="blurVal">5</span></label>
-        <input type="range" class="form-range" id="blurSlider" min="1" max="15" step="2" value="5">
-
-        <label class="form-label mb-0 mt-2">Kanten Kontrast 1: <span id="canny1Val">75</span></label>
-        <input type="range" class="form-range" id="canny1Slider" min="0" max="255" value="75">
-
-        <label class="form-label mb-0 mt-2">Kanten Kontrast 2: <span id="canny2Val">200</span></label>
-        <input type="range" class="form-range" id="canny2Slider" min="0" max="255" value="200">
     </details>
 
-    <!-- Result / Preview UI -->
-    <div id="preview-section" class="mt-3" style="display: none;">
-        <h6 class="text-primary mt-3 border-top pt-3">📄 Live-Vorschau:</h6>
-        <canvas id="preview-canvas" style="max-width: 100%; border: 2px solid #28a745; border-radius: 8px;"></canvas>
-        <p class="text-success small mt-1">✓ Datei wird jetzt vom KI-Server verarbeitet...</p>
+    <div id="opencv-loading">
+        <div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div><br>
+        Kamera & Optik werden geladen...
     </div>
 
-    <div id="loader" class="mt-3 mb-5">
+    <!-- Video füllt den restlichen Bildschirm -->
+    <div class="video-wrapper" id="video-wrapper">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- Review Section für manuelles Croppen -->
+    <div id="manual-review-section" class="bg-white p-3 mt-auto" style="display: none; width: 100%; box-shadow: 0 -4px 10px rgba(0,0,0,0.1); z-index: 1030; flex-direction: column; align-items: center; justify-content: center; flex-grow: 1;">
+        <h6 class="text-primary fw-bold mb-1"><span style="font-size: 1.2rem;">✏️</span> Kanten anpassen</h6>
+        <p class="text-muted small mb-2">Punkte verschieben, um Scanbereich zu korrigieren.</p>
+        
+        <div style="position: relative; max-width: 100%; height: auto; border: 2px solid #ddd; border-radius: 8px; overflow: hidden; background: #eee; display: inline-block;">
+            <canvas id="reviewCanvas" style="max-width: 100%; max-height: 50vh; display: block; object-fit: contain;"></canvas>
+            <canvas id="reviewOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; touch-action: none;"></canvas>
+        </div>
+        
+        <div class="mt-3 d-flex w-100 gap-2 mb-3" style="max-width: 500px;">
+            <button class="btn btn-outline-secondary w-50 py-2" id="cancelReviewBtn">Abbrechen</button>
+            <button class="btn btn-success fw-bold w-50 py-2" id="confirmReviewBtn">Scan bestätigen</button>
+        </div>
+    </div>
+
+    <!-- Scanner Info / Loader -->
+    <div id="loader" class="mt-auto mb-5 p-4 bg-white" style="display: none; width: 100%; text-align: center;">
         <div class="spinner-border text-primary" role="status"></div>
         <p class="mt-2 text-muted" id="loader-status">Dokument wird beschnitten und OCR-verarbeitet...</p>
     </div>
@@ -169,7 +175,7 @@
     let smoothedCornersRaw = null;
     let framesWithoutDetection = 0;
     const MAX_FRAMES_LOSE_TRACK = 12; // Halbe Sekunde Toleranz
-    const SMOOTHING_FACTOR = 0.25; // 25% vom neuen Frame, 75% vom alten bewahren
+    const SMOOTHING_FACTOR = 0.08; // Nur 8% vom neuen Frame aufnehmen (extrem starkes Glätten, "klebriger" Klebe-Effekt)
 
     // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
     function sortAndOrderCorners(ptsData32S) {
@@ -312,12 +318,12 @@
                 let cnt = contours.get(i);
                 let area = cv.contourArea(cnt);
                 
-                // Ignoriere Boxen, die kleiner sind als 5% des Bildes (vermeidet Rauschen)
+                // Ignoriere kleine Boxen unter 15% Screen-Größe (blockt Rauschen, Tassen oder Tastaturen extrem gut ab)
                 if (area > (processWidth * processHeight * 0.05)) { 
                     let peri = cv.arcLength(cnt, true);
                     let approx = new cv.Mat();
-                    // Toleranz
-                    cv.approxPolyDP(cnt, approx, 0.05 * peri, true);
+                    // Toleranz erhöhen auf 0.08 für grobere Vierecke (damit runde Blattecken als gerade interpretiert werden)
+                    cv.approxPolyDP(cnt, approx, 0.08 * peri, true);
                     
                     if (approx.rows === 4 && area > maxArea && cv.isContourConvex(approx)) {
                         // Berechne die Winkel zwischen allen 4 Kanten
@@ -411,7 +417,10 @@
 
     captureBtn.addEventListener('click', async () => {
         if (!streaming) return;
-
+        // Ecken sofort beim Klick wegspeichern ("einfrieren"), 
+        // da das Auslösen des Sensors per await ein paar Millisekunden dauert 
+        // und das Bild durch Verwackeln sonst verloren ginge!
+        let frozenCorners = currentRelativeDocumentCorners ? JSON.parse(JSON.stringify(currentRelativeDocumentCorners)) : null;
         captureBtn.disabled = true;
         loader.style.display = 'block';
         loaderStatus.innerText = "Dokument wird in Höchstauflösung fotografiert...";
@@ -466,89 +475,213 @@
             ctxHighRes.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, canvasHighRes.width, canvasHighRes.height);
         }
 
-        let finalImageCanvas = canvasHighRes;
-
-        // Wenn das Dokument gefunden wurde, entzerre (Deskew/Perspective Transform) das Bild live im Browser in Max-Auflösung
-        if (currentRelativeDocumentCorners) {
-            try {
-                let srcMat = cv.imread(canvasHighRes);
-                
-                // Absolute Koordinaten der 4 Ecken im Megapixel-Bild
-                let ptsArray = [];
-                for (let i = 0; i < 4; i++) {
-                    ptsArray.push(currentRelativeDocumentCorners[i].x * canvasHighRes.width);
-                    ptsArray.push(currentRelativeDocumentCorners[i].y * canvasHighRes.height);
-                }
-                
-                let [tlX, tlY, trX, trY, brX, brY, blX, blY] = ptsArray;
-                
-                // Berechne maximale Breite/Höhe des neuen geraden Rechtecks
-                let widthA = Math.sqrt(Math.pow(brX - blX, 2) + Math.pow(brY - blY, 2));
-                let widthB = Math.sqrt(Math.pow(trX - tlX, 2) + Math.pow(trY - tlY, 2));
-                let maxWidth = Math.max(widthA, widthB);
-                
-                let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
-                let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
-                let maxHeight = Math.max(heightA, heightB);
-                
-                // Mappe die schrägen Quellpunkte auf ein perfektes Rechteck
-                let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
-                let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                    0, 0,
-                    maxWidth - 1, 0,
-                    maxWidth - 1, maxHeight - 1,
-                    0, maxHeight - 1
-                ]);
-                
-                // Transformation durchführen
-                let M = cv.getPerspectiveTransform(srcTri, dstTri);
-                let dstMat = new cv.Mat();
-                let dsize = new cv.Size(maxWidth, maxHeight);
-                
-                cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
-                
-                // Gecropptes und entzerrtes Bild auf einen neuen Canvas legen
-                let croppedCanvas = document.createElement('canvas');
-                cv.imshow(croppedCanvas, dstMat);
-                finalImageCanvas = croppedCanvas; // Diesen Canvas gleich an Server schicken
-                
-                srcMat.delete(); dstMat.delete(); M.delete(); srcTri.delete(); dstTri.delete();
-            } catch (error) {
-                console.error("Fehler beim lokalen Bild-Crop: ", error);
-            }
+        // Falls absolut kein Dokument im Live-Video gefunden wurde, setzen wir ein 10% Dummy-Rechteck ein, damit 
+        // der User trotzdem manuell zuschneiden kann anstatt einen harten Fehler zu bekommen.
+        if (!frozenCorners) {
+            frozenCorners = [
+                {x: 0.1, y: 0.1}, {x: 0.9, y: 0.1}, {x: 0.9, y: 0.9}, {x: 0.1, y: 0.9}
+            ];
         }
 
-        // -- VORSCHAU IM FRONTEND ANZEIGEN -- //
-        const previewCanvas = document.getElementById('preview-canvas');
-        const previewSection = document.getElementById('preview-section');
-        
-        let ratio = 600 / finalImageCanvas.width;
-        previewCanvas.width = 600;
-        previewCanvas.height = finalImageCanvas.height * Math.min(ratio, 1); // nicht größer als 1
-        let pctx = previewCanvas.getContext('2d');
-        pctx.drawImage(finalImageCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
-        
-        previewSection.style.display = 'block';
-        
-        // Verberge die Live-Vorschau nach exakt 3 Sekunden (3000ms)
-        setTimeout(() => {
-            previewSection.style.display = 'none';
-        }, 3000);
+        // Zeige Editier-Ansicht ("Manual Review")
+        showManualReview(canvasHighRes, frozenCorners);
+    });
 
-        // Canvas (jetzt perfekt zugeschnitten) zu File-Blob machen
+    let reviewState = {
+        highResCanvas: null,
+        cropX: 0, cropY: 0, cropW: 0, cropH: 0,
+        corners: [], // Kanten bezogen auf das ReviewCanvas
+        activeCorner: -1
+    };
+
+    function showManualReview(highResCanvas, relativeCorners) {
+        // Pausiere Kameraanzeige
+        document.getElementById('video-wrapper').style.display = 'none';
+        document.getElementById('captureBtn').style.display = 'none';
+        document.getElementById('manual-review-section').style.display = 'flex';
+        
+        reviewState.highResCanvas = highResCanvas;
+
+        // Finde die absoluten Grenzen (Min/Max X und Y) der markierten Ecken im Originalbild, um den Rand zu berechnen
+        let xs = relativeCorners.map(c => c.x * highResCanvas.width);
+        let ys = relativeCorners.map(c => c.y * highResCanvas.height);
+        let minX = Math.min(...xs), maxX = Math.max(...xs);
+        let minY = Math.min(...ys), maxY = Math.max(...ys);
+
+        // Füge 15% Puffer um den erkannten Rahmen hinzu, damit der User noch etwas "außerhalb" sieht
+        let padX = (maxX - minX) * 0.15;
+        let padY = (maxY - minY) * 0.15;
+
+        reviewState.cropX = Math.max(0, minX - padX);
+        reviewState.cropY = Math.max(0, minY - padY);
+        reviewState.cropW = Math.min(highResCanvas.width - reviewState.cropX, (maxX - minX) + 2 * padX);
+        reviewState.cropH = Math.min(highResCanvas.height - reviewState.cropY, (maxY - minY) + 2 * padY);
+
+        // Lade diesen Puffer-Zuschnitt in den ReviewCanvas
+        const rCv = document.getElementById('reviewCanvas');
+        rCv.width = reviewState.cropW;
+        rCv.height = reviewState.cropH;
+        rCv.getContext('2d').drawImage(highResCanvas, reviewState.cropX, reviewState.cropY, reviewState.cropW, reviewState.cropH, 0, 0, reviewState.cropW, reviewState.cropH);
+
+        // Passe Overlay (Zeichenfläche) exakt auf das Canvas an
+        const oCv = document.getElementById('reviewOverlay');
+        oCv.width = reviewState.cropW;
+        oCv.height = reviewState.cropH;
+
+        // Rechne die 4 Originalecken in das lokale (abgeschnittene) Review-Bild um
+        reviewState.corners = relativeCorners.map(c => ({
+            x: (c.x * highResCanvas.width) - reviewState.cropX,
+            y: (c.y * highResCanvas.height) - reviewState.cropY
+        }));
+
+        drawReviewOverlay();
+    }
+
+    function drawReviewOverlay() {
+        const ctx = document.getElementById('reviewOverlay').getContext('2d');
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+        // Grün schimmerndes Polygon
+        ctx.beginPath();
+        ctx.moveTo(reviewState.corners[0].x, reviewState.corners[0].y);
+        for(let i=1; i<4; i++) ctx.lineTo(reviewState.corners[i].x, reviewState.corners[i].y);
+        ctx.closePath();
+        ctx.lineWidth = 2; // Dünner, da man jetzt nah rangezoomt hat
+        ctx.strokeStyle = '#28a745';
+        ctx.fillStyle = 'rgba(40, 167, 69, 0.15)';
+        ctx.fill();
+        ctx.stroke();
+
+        // 4 Weiße Anfass-Punkte mit grünen Kernen
+        reviewState.corners.forEach(c => {
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 20, 0, 2*Math.PI);
+            ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 6, 0, 2*Math.PI);
+            ctx.fillStyle = '#28a745';
+            ctx.fill();
+        });
+    }
+
+    // Touch & Mouse Handler für das Verschieben der Ecken
+    const reviewOverlay = document.getElementById('reviewOverlay');
+
+    function getInternalPos(e) {
+        const rect = reviewOverlay.getBoundingClientRect();
+        const scaleX = reviewOverlay.width / rect.width;
+        const scaleY = reviewOverlay.height / rect.height;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY
+        };
+    }
+
+    function onDragStart(e) {
+        e.preventDefault();
+        const pos = getInternalPos(e);
+        reviewState.activeCorner = -1;
+        for (let i = 0; i < 4; i++) {
+            // Großer "Fangradius" von 50px (virtuell) für dicke Finger auf Handys
+            if (Math.hypot(reviewState.corners[i].x - pos.x, reviewState.corners[i].y - pos.y) < 50) {
+                reviewState.activeCorner = i;
+                break;
+            }
+        }
+    }
+
+    function onDragMove(e) {
+        if (reviewState.activeCorner === -1) return;
+        e.preventDefault();
+        const pos = getInternalPos(e);
+        // Position clampen, damit Ecke nicht aus dem Zoom-Bild geschoben wird
+        reviewState.corners[reviewState.activeCorner].x = Math.max(0, Math.min(reviewOverlay.width, pos.x));
+        reviewState.corners[reviewState.activeCorner].y = Math.max(0, Math.min(reviewOverlay.height, pos.y));
+        drawReviewOverlay();
+    }
+
+    function onDragEnd(e) {
+        reviewState.activeCorner = -1;
+    }
+
+    reviewOverlay.addEventListener('mousedown', onDragStart);
+    reviewOverlay.addEventListener('mousemove', onDragMove);
+    reviewOverlay.addEventListener('mouseup', onDragEnd);
+    reviewOverlay.addEventListener('mouseleave', onDragEnd);
+    reviewOverlay.addEventListener('touchstart', onDragStart, {passive: false});
+    reviewOverlay.addEventListener('touchmove', onDragMove, {passive: false});
+    reviewOverlay.addEventListener('touchend', onDragEnd);
+
+    // Klick auf "Abbrechen"
+    document.getElementById('cancelReviewBtn').addEventListener('click', () => {
+        document.getElementById('manual-review-section').style.display = 'none';
+        document.getElementById('video-wrapper').style.display = 'flex';
+        document.getElementById('captureBtn').style.display = 'block';
+        document.getElementById('captureBtn').disabled = false;
+    });
+
+    // Klick auf "Scan bestätigen" -> Abschließende Berechnung und Hochladen
+    document.getElementById('confirmReviewBtn').addEventListener('click', () => {
+        document.getElementById('manual-review-section').style.display = 'none';
+        loader.style.display = 'block';
+        loaderStatus.innerText = "Dokument wird entzerrt und hochgeladen...";
+
+        // Rückrechnung der modifizierten lokalen Crop-Punkte auf das Originale Mega-Pixel-Speicherbild
+        let finalAbsoluteCorners = reviewState.corners.map(c => ({
+            x: c.x + reviewState.cropX,
+            y: c.y + reviewState.cropY
+        }));
+
+        let srcMat = cv.imread(reviewState.highResCanvas);
+        let ptsArray = [];
+        for (let i = 0; i < 4; i++) {
+            ptsArray.push(finalAbsoluteCorners[i].x);
+            ptsArray.push(finalAbsoluteCorners[i].y);
+        }
+        
+        let [tlX, tlY, trX, trY, brX, brY, blX, blY] = ptsArray;
+        
+        // Max. Kantenlängen kalkulieren für quadratische Streckung
+        let widthA = Math.sqrt(Math.pow(brX - blX, 2) + Math.pow(brY - blY, 2));
+        let widthB = Math.sqrt(Math.pow(trX - tlX, 2) + Math.pow(trY - tlY, 2));
+        let maxWidth = Math.max(widthA, widthB);
+        let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
+        let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
+        let maxHeight = Math.max(heightA, heightB);
+        
+        let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
+        let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+            0, 0,
+            maxWidth - 1, 0,
+            maxWidth - 1, maxHeight - 1,
+            0, maxHeight - 1
+        ]);
+        
+        let M = cv.getPerspectiveTransform(srcTri, dstTri);
+        let dstMat = new cv.Mat();
+        let dsize = new cv.Size(maxWidth, maxHeight);
+        
+        cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+        
+        // Gecropptes und entzerrtes Bild erzeugen
+        let finalImageCanvas = document.createElement('canvas');
+        cv.imshow(finalImageCanvas, dstMat);
+        
+        srcMat.delete(); dstMat.delete(); M.delete(); srcTri.delete(); dstTri.delete();
+
+        // Canvas an Server API pushen
         finalImageCanvas.toBlob(async (blob) => {
             const formData = new FormData();
             formData.append('image', blob, 'live_scan.jpg');
-
-            // Damit das Backend Bescheid weiß: Wenn wir lokal beschnitten haben, übergeben wir "coords" als Flag
-            if (currentRelativeDocumentCorners) {
-                formData.append('coords', 'frontend_cropped');
-            }
-            
-            // Backend-Filter anfügen
+            // Da wir definitiv gecropped haben, setzen wir das Backend Flag
+            formData.append('coords', 'frontend_cropped');
             formData.append('algorithm', document.getElementById('algorithmSelect').value);
-
-            loaderStatus.innerText = "Gescanntes Bild wird hochgeladen. Cloud-KI arbeitet (OCR)...";
 
             try {
                 const response = await fetch('/api/scan', {
@@ -557,37 +690,38 @@
                 });
 
                 if (response.ok) {
-                    loaderStatus.innerText = "PDF wird heruntergeladen...";
                     const pdfBlob = await response.blob();
                     const downloadUrl = window.URL.createObjectURL(pdfBlob);
                     const a = document.createElement('a');
                     a.href = downloadUrl;
-                    const dateString = new Date().toISOString().slice(0, 10);
-                    a.download = `Scanned_Document_${dateString}.pdf`;
+                    a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
                     
                     loaderStatus.innerText = "Fertig! Speichern erfolgreich.";
-                    
-                    // Lade Liste im Side-Menu neu, um die neue Scanned_ Datei sofort anzuzeigen
                     loadSavedScans();
 
                     setTimeout(() => {
                         loader.style.display = 'none';
-                        captureBtn.disabled = false;
-                    }, 3000);
+                        document.getElementById('video-wrapper').style.display = 'flex';
+                        document.getElementById('captureBtn').style.display = 'block';
+                        document.getElementById('captureBtn').disabled = false;
+                    }, 2500);
                 } else {
                     const errorData = await response.json();
                     alert("Konnte nicht gescannt werden: " + (errorData.error || "Unbekannt"));
                     loader.style.display = 'none';
-                    captureBtn.disabled = false;
+                    document.getElementById('video-wrapper').style.display = 'flex';
+                    document.getElementById('captureBtn').style.display = 'block';
+                    document.getElementById('captureBtn').disabled = false;
                 }
             } catch (error) {
-                console.error(error);
                 alert("Netzwerkfehler.");
                 loader.style.display = 'none';
-                captureBtn.disabled = false;
+                document.getElementById('video-wrapper').style.display = 'flex';
+                document.getElementById('captureBtn').style.display = 'block';
+                document.getElementById('captureBtn').disabled = false;
             }
         }, 'image/jpeg', 0.95);
     });
