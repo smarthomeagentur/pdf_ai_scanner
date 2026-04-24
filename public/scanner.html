@@ -144,11 +144,12 @@
             <canvas id="reviewOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; touch-action: none;"></canvas>
         </div>
         
-        <div class="mt-3 w-100 d-flex justify-content-center" style="max-width: 500px;">
-            <button class="btn btn-warning w-100 py-2 fw-bold text-dark mb-2 shadow-sm" id="rescanBtn">🔄 KI-Erkennung wiederholen</button>
+        <div class="mt-3 w-100 d-flex justify-content-center flex-column gap-2" style="max-width: 500px;">
+            <button class="btn btn-warning w-100 py-2 fw-bold text-dark shadow-sm" id="rescanBtn">🔄 KI-Erkennung wiederholen</button>
+            <button class="btn btn-primary w-100 py-2 fw-bold shadow-sm" id="addPageBtn">📄 Nächste Seite scannen</button>
         </div>
 
-        <div class="d-flex w-100 gap-2 mb-3" style="max-width: 500px;">
+        <div class="d-flex w-100 gap-2 mb-3 mt-3" style="max-width: 500px;">
             <button class="btn btn-outline-secondary w-50 py-2" id="cancelReviewBtn">Abbrechen</button>
             <button class="btn btn-success fw-bold w-50 py-2 shadow-sm" id="confirmReviewBtn">Scan bestätigen</button>
         </div>
@@ -872,115 +873,172 @@
         }, 50);
     });
 
+    let scanPagesArray = [];
+
     // Klick auf "Abbrechen"
     document.getElementById('cancelReviewBtn').addEventListener('click', () => {
         document.getElementById('manual-review-section').style.display = 'none';
         document.getElementById('video-wrapper').style.display = 'flex';
         document.getElementById('captureBtn').style.display = 'block';
         document.getElementById('captureBtn').disabled = false;
+        
+        scanPagesArray = []; // Alle gesammelten Seiten resetten
+        updateConfirmBtnText();
     });
 
-    // Klick auf "Scan bestätigen" -> Abschließende Berechnung und Hochladen
-    document.getElementById('confirmReviewBtn').addEventListener('click', () => {
+    function updateConfirmBtnText() {
+        const btn = document.getElementById('confirmReviewBtn');
+        if (scanPagesArray.length > 0) {
+            btn.innerText = `${scanPagesArray.length + 1} Seiten speichern`;
+        } else {
+            btn.innerText = `Scan speichern`;
+        }
+    }
+
+    function extractCroppedBlob() {
+        return new Promise((resolve) => {
+            // Rückrechnung der modifizierten lokalen Crop-Punkte auf das Originale Mega-Pixel-Speicherbild
+            let finalAbsoluteCorners = reviewState.corners.map(c => ({
+                x: c.x + reviewState.cropX,
+                y: c.y + reviewState.cropY
+            }));
+
+            let srcMat = cv.imread(reviewState.highResCanvas);
+            let ptsArray = [];
+            for (let i = 0; i < 4; i++) {
+                ptsArray.push(finalAbsoluteCorners[i].x);
+                ptsArray.push(finalAbsoluteCorners[i].y);
+            }
+            
+            let [tlX, tlY, trX, trY, brX, brY, blX, blY] = ptsArray;
+            
+            let widthA = Math.sqrt(Math.pow(brX - blX, 2) + Math.pow(brY - blY, 2));
+            let widthB = Math.sqrt(Math.pow(trX - tlX, 2) + Math.pow(trY - tlY, 2));
+            let maxWidth = Math.max(widthA, widthB);
+            let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
+            let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
+            let maxHeight = Math.max(heightA, heightB);
+            
+            let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
+            let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0,
+                maxWidth - 1, 0,
+                maxWidth - 1, maxHeight - 1,
+                0, maxHeight - 1
+            ]);
+            
+            let M = cv.getPerspectiveTransform(srcTri, dstTri);
+            let dstMat = new cv.Mat();
+            let dsize = new cv.Size(maxWidth, maxHeight);
+            
+            cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+            
+            let finalImageCanvas = document.createElement('canvas');
+            cv.imshow(finalImageCanvas, dstMat);
+            srcMat.delete(); dstMat.delete(); M.delete(); srcTri.delete(); dstTri.delete();
+
+            finalImageCanvas.toBlob((blob) => {
+                resolve(blob);
+            }, 'image/jpeg', 0.95);
+        });
+    }
+
+    // Neu: Als Seite zwischenspeichern
+    document.getElementById('addPageBtn').addEventListener('click', async () => {
         document.getElementById('manual-review-section').style.display = 'none';
         loader.style.display = 'block';
-        loaderStatus.innerText = "Dokument wird entzerrt und hochgeladen...";
+        loaderStatus.innerText = "Seite zwischengespeichert. Mache Platz für die nächste...";
 
-        // Rückrechnung der modifizierten lokalen Crop-Punkte auf das Originale Mega-Pixel-Speicherbild
-        let finalAbsoluteCorners = reviewState.corners.map(c => ({
-            x: c.x + reviewState.cropX,
-            y: c.y + reviewState.cropY
-        }));
+        const blob = await extractCroppedBlob();
+        scanPagesArray.push(blob);
 
-        let srcMat = cv.imread(reviewState.highResCanvas);
-        let ptsArray = [];
-        for (let i = 0; i < 4; i++) {
-            ptsArray.push(finalAbsoluteCorners[i].x);
-            ptsArray.push(finalAbsoluteCorners[i].y);
-        }
-        
-        let [tlX, tlY, trX, trY, brX, brY, blX, blY] = ptsArray;
-        
-        // Max. Kantenlängen kalkulieren für quadratische Streckung
-        let widthA = Math.sqrt(Math.pow(brX - blX, 2) + Math.pow(brY - blY, 2));
-        let widthB = Math.sqrt(Math.pow(trX - tlX, 2) + Math.pow(trY - tlY, 2));
-        let maxWidth = Math.max(widthA, widthB);
-        let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
-        let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
-        let maxHeight = Math.max(heightA, heightB);
-        
-        let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
-        let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-            0, 0,
-            maxWidth - 1, 0,
-            maxWidth - 1, maxHeight - 1,
-            0, maxHeight - 1
-        ]);
-        
-        let M = cv.getPerspectiveTransform(srcTri, dstTri);
-        let dstMat = new cv.Mat();
-        let dsize = new cv.Size(maxWidth, maxHeight);
-        
-        cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
-        
-        // Gecropptes und entzerrtes Bild erzeugen
-        let finalImageCanvas = document.createElement('canvas');
-        cv.imshow(finalImageCanvas, dstMat);
-        
-        srcMat.delete(); dstMat.delete(); M.delete(); srcTri.delete(); dstTri.delete();
+        setTimeout(() => {
+            loader.style.display = 'none';
+            document.getElementById('video-wrapper').style.display = 'flex';
+            document.getElementById('captureBtn').style.display = 'block';
+            document.getElementById('captureBtn').disabled = false;
+            updateConfirmBtnText();
+        }, 500);
+    });
 
-        // Canvas an Server API pushen
-        finalImageCanvas.toBlob(async (blob) => {
-            const formData = new FormData();
-            formData.append('image', blob, 'live_scan.jpg');
-            // Da wir definitiv gecropped haben, setzen wir das Backend Flag
+    // Klick auf "Scan speichern" -> Abschließende Berechnung und Hochladen aller Seiten
+    document.getElementById('confirmReviewBtn').addEventListener('click', async () => {
+        document.getElementById('manual-review-section').style.display = 'none';
+        loader.style.display = 'block';
+        loaderStatus.innerText = "Bereite Seiten vor...";
+        
+        const finalBlob = await extractCroppedBlob();
+        scanPagesArray.push(finalBlob);
+
+        // Canvas Array an Server API pushen
+        const formData = new FormData();
+        scanPagesArray.forEach((blob, index) => {
+            formData.append('images', blob, `page_${index}.jpg`);
             formData.append('coords', 'frontend_cropped');
-            formData.append('algorithm', document.getElementById('algorithmSelect').value);
+        });
+        
+        formData.append('algorithm', document.getElementById('algorithmSelect').value);
 
-            try {
-                const response = await fetch('/api/scan', {
-                    method: 'POST',
-                    body: formData
-                });
+        // Non-blocking Toast als Feedback
+        const toastId = 'toast-' + Date.now();
+        const toastHtml = `
+            <div id="${toastId}" class="position-fixed top-0 start-50 translate-middle-x mt-3 p-3 bg-dark text-white rounded shadow" style="z-index: 9999; font-weight: bold;">
+                ⏳ Lade & verarbeite ${scanPagesArray.length} Seite(n)...
+            </div>
+        `;
+        document.body.insertAdjacentHTML('beforeend', toastHtml);
 
-                if (response.ok) {
-                    const pdfBlob = await response.blob();
-                    
-                    if (document.getElementById('autoDownloadPdf').checked) {
-                        const downloadUrl = window.URL.createObjectURL(pdfBlob);
-                        const a = document.createElement('a');
-                        a.href = downloadUrl;
-                        a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
-                        document.body.appendChild(a);
-                        a.click();
-                        a.remove();
-                    }
-                    
-                    loaderStatus.innerText = "Fertig! Verarbeitung erfolgreich.";
-                    loadSavedScans();
+        // Direkt UI freigeben, ohne auf fetch warten!
+        loader.style.display = 'none';
+        document.getElementById('video-wrapper').style.display = 'flex';
+        document.getElementById('captureBtn').style.display = 'block';
+        document.getElementById('captureBtn').disabled = false;
+        
+        // Letzte Aufräum-Schritte, damit man fröhlich weiterscannen kann
+        scanPagesArray = []; 
+        updateConfirmBtnText();
 
-                    setTimeout(() => {
-                        loader.style.display = 'none';
-                        document.getElementById('video-wrapper').style.display = 'flex';
-                        document.getElementById('captureBtn').style.display = 'block';
-                        document.getElementById('captureBtn').disabled = false;
-                    }, 2500);
-                } else {
-                    const errorData = await response.json();
-                    alert("Konnte nicht gescannt werden: " + (errorData.error || "Unbekannt"));
-                    loader.style.display = 'none';
-                    document.getElementById('video-wrapper').style.display = 'flex';
-                    document.getElementById('captureBtn').style.display = 'block';
-                    document.getElementById('captureBtn').disabled = false;
+        // Der asynchrone Upload-Prozess im Hintergrund
+        try {
+            const response = await fetch('/api/scan', {
+                method: 'POST',
+                body: formData
+            });
+
+            const toastEl = document.getElementById(toastId);
+
+            if (response.ok) {
+                const pdfBlob = await response.blob();
+                
+                if (document.getElementById('autoDownloadPdf').checked) {
+                    const downloadUrl = window.URL.createObjectURL(pdfBlob);
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
                 }
-            } catch (error) {
-                alert("Netzwerkfehler.");
-                loader.style.display = 'none';
-                document.getElementById('video-wrapper').style.display = 'flex';
-                document.getElementById('captureBtn').style.display = 'block';
-                document.getElementById('captureBtn').disabled = false;
+                
+                toastEl.innerText = "✅ Dokument verarbeitet und sicher im Menü!";
+                toastEl.classList.replace('bg-dark', 'bg-success');
+                loadSavedScans();
+
+                setTimeout(() => toastEl.remove(), 4000);
+            } else {
+                const errorData = await response.json();
+                toastEl.innerText = "❌ Fehler: " + (errorData.error || "Unbekannt");
+                toastEl.classList.replace('bg-dark', 'bg-danger');
+                setTimeout(() => toastEl.remove(), 6000);
             }
-        }, 'image/jpeg', 0.95);
+        } catch (error) {
+            const toastEl = document.getElementById(toastId);
+            if (toastEl) {
+                toastEl.innerText = "❌ Fehler: Netzwerkfehler / Timeout";
+                toastEl.classList.replace('bg-dark', 'bg-danger');
+                setTimeout(() => toastEl.remove(), 6000);
+            }
+        }
     });
 
     // Menü-Steuerung

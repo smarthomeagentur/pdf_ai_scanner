@@ -9,6 +9,7 @@ const { google } = require("googleapis");
 const express = require("express");
 const multer = require("multer");
 const { exec } = require("child_process");
+const { PDFDocument } = require("pdf-lib");
 
 dotenv.config();
 
@@ -78,40 +79,82 @@ app.get("/api/status", (req, res) => {
   res.json({ success: true, statuses: statuses });
 });
 
-app.post("/api/scan", upload.single("image"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "Kein Bild hochgeladen." });
+app.post("/api/scan", upload.array("images", 50), async (req, res) => {
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: "Keine Bilder hochgeladen." });
   }
 
-  const inputPath = req.file.path;
   const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
-  const coords = req.body.coords || ""; // Optional gesendete Koordinaten
-  const algorithm = req.body.algorithm || "white_paper"; // Neuer Backend Algorithmus-Parameter
+  const coordsList = req.body.coords || []; // Coordinates might be single string or array
+  const algorithm = req.body.algorithm || "white_paper";
 
-  console.log(`[SCANNER] Starte Verarbeitung für ${req.file.originalname} mit Modus ${algorithm}`);
+  console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
 
-  // Python Skript ausführen (Nutzt das Virtual Environment)
-  const pythonProcess = exec(
-    `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputPdfPath}" "${coords}" "${algorithm}"`,
-    (error, stdout, stderr) => {
-      // Lösche das originale Foto nach der Verarbeitung, falls vorhanden
-      if (fs.existsSync(inputPath)) {
-        fs.unlinkSync(inputPath);
-      }
+  try {
+    const tempPdfs = [];
 
-      if (error) {
-        console.error(`[SCANNER ERROR]: ${error.message}`);
-        console.error(stderr);
-        return res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
-      }
-
-      console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
-      // PDF an den User als Download senden, aber Datei auf dem Server behalten für spätere Uploads
-      res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
-        if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
+    // Helper functions for running the Python scanner sync-ish via Promisification
+    const runScannerTask = (inputPath, tempPdfPath, coordsStr) => {
+      return new Promise((resolve, reject) => {
+        exec(
+          `./venv/bin/python ./app/scanner.py "${inputPath}" "${tempPdfPath}" "${coordsStr}" "${algorithm}"`,
+          (error, stdout, stderr) => {
+            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+            if (error) {
+              console.error(`[SCANNER ERROR]: ${error.message} | ${stderr}`);
+              reject(error);
+            } else {
+              resolve(tempPdfPath);
+            }
+          }
+        );
       });
+    };
+
+    // Verarbeite jede Seite mit Tesseract einzeln
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      const inputPath = file.path;
+      const tempPdfPath = path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`);
+      let coordsStr = Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : "";
+
+      await runScannerTask(inputPath, tempPdfPath, coordsStr);
+      tempPdfs.push(tempPdfPath);
     }
-  );
+
+    // Wenn mehrere Dateien, dann per pdf-lib mergen, ansonsten einfach umbenennen
+    if (tempPdfs.length === 1) {
+      fs.renameSync(tempPdfs[0], outputPdfPath);
+    } else {
+      const mergedPdf = await PDFDocument.create();
+      for (const pdfPath of tempPdfs) {
+        const pdfBytes = fs.readFileSync(pdfPath);
+        const pdf = await PDFDocument.load(pdfBytes);
+        const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+        copiedPages.forEach((page) => mergedPdf.addPage(page));
+      }
+
+      const mergedPdfBytes = await mergedPdf.save();
+      fs.writeFileSync(outputPdfPath, mergedPdfBytes);
+
+      // Temporäre PDFs + Vorschau-Jpgs löschen, behalte das neue Output JPG von Seite 1
+      for (let i = 0; i < tempPdfs.length; i++) {
+        if (fs.existsSync(tempPdfs[i])) fs.unlinkSync(tempPdfs[i]);
+        let tempJpg = tempPdfs[i].replace(".pdf", ".jpg");
+        if (fs.existsSync(tempJpg)) {
+          if (i === 0) fs.renameSync(tempJpg, outputPdfPath.replace(".pdf", ".jpg")); // 1. JPG Preview behalten
+          else fs.unlinkSync(tempJpg);
+        }
+      }
+    }
+
+    console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
+    res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
+      if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
+  }
 });
 
 // Neu: Liste aller lokal gescannten Dateien abrufen

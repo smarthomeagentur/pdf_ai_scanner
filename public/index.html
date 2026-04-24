@@ -351,8 +351,8 @@
             }
             
             div.innerHTML = `
-                <div class="job-title" style="display: flex; justify-content: space-between;">
-                    <span>${job.originalName}</span>
+                <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
+                    <span style="word-break: break-word; line-height: 1.2;">${job.originalName}</span>
                     <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
                 </div>
                 <div class="job-status">${statusText}</div>
