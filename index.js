@@ -11,6 +11,13 @@ const multer = require("multer");
 const { exec } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
 
+// Unterdrücke lästige PUA (Private Use Area) Font-Warnungen von pdf-lib
+const originalConsoleWarn = console.warn;
+console.warn = (...args) => {
+  if (typeof args[0] === "string" && args[0].includes("Ran out of space in font private use area")) return;
+  originalConsoleWarn(...args);
+};
+
 dotenv.config();
 
 var debug = false;
@@ -196,9 +203,9 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
 
     res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
       if (err) {
-        if (err.code === "ECONNABORTED" || err.message === "Request aborted") {
+        if (err.code === "ECONNABORTED" || err.message === "Request aborted" || err.code === "EPIPE") {
           console.log(
-            "[SCANNER] Client hat die Verbindung getrennt (ECONNABORTED). Hintergrund-Verarbeitung läuft weiter."
+            "[SCANNER] Client hat die Verbindung getrennt (Verbindung vorzeitig beendet). Hintergrund-Verarbeitung läuft weiter."
           );
         } else {
           console.error("[SCANNER] Fehler beim Senden der Datei:", err);
