@@ -575,13 +575,23 @@
             try {
                 const imageCapture = new ImageCapture(videoTrack);
                 
-                // Falls "Auto"-Flash aktiviert ist, aktivieren wir temporär für das Foto fillLightMode = 'auto'
-                let photoSettings = {};
+                // Workaround für kaputten "Auto"-Flash in vielen Browsern:
+                // Wir schalten die Taschenlampe *manuell* kurz vor dem Foto ein!
+                let flashWasTriggered = false;
                 if (torchSupported && torchMode === 'auto') {
-                    photoSettings.fillLightMode = 'auto';
+                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                    flashWasTriggered = true;
+                    // Kurz warten, damit die Kamera den Weißabgleich/Belichtung anpassen kann
+                    await new Promise(r => setTimeout(r, 400));
                 }
 
-                const blob = await imageCapture.takePhoto(photoSettings); 
+                const blob = await imageCapture.takePhoto(); 
+                
+                // Licht sofort wieder aus, wenn es nur für das Foto an war
+                if (flashWasTriggered) {
+                    videoTrack.applyConstraints({ advanced: [{ torch: false }] }).catch(e=>console.warn(e));
+                }
+
                 highResBitmap = await createImageBitmap(blob);
                 originalWidth = highResBitmap.width;
                 originalHeight = highResBitmap.height;
@@ -944,11 +954,10 @@
                         let boxW = maxX - minX;
                         let boxH = maxY - minY;
                         
-                        // Dynamischer Toleranz-Rand (mind. 50px, bis zu 35% der Objektgröße in jede Richtung).
-                        // Löst das Problem: "Wenn der User den grünen Bereich zu klein zieht (innerhalb des Blattes)".
-                        // Der Suchbereich wird massiv nach außen erweitert, blendet aber weit entfernte Schreibtisch-Objekte weiterhin aus.
-                        let padX = Math.max(50, Math.round(boxW * 0.35));
-                        let padY = Math.max(50, Math.round(boxH * 0.35));
+                        // Dynamischer Toleranz-Rand (angepasst!). 
+                        // Ignoriert jetzt noch aggressiver die Umgebung außerhalb des grob gesetzten Rahmens.
+                        let padX = Math.max(20, Math.round(boxW * 0.15));
+                        let padY = Math.max(20, Math.round(boxH * 0.15));
                         
                         let pt1 = new cv.Point(Math.max(0, minX - padX), Math.max(0, minY - padY));
                         let pt2 = new cv.Point(Math.min(processWidth, maxX + padX), Math.min(processHeight, maxY + padY));
