@@ -131,7 +131,14 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="white_p
         processed = warped_gray
 
     # 6. OCR mit Tesseract und als durchsuchbares PDF speichern
-    pdf_bytes = pytesseract.image_to_pdf_or_hocr(processed, extension='pdf', lang='deu+eng')
+    # Maximale OCR-Qualität (Darf länger dauern):
+    # - Kubische Interpolation skaliert das Bild um Faktor 2 hoch. Tesseract profitiert massiv davon (simuliert > 300 DPI). 
+    # - --oem 1: Nutzt die moderne LSTM-Engine (Neuronale Netzwerke) von Tesseract.
+    # - --psm 3: Pseudosmartes Dokument-Layout (Erkennt Spalten viel besser als purer Textmodus).
+    # - preserve_interword_spaces=1: Leerzeichen bleiben erhalten und verschwinden nicht bei dicker Schrift.
+    ocr_image = cv2.resize(processed, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    custom_config = r'--oem 1 --psm 3 -c preserve_interword_spaces=1'
+    pdf_bytes = pytesseract.image_to_pdf_or_hocr(ocr_image, extension='pdf', lang='deu+eng', config=custom_config)
     with open(output_pdf_path, 'wb') as f:
         f.write(pdf_bytes)
 
