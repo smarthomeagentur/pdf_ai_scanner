@@ -572,12 +572,12 @@
 
         // Versuche über aktuelle ImageCapture API die echte volle Foto-Sensor-Auflösung abzurufen
         if (window.ImageCapture && videoTrack) {
+            let flashWasTriggered = false;
             try {
                 const imageCapture = new ImageCapture(videoTrack);
                 
                 // Workaround für kaputten "Auto"-Flash in vielen Browsern:
                 // Wir schalten die Taschenlampe *manuell* kurz vor dem Foto ein!
-                let flashWasTriggered = false;
                 if (torchSupported && torchMode === 'auto') {
                     await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
                     flashWasTriggered = true;
@@ -587,11 +587,6 @@
 
                 const blob = await imageCapture.takePhoto(); 
                 
-                // Licht sofort wieder aus, wenn es nur für das Foto an war
-                if (flashWasTriggered) {
-                    videoTrack.applyConstraints({ advanced: [{ torch: false }] }).catch(e=>console.warn(e));
-                }
-
                 highResBitmap = await createImageBitmap(blob);
                 originalWidth = highResBitmap.width;
                 originalHeight = highResBitmap.height;
@@ -599,6 +594,11 @@
                 console.log(`Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight} gegenüber Video: ${video.videoWidth}x${video.videoHeight}`);
             } catch (e) {
                 console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
+            } finally {
+                // GANZ WICHTIG: Licht sofort wieder aus - EGAL ob das Foto erfolgreich war oder die API abgestürzt ist!
+                if (flashWasTriggered && videoTrack) {
+                    videoTrack.applyConstraints({ advanced: [{ torch: false }] }).catch(e=>console.warn(e));
+                }
             }
         }
 
