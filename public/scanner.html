@@ -1195,8 +1195,8 @@
         // Non-blocking Toast als Feedback
         const toastId = 'toast-' + Date.now();
         const toastHtml = `
-            <div id="${toastId}" class="position-fixed top-0 start-50 translate-middle-x mt-3 p-3 bg-dark text-white rounded shadow" style="z-index: 9999; font-weight: bold;">
-                ⏳ Lade & verarbeite ${scanPagesArray.length} Seite(n)...
+            <div id="${toastId}" class="position-fixed start-50 translate-middle-x p-3 bg-dark text-white rounded shadow text-center" style="top: 75px; z-index: 9999; font-weight: bold; width: max-content; max-width: 90vw;">
+                verarbeite ${scanPagesArray.length} Seite(n)...
             </div>
         `;
         document.body.insertAdjacentHTML('beforeend', toastHtml);

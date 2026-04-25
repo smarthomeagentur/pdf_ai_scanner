@@ -195,7 +195,15 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     }
 
     res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
-      if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
+      if (err) {
+        if (err.code === "ECONNABORTED" || err.message === "Request aborted") {
+          console.log(
+            "[SCANNER] Client hat die Verbindung getrennt (ECONNABORTED). Hintergrund-Verarbeitung läuft weiter."
+          );
+        } else {
+          console.error("[SCANNER] Fehler beim Senden der Datei:", err);
+        }
+      }
     });
   } catch (error) {
     res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
