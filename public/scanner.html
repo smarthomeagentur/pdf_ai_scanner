@@ -60,6 +60,37 @@
         }
         .overlay-bg.show { display: block; }
         #server-upload-status { display: none; font-size: 0.9em;}
+        
+        /* Modern Gray Range Sliders */
+        input[type=range].modern-slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #e9ecef;
+            border-radius: 3px;
+            outline: none;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        input[type=range].modern-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #6c757d;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+        input[type=range].modern-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #6c757d;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
     </style>
 </head>
 <body>
@@ -93,14 +124,17 @@
     <!-- Sticky Header -->
     <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
         <a href="/" class="back-link m-0">&larr; Startseite</a>
-        <button class="btn btn-sm btn-outline-primary" style="font-weight: bold;" onclick="toggleMenu()">📂 Auswahl & Upload</button>
+        <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('filterMenu').open = !document.getElementById('filterMenu').open" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px;">⚙️</button>
+            <button class="btn btn-sm btn-outline-primary" style="font-weight: bold;" onclick="toggleMenu()">📂 Auswahl & Upload</button>
+        </div>
     </div>
 
     <!-- Dropdown Einstellungen (Sticky directly below header) -->
     <details id="filterMenu" class="bg-light text-start shadow-sm position-sticky" style="top: 60px; z-index: 1020; border-bottom: 2px solid #ddd;">
-        <summary class="text-secondary fw-bold p-3 m-0" style="cursor: pointer; background: #f8f9fa;">⚙️ Filtereinstellungen anzeigen</summary>
+        <summary class="text-secondary fw-bold p-3 m-0" style="cursor: pointer; background: #f8f9fa; display: none;">⚙️ Filtereinstellungen anzeigen</summary>
         <div class="px-3 pb-3 border-top pt-2">
-            <label class="form-label fw-bold text-dark small mb-1">🎨 Bild-Filter (Backend)</label>
+            <label class="form-label fw-bold text-dark small mb-1">Bild-Filter</label>
             <select id="algorithmSelect" class="form-select form-select-sm mb-2">
                 <option value="white_paper" selected>Reinweißes Papier (Standard Scanner)</option>
                 <option value="bw_adaptive">Schwarz/Weiß Hart (Quittungen / Kassenzettel)</option>
@@ -109,22 +143,16 @@
                 <option value="color">Original in Farbe (unbearbeitet)</option>
             </select>
 
-            <h6 class="text-secondary mt-2 mb-1 small fw-bold">📏 Kanten-Empfindlichkeit</h6>
+            <h6 class="text-secondary mt-3 mb-2 small fw-bold">Scanner Einstellung</h6>
             
-            <label class="form-label mb-0 mt-1 small">Unschärfe: <span id="blurVal">5</span></label>
-            <input type="range" class="form-range" style="height: 10px;" id="blurSlider" min="1" max="15" step="2" value="5">
+            <label class="form-label mb-0 mt-1 small">Dokumentenerkennung: <span id="sensitivityVal">50%</span></label>
+            <input type="range" class="modern-slider" id="sensitivitySlider" min="0" max="100" value="50">
 
-            <label class="form-label mb-0 mt-1 small">Kanten 1: <span id="canny1Val">75</span></label>
-            <input type="range" class="form-range" style="height: 10px;" id="canny1Slider" min="0" max="255" value="75">
-
-            <label class="form-label mb-0 mt-1 small">Kanten 2: <span id="canny2Val">200</span></label>
-            <input type="range" class="form-range" style="height: 10px;" id="canny2Slider" min="0" max="255" value="200">
-
-            <label class="form-label mb-0 mt-1 small text-primary">Rahmen-Trägheit (Anti-Flicker): <span id="smoothingVal">8%</span></label>
-            <input type="range" class="form-range bg-primary" style="height: 10px;" id="smoothingSlider" min="1" max="100" value="20">
+            <label class="form-label mb-0 mt-1 small">Rahmen-Trägheit (Anti-Flicker): <span id="smoothingVal">20%</span></label>
+            <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="20">
 
             <hr class="my-3">
-            <h6 class="text-secondary mb-2 small fw-bold">💾 Handyspeicher & KI Verhalten</h6>
+            <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
             <div class="form-check form-switch mt-2">
                 <input class="form-check-input" type="checkbox" id="autoQueueScan" checked>
                 <label class="form-check-label small fw-bold" for="autoQueueScan">Scan nach Abschluss direkt in KI Pipeline übertragen</label>
@@ -156,13 +184,13 @@
         </div>
         
         <div class="mt-3 w-100 d-flex justify-content-center flex-column gap-2" style="max-width: 500px;">
-            <button class="btn btn-warning w-100 py-2 fw-bold text-dark shadow-sm" id="rescanBtn">🔄 KI-Erkennung wiederholen</button>
-            <button class="btn btn-primary w-100 py-2 fw-bold shadow-sm" id="addPageBtn">📄 Nächste Seite scannen</button>
+            <button class="btn btn-warning w-100 py-2 fw-bold text-dark shadow-sm" id="rescanBtn">Kantenerkennung</button>
+            <button class="btn btn-primary w-100 py-2 fw-bold shadow-sm" id="addPageBtn">Nächste Seite</button>
         </div>
 
         <div class="d-flex w-100 gap-2 mb-3 mt-3" style="max-width: 500px; padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 60px);">
             <button class="btn btn-outline-secondary w-50 py-2" id="cancelReviewBtn">Abbrechen</button>
-            <button class="btn btn-success fw-bold w-50 py-2 shadow-sm" id="confirmReviewBtn">Scan bestätigen</button>
+            <button class="btn btn-success fw-bold w-50 py-2 shadow-sm" id="confirmReviewBtn">Abschließen</button>
         </div>
     </div>
 
@@ -194,9 +222,16 @@
     let optCanny1 = 75;
     let optCanny2 = 200;
 
-    document.getElementById('blurSlider').oninput = function() { optBlur = parseInt(this.value); document.getElementById('blurVal').innerText = optBlur; }
-    document.getElementById('canny1Slider').oninput = function() { optCanny1 = parseInt(this.value); document.getElementById('canny1Val').innerText = optCanny1; }
-    document.getElementById('canny2Slider').oninput = function() { optCanny2 = parseInt(this.value); document.getElementById('canny2Val').innerText = optCanny2; }
+    document.getElementById('sensitivitySlider').oninput = function() { 
+        let s = parseInt(this.value); 
+        document.getElementById('sensitivityVal').innerText = s + '%';
+        let norm = s / 100.0;
+        
+        optBlur = norm > 0.8 ? 3 : (norm > 0.4 ? 5 : (norm > 0.2 ? 7 : 9));
+        optCanny1 = 150 - Math.round(norm * 130);
+        optCanny2 = 250 - Math.round(norm * 150);
+    }
+
     document.getElementById('smoothingSlider').oninput = function() { SMOOTHING_FACTOR = parseInt(this.value) / 100.0; document.getElementById('smoothingVal').innerText = this.value + '%'; }
 
     let streaming = false;
@@ -992,6 +1027,7 @@
         });
         
         formData.append('algorithm', document.getElementById('algorithmSelect').value);
+        formData.append('autoQueue', document.getElementById('autoQueueScan').checked);
 
         // Non-blocking Toast als Feedback
         const toastId = 'toast-' + Date.now();
@@ -1024,6 +1060,7 @@
 
             if (response.ok) {
                 const fileName = response.headers.get('X-File-Name');
+                const autoJobHeader = response.headers.get('X-Auto-Job');
                 const pdfBlob = await response.blob();
                 
                 if (document.getElementById('autoDownloadPdf').checked) {
@@ -1036,28 +1073,16 @@
                     a.remove();
                 }
 
-                if (document.getElementById('autoQueueScan').checked && fileName) {
-                    toastEl.innerText = "⏳ Dokument gescannt. Übergebe an KI Pipeline...";
+                if (autoJobHeader) {
                     try {
-                        const aiResponse = await fetch('/api/upload-scan', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ filenames: [fileName] })
-                        });
-                        if (aiResponse.ok) {
-                            const aiData = await aiResponse.json();
-                            if (aiData.jobs) {
-                                let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
-                                activeJobs.unshift(...aiData.jobs);
-                                localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
-                            }
-                            toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
-                        } else {
-                            toastEl.innerText = "❌ Scanner OK, aber Übergabe an KI fehlgeschlagen.";
-                            toastEl.classList.replace('bg-dark', 'bg-danger');
-                        }
+                        const jobData = JSON.parse(autoJobHeader);
+                        let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
+                        activeJobs.unshift(jobData);
+                        localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
+                        
+                        toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
                     } catch(e) {
-                         toastEl.innerText = "❌ KI Upload Netzwerkfehler.";
+                         toastEl.innerText = "❌ KI Upload Fehler beim Lesen der Server-Daten.";
                          toastEl.classList.replace('bg-dark', 'bg-danger');
                     }
                 } else {

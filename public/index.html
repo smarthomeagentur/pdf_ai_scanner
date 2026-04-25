@@ -84,6 +84,7 @@
             margin-bottom: 10px;
             font-size: 14px;
             border-left: 5px solid #ccc;
+            position: relative;
         }
         .job-item.pending { border-left-color: #ccc; }
         .job-item.processing { border-left-color: #ff9800; }
@@ -123,7 +124,7 @@
             display: flex; /* Changed from inline-block to flex for easier centering if needed */
             justify-content: center;
             align-items: center;
-            background: #28a745;
+            background: #0d6efd;
             color: white;
             padding: 12px 20px;
             border-radius: 8px;
@@ -137,7 +138,7 @@
         }
 
         .live-scanner-btn:hover {
-            background: #218838;
+            background: #0b5ed7;
         }
 
         @media (max-width: 600px) {
@@ -174,7 +175,7 @@
 <div class="container">
     <h2>AI Dokument Scanner</h2>
     
-    <a href="/scanner.html" class="live-scanner-btn">Live Scanner</a>
+    <a href="/scanner.html" class="live-scanner-btn">Scannen</a>
 
     <div id="drop-area">
         <p>Datei(en) hier ablegen oder</p>
@@ -205,12 +206,12 @@
     let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
     let pollingInterval = null;
 
-    // Load initial jobs
+    // Load initial jobs (always start polling to get any server-side queued jobs)
     if (activeJobs.length > 0) {
         jobListContainer.style.display = 'block';
         renderJobs();
-        startPolling();
     }
+    startPolling(); // Always start polling on load to retrieve auto-queued background jobs
 
     // Drag & Drop Events
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -244,11 +245,12 @@
         if (this.files.length > 0) uploadFiles(this.files);
     });
     
-    clearJobsBtn.addEventListener('click', () => {
+    clearJobsBtn.addEventListener('click', async () => {
         activeJobs = [];
         localStorage.removeItem('uploadJobs');
         jobListContainer.style.display = 'none';
         statusDiv.innerHTML = '';
+        try { await fetch('/api/jobs', { method: 'DELETE' }); } catch(e) {}
         renderJobs();
     });
 
@@ -312,27 +314,24 @@
         if (pollingInterval) return;
         
         pollingInterval = setInterval(async () => {
-            const pendingJobs = activeJobs.filter(j => j.status === 'pending' || j.status === 'processing');
-            if (pendingJobs.length === 0) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
-                return;
-            }
-            
-            const ids = pendingJobs.map(j => j.id).join(',');
             try {
-                const res = await fetch(`/api/status?ids=${ids}`);
+                const res = await fetch(`/api/status?ids=all`);
                 const data = await res.json();
                 
                 if (data.success) {
                     let updated = false;
+                    
                     data.statuses.forEach(serverJob => {
                         const localJob = activeJobs.find(j => j.id === serverJob.id);
-                        // Check if status changed or it just started processing
-                        if (localJob && (
+                        if (!localJob) {
+                            // Completely new job discovered from backend
+                            activeJobs.unshift(serverJob);
+                            jobListContainer.style.display = 'block';
+                            updated = true;
+                        } else if (
                             localJob.status !== serverJob.status || 
                             (!localJob.processingStartedAt && serverJob.processingStartedAt)
-                        )) {
+                        ) {
                             localJob.status = serverJob.status;
                             localJob.result = serverJob.result;
                             localJob.error = serverJob.error;
@@ -345,6 +344,13 @@
                     if (updated) {
                         localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
                         renderJobs();
+                    }
+
+                    // Stop polling dynamically if no jobs are pending on server
+                    const hasPendingServerJobs = data.statuses.some(j => j.status === 'pending' || j.status === 'processing');
+                    if (!hasPendingServerJobs) {
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
                     }
                 }
             } catch (err) {
@@ -377,21 +383,45 @@
             const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString('de-DE') : '-';
 
             let resultHtml = '';
+            let previewHtml = '';
+
             if (job.status === 'completed' && job.result) {
                 const tagsStr = (job.result.tags && Array.isArray(job.result.tags)) ? job.result.tags.join(', ') : '-';
                 const isInvoiceStr = job.result.isInvoice ? 'Ja' : 'Nein';
                 const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : '-';
                 
+                if (job.result.localThumbnail || job.result.thumbnailLink) {
+                    const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
+                    previewHtml = `<a href="${job.result.webViewLink || '#'}" target="_blank" style="position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none;">
+                        <img src="${imgSrc}" alt="PDF Vorschau" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: #fff; display: block; border: 1px solid #ddd;">
+                    </a>`;
+                }
+
+                let driveBtnHtml = '';
+                if (job.result.webViewLink) {
+                    driveBtnHtml = `<div style="text-align: right; margin-top: 10px;">
+                        <a href="${job.result.webViewLink}" target="_blank" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; background: #0d6efd; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 87.3 78" width="18" height="18" style="background: white; border-radius: 3px; padding: 2px;">
+                                <path d="M6.6 66.5l21.8-37.3h43.6L50.2 66.5H6.6z" fill="#FFC107"/>
+                                <path d="M41.6 6.5L19.8 43.9 8.9 25 30.7 6.5h10.9z" fill="#1976D2"/>
+                                <path d="M80.7 66.5L58.9 29.2 48 48l21.8 37.4h10.9z" fill="#4CAF50"/>
+                            </svg>
+                            Google Drive Link
+                        </a>
+                    </div>`;
+                }
+
                 resultHtml = `
-                    <details class="job-result" style="margin-top: 10px;">
-                        <summary style="cursor: pointer; color: #007bff; font-weight: bold; margin-bottom: 5px;">Details anzeigen</summary>
-                        <div style="margin-top: 5px; padding: 10px; background: #fff; border-radius: 5px; border: 1px solid #eee;">
-                            <strong style="color: #4caf50;">Neuer Name:</strong> ${job.result.full}<br>
-                            <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
+                    <details class="job-result" style="margin-top: 10px; width: 100%;">
+                        <summary style="cursor: pointer; color: #007bff; font-weight: bold; margin-bottom: 0px; width: fit-content; padding-right: 15px;">Details</summary>
+                        <div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; border: 1px solid #eee; margin-right: -65px;">
+                            <strong style="color: #4caf50;">Dateiname:</strong> ${job.result.full}<br>
                             <strong>Unternehmen:</strong> ${job.result.company || '-'}<br>
+                            <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
                             <strong>Tags:</strong> ${tagsStr}<br>
                             <strong>Rechnung:</strong> ${isInvoiceStr}<br>
-                            <br><strong style="color: #007bff;">KI-Verarbeitungsdauer:</strong> ${durationStr}
+                            <br><strong style="color: #007bff;">Verarbeitungszeit:</strong> ${durationStr}<br>
+                            ${driveBtnHtml}
                         </div>
                     </details>
                 `;
@@ -413,12 +443,17 @@
             }
             
             div.innerHTML = `
-                <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                    <span style="word-break: break-word; line-height: 1.2;">${job.originalName}</span>
-                    <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
+                <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
+                    <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+                        <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
+                            <span style="word-break: break-word; line-height: 1.2;">${job.originalName}</span>
+                            <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
+                        </div>
+                        <div class="job-status" style="margin-top: 4px;">${statusText}</div>
+                    </div>
+                    ${resultHtml}
                 </div>
-                <div class="job-status">${statusText}</div>
-                ${resultHtml}
+                ${previewHtml}
             `;
             jobList.appendChild(div);
         });

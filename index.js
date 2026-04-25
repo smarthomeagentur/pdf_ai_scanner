@@ -74,9 +74,23 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
 });
 
 app.get("/api/status", (req, res) => {
-  const ids = req.query.ids ? req.query.ids.split(",") : [];
-  const statuses = ids.map((id) => uploadJobs[id]).filter(Boolean);
+  let statuses = [];
+  if (req.query.ids === "all") {
+    // Sort so newest is first
+    statuses = Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+  } else {
+    const ids = req.query.ids ? req.query.ids.split(",") : [];
+    statuses = ids.map((id) => uploadJobs[id]).filter(Boolean);
+  }
   res.json({ success: true, statuses: statuses });
+});
+
+// Neu: Clears the in-memory jobs from backend
+app.delete("/api/jobs", (req, res) => {
+  for (const key in uploadJobs) {
+    delete uploadJobs[key];
+  }
+  res.json({ success: true });
 });
 
 app.post("/api/scan", upload.array("images", 50), async (req, res) => {
@@ -87,6 +101,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
   const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
   const coordsList = req.body.coords || []; // Coordinates might be single string or array
   const algorithm = req.body.algorithm || "white_paper";
+  const autoQueue = req.body.autoQueue === "true";
 
   console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
 
@@ -152,9 +167,33 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
       }
     }
 
+    let createdJob = null;
+    if (autoQueue) {
+      const filename = path.basename(outputPdfPath);
+      const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+      const job = {
+        id: jobId,
+        originalName: filename,
+        status: "pending",
+        result: null,
+        error: null,
+        filePath: outputPdfPath,
+        uploadDate: new Date().toISOString(),
+      };
+      console.log("[SCANNER] Auto-queuing job for " + filename);
+      uploadJobs[jobId] = job;
+      uploadQueue.push(jobId);
+      createdJob = job;
+      processQueue();
+    }
+
     console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
     res.set("X-File-Name", path.basename(outputPdfPath));
-    res.set("Access-Control-Expose-Headers", "X-File-Name");
+    res.set("Access-Control-Expose-Headers", "X-File-Name, X-Auto-Job");
+    if (createdJob) {
+      res.set("X-Auto-Job", JSON.stringify(createdJob));
+    }
+
     res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
       if (err) console.error("[SCANNER] Fehler beim Senden der Datei:", err);
     });
@@ -276,10 +315,21 @@ async function processQueue() {
         throw new Error("KI Verarbeitung fehlgeschlagen.");
       }
 
+      let driveFile = null;
       if (FOLDER_ID_SORTED) {
-        await uploadFile(drive, job.filePath, FOLDER_ID_SORTED, sortedName.full);
+        driveFile = await uploadFile(drive, job.filePath, FOLDER_ID_SORTED, sortedName.full);
       }
-      await uploadFile(drive, job.filePath, folderId);
+      let defaultDriveFile = await uploadFile(drive, job.filePath, folderId);
+
+      if (!driveFile) {
+        driveFile = defaultDriveFile;
+      }
+
+      if (driveFile) {
+        sortedName.webViewLink = driveFile.webViewLink;
+        sortedName.thumbnailLink = driveFile.thumbnailLink;
+        sortedName.webContentLink = driveFile.webContentLink;
+      }
 
       console.log(`[WEB] Job ${jobId} finished. File uploaded to Drive:`);
       console.log(sortedName);
@@ -287,10 +337,19 @@ async function processQueue() {
       // Delete file after upload
       await fs.promises.unlink(job.filePath);
 
+      // Read thumbnail for frontend dashboard preview before deleting it
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
-      if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath);
+      let localThumbBase64 = null;
+      if (fs.existsSync(jpgPath)) {
+        try {
+          const imgBuf = await fs.promises.readFile(jpgPath);
+          localThumbBase64 = `data:image/jpeg;base64,${imgBuf.toString("base64")}`;
+        } catch (e) {}
+        await fs.promises.unlink(jpgPath);
+      }
 
       job.status = "completed";
+      sortedName.localThumbnail = localThumbBase64;
       job.result = sortedName;
     } catch (error) {
       console.error(`[WEB] Error processing job ${jobId}:`, error);
@@ -466,11 +525,13 @@ async function uploadFile(drive, filePath, folderId, name = undefined) {
     const file = await drive.files.create({
       resource: fileMetadata,
       media: media,
-      fields: "id",
+      fields: "id, webViewLink, thumbnailLink, webContentLink",
     });
     if (debug) console.log(`[DRIVE] Uploaded ${filename} (ID: ${file.data.id})`);
+    return file.data;
   } catch (error) {
     console.error(`Error uploading file ${filePath}:`, error);
+    return null;
   }
 }
 
