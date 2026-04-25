@@ -8,7 +8,9 @@
     <!-- PWA Meta Tags -->
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#ffffff">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/icon.svg">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Scanner">
@@ -123,9 +125,9 @@
 <div class="scanner-container">
     <!-- Sticky Header -->
     <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
-        <a href="/" class="back-link m-0">&larr; Startseite</a>
+        <a href="/" class="back-link m-0">&larr; Home</a>
         <div class="d-flex gap-2">
-            <button id="torchBtn" class="btn btn-sm btn-outline-secondary" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px; display: none;" title="Taschenlampe (Aus/An/Auto)">⚡ Aus</button>
+            <button id="torchBtn" class="btn btn-sm btn-outline-secondary" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px; display: block;" title="Taschenlampe (Aus/An/Auto)">⚡ Aus</button>
             <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('filterMenu').open = !document.getElementById('filterMenu').open" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px;">⚙️</button>
             <button class="btn btn-sm btn-outline-primary" style="font-weight: bold;" onclick="toggleMenu()">📂 Auswahl & Upload</button>
         </div>
@@ -298,6 +300,7 @@
             video.srcObject = stream;
             videoTrack = stream.getVideoTracks()[0];
             video.play();
+            updateTorchState();
         } catch (err) {
             // Fallback auf 720p, wenn 1080p fehlschlägt
             try {
@@ -308,6 +311,7 @@
                 video.srcObject = stream;
                 videoTrack = stream.getVideoTracks()[0];
                 video.play();
+                updateTorchState();
             } catch (fallbackErr) {
                 alert("Kamera konnte nicht gestartet werden: " + fallbackErr);
             }
@@ -320,7 +324,10 @@
     let torchSupported = false;
 
     async function updateTorchState() {
-        if (!videoTrack) return;
+        if (!videoTrack) {
+            console.warn("Taschenlampe Keine Video API");
+            return;
+        }
         try {
             const capabilities = videoTrack.getCapabilities();
             if (capabilities.torch) {
@@ -350,6 +357,7 @@
                 }
             } else {
                 torchBtn.style.display = 'none'; // Not supported on this device/camera
+                console.info("Taschenlampe nicht erkannt");
             }
         } catch (e) {
             console.warn("Taschenlampe konnte nicht gesteuert werden:", e);
@@ -539,8 +547,10 @@
             console.error("OpenCV Verarbeitung:", err);
         }
         
-        // Nächster Frame Timer
-        requestAnimationFrame(processVideo);
+        // Nächster Frame Timer (gedrosselt auf ca. 10-15 FPS für Akku/CPU)
+        setTimeout(() => {
+            requestAnimationFrame(processVideo);
+        }, 50);
     }
 
     captureBtn.addEventListener('click', async () => {
