@@ -125,6 +125,7 @@
     <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
         <a href="/" class="back-link m-0">&larr; Startseite</a>
         <div class="d-flex gap-2">
+            <button id="torchBtn" class="btn btn-sm btn-outline-secondary" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px; display: none;" title="Taschenlampe (Aus/An/Auto)">⚡ Aus</button>
             <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('filterMenu').open = !document.getElementById('filterMenu').open" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px;">⚙️</button>
             <button class="btn btn-sm btn-outline-primary" style="font-weight: bold;" onclick="toggleMenu()">📂 Auswahl & Upload</button>
         </div>
@@ -312,6 +313,59 @@
             }
         }
     }
+
+    // --- Taschenlampen Support ---
+    const torchBtn = document.getElementById('torchBtn');
+    let torchMode = 'off'; // off, on, auto
+    let torchSupported = false;
+
+    async function updateTorchState() {
+        if (!videoTrack) return;
+        try {
+            const capabilities = videoTrack.getCapabilities();
+            if (capabilities.torch) {
+                torchSupported = true;
+                torchBtn.style.display = 'block';
+
+                if (torchMode === 'off') {
+                    await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
+                    torchBtn.innerHTML = '⚡ Aus';
+                    torchBtn.classList.remove('btn-warning', 'btn-primary');
+                    torchBtn.classList.add('btn-outline-secondary');
+                    torchBtn.style.color = '';
+                } else if (torchMode === 'on') {
+                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                    torchBtn.innerHTML = '⚡ An';
+                    torchBtn.classList.remove('btn-outline-secondary', 'btn-primary');
+                    torchBtn.classList.add('btn-warning');
+                    torchBtn.style.color = '#000';
+                } else if (torchMode === 'auto') {
+                    // WebRTC support. Erlaube Auto-Flash falls das Gerät ihn nativ hat
+                    await videoTrack.applyConstraints({ advanced: [{ torch: false }] }); 
+                    // Auto Modus wird effektiv später beim takePhoto() ausgelöst (fillLightMode: 'auto')
+                    torchBtn.innerHTML = '⚡ Auto';
+                    torchBtn.classList.remove('btn-outline-secondary', 'btn-warning');
+                    torchBtn.classList.add('btn-primary');
+                    torchBtn.style.color = '#fff';
+                }
+            } else {
+                torchBtn.style.display = 'none'; // Not supported on this device/camera
+            }
+        } catch (e) {
+            console.warn("Taschenlampe konnte nicht gesteuert werden:", e);
+        }
+    }
+
+    torchBtn.addEventListener('click', () => {
+        if (!torchSupported) return;
+        // Cycle: off -> on -> auto -> off
+        if (torchMode === 'off') torchMode = 'on';
+        else if (torchMode === 'on') torchMode = 'auto';
+        else torchMode = 'off';
+        
+        updateTorchState();
+    });
+    // -----------------------------
 
     video.addEventListener('canplay', function() {
         if (!streaming && video.videoWidth > 0) {
@@ -510,7 +564,14 @@
         if (window.ImageCapture && videoTrack) {
             try {
                 const imageCapture = new ImageCapture(videoTrack);
-                const blob = await imageCapture.takePhoto(); 
+                
+                // Falls "Auto"-Flash aktiviert ist, aktivieren wir temporär für das Foto fillLightMode = 'auto'
+                let photoSettings = {};
+                if (torchSupported && torchMode === 'auto') {
+                    photoSettings.fillLightMode = 'auto';
+                }
+
+                const blob = await imageCapture.takePhoto(photoSettings); 
                 highResBitmap = await createImageBitmap(blob);
                 originalWidth = highResBitmap.width;
                 originalHeight = highResBitmap.height;
