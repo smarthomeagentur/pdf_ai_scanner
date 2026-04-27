@@ -188,6 +188,12 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         
         # S-Kanal (Sättigung): Dynamisch pushen, besonders bei schwachen Farben
         s = cv2.multiply(s, 1.25) 
+        
+        # NEU: Chroma-Noise im Papier-Hintergrund gnadenlos löschen (Anti-Fleck)
+        # Wenn der Pixel nach der Helligkeitskorrektur extrem hell (also Papier) ist, Entfärbung erzwingen
+        paper_mask = v > 200
+        s[paper_mask] = 0
+
         s = np.clip(s, 0, 255).astype(np.uint8)
         
         hsv = cv2.merge([h, s, v])
@@ -226,12 +232,21 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         return
 
     # 6. OCR mit Tesseract und als durchsuchbares PDF speichern
-    # Maximale OCR-Qualität (Darf länger dauern):
-    # - Kubische Interpolation skaliert das Bild um Faktor 2 hoch. Tesseract profitiert massiv davon (simuliert > 300 DPI). 
-    # - --oem 1: Nutzt die moderne LSTM-Engine (Neuronale Netzwerke) von Tesseract.
-    # - --psm 3: Pseudosmartes Dokument-Layout (Erkennt Spalten viel besser als purer Textmodus).
-    # - preserve_interword_spaces=1: Leerzeichen bleiben erhalten und verschwinden nicht bei dicker Schrift.
-    ocr_image = cv2.resize(processed, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    # Maximale OCR-Qualität bei humaner Dateigröße:
+    # Statt pauschal hochzuskalieren (was 12MP Smartphone-Bilder auf unnötige 48MP pumpte = ~20MB PDFs),
+    # deckeln wir das Bild auf 300 DPI für A4 (~2500x3500 Pixel) bis maximal 3500px an der längsten Kante.
+    max_dim = 2500.0
+    h, w = processed.shape[:2]
+    
+    if max(h, w) > max_dim:
+        scale_factor = max_dim / max(h, w)
+        ocr_image = cv2.resize(processed, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
+    else:
+        ocr_image = processed.copy()
+        
+    # --oem 1: Nutzt die moderne LSTM-Engine von Tesseract.
+    # --psm 3: Pseudosmartes Dokument-Layout (Spaltenerkennung).
+    # preserve_interword_spaces=1: Leerzeichen bleiben erhalten.
     
     # PyTesseract konvertiert Numpy arrays per default als RGB, d.h. wenn wir ihm BGR übergeben, 
     # sind Rot und Blau vertauscht, und bei sehr dunklen Flächen gehen Mischfarben verloren / wirken entsättigt.
