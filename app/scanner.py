@@ -123,21 +123,25 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
         # V-Kanal (Helligkeit): Kontrast erhöhen
         # Weißpunkt runtersetzen, Schwarzpunkt hochsetzen
         v_float = v.astype(np.float32)
-        black_point = 30
-        white_point = 230
+        black_point = 25
+        white_point = 235
         v_float = np.clip((v_float - black_point) * (255.0 / (white_point - black_point)), 0, 255)
         v = v_float.astype(np.uint8)
         
         # S-Kanal (Sättigung): Dynamisch pushen, besonders bei schwachen Farben
-        s = cv2.multiply(s, 1.4) 
+        s = cv2.multiply(s, 1.25) 
         s = np.clip(s, 0, 255).astype(np.uint8)
         
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         
-        # Leichtes Nachschärfen für knackige Texte
-        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 3)
-        processed = cv2.addWeighted(processed, 1.5, blurred_unsharp, -0.5, 0)
+        # Rauschen und Artefakte auf flächigen Bereichen homogenisieren (Edge-Preserving Blur)
+        processed = cv2.bilateralFilter(processed, d=7, sigmaColor=45, sigmaSpace=45)
+        
+        # Das vorherige aggressive Schärfen hat die Artefakte (Halos) um den Text erzeugt.
+        # Wir reduzieren das nun auf ein Minimum.
+        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 2)
+        processed = cv2.addWeighted(processed, 1.1, blurred_unsharp, -0.1, 0)
 
     elif algorithm == "bw_adaptive":
 
