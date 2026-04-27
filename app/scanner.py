@@ -111,15 +111,20 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
         # Bild durch den farbigen Hintergrund teilen -> normiert Licht und färbt ein gelbes Blatt reinweiß
         diff = cv2.divide(warped.astype(np.float32), background.astype(np.float32), scale=255.0)
         
-        # Kontrast weitaus aggressiver strecken (knackig weißes Papier, tiefer schwarzer Text)
-        black_point = 30
-        white_point = 205
+        # ADAPTIV: Gamma-Korrektur anwenden, damit grauer Text/Bilder erhalten bleiben und nicht "ausbrennen"
+        # Werte > 1.0 dunkeln die helleren Grautöne kontrolliert ab, Weiß bleibt hingegen Weiß.
+        gamma = 1.4
+        diff = 255.0 * np.power(np.clip(diff / 255.0, 0, 1), gamma)
+        
+        # Kontrast weitaus feinfühliger strecken (knackig weißes Papier, erhaltener grauer Text)
+        black_point = 10
+        white_point = 240
         diff = np.clip((diff - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
         
         # Farben deutlich pushen, damit Fotos, Logos und Stempel wieder lebendig wirken
         hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
         h, s, v = cv2.split(hsv)
-        s = cv2.multiply(s, 1.4) # Sättigung um 40% erhöhen
+        s = cv2.multiply(s, 1.3) # Sättigung um 30% erhöhen
         s = np.clip(s, 0, 255).astype(np.uint8)
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
