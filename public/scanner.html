@@ -867,6 +867,7 @@
         showManualReview(canvasHighRes, frozenCorners);
     });
 
+    let scanPagesArray = []; // Speichert die Blobs, wenn "Nächste Seite scannen" gedrückt wurde
     let reviewState = {
         highResCanvas: null,
         cropX: 0, cropY: 0, cropW: 0, cropH: 0,
