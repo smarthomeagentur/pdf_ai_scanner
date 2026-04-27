@@ -36,12 +36,10 @@ def four_point_transform(image, pts):
     return warped
 
 def auto_exposure(img):
-    # Basis-Zuschneiden der extremsten Ränder (Rauschen/Ausreißer), um den Bildkontrast voll zu spreizen.
-    # Gleicht zu dunkle oder flache Bilder direkt nach der Aufnahme an.
+    # Sanfterer Belichtungsausgleich, um helle Farben (Briefköpfe etc.) nicht auszuwaschen
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    min_val = np.percentile(gray, 2)
-    # Von 98 auf 95 gesenkt: Kappt helle Bereiche früher ab und zieht die Gesamtbelichtung einen Tick heller
-    max_val = np.percentile(gray, 98)
+    min_val = np.percentile(gray, 1)
+    max_val = np.percentile(gray, 99)
     if max_val > min_val:
         alpha = 255.0 / (max_val - min_val)
         beta = -min_val * alpha
@@ -167,42 +165,38 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         
         # Bild durch den farbigen Hintergrund teilen -> normiert Licht und färbt ein gelbes Blatt reinweiß
         diff = cv2.divide(warped.astype(np.float32), background.astype(np.float32), scale=255.0)
-        
-        # Dynamische Kontrastanpassung
-        # Schwarz- und Weißpunkt etwas weicher setzen, um Farben nicht zu zerstören
-        # Wir heben den unteren Bereich etwas an für tieferes Schwarz und kappen oben leicht für reines Weiß.
         diff = np.clip(diff, 0, 255).astype(np.uint8)
         
         # In HSV konvertieren, um Helligkeit und Farben getrennt zu behandeln
         hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
         h, s, v = cv2.split(hsv)
         
-        # V-Kanal (Helligkeit): Kontrast erhöhen
-        # Weißpunkt deutlich runtersetzen, um Papierflecken komplett "wegzubrennen" (waschen zu Reinweiß).
-        # Schwarzpunkt hochsetzen, um Text tiefschwarz zu machen.
+        # V-Kanal (Helligkeit): Sanfte Kontrastspreizung
+        # Erhält die Farben von Bildern, wäscht sie nicht aus!
         v_float = v.astype(np.float32)
-        black_point = 35
-        white_point = 215
+        black_point = 15   # Sanftes Schwarz
+        white_point = 230  # Moderates Weiß
         v_float = np.clip((v_float - black_point) * (255.0 / (white_point - black_point)), 0, 255)
         v = v_float.astype(np.uint8)
         
-        # S-Kanal (Sättigung): Dynamisch pushen, besonders bei schwachen Farben
-        s = cv2.multiply(s, 1.25) 
+        # Sättigung: Leicht anheben, damit Corporate Identity Farben knackig wirken
+        s = cv2.multiply(s, 1.15) 
         
-        # NEU: Chroma-Noise im Papier-Hintergrund gnadenlos löschen (Anti-Fleck)
-        # Wenn der Pixel nach der Helligkeitskorrektur extrem hell (also Papier) ist, Entfärbung erzwingen
-        paper_mask = v > 200
-        s[paper_mask] = 0
+        # Gezielter Flecken-Killer NUR auf extrem hellen Flächen (was zu 99% echtes Papier ist)
+        # Helle Farben (z.B. in Logos) unter diesem Schwellwert bleiben erhalten!
+        paper_mask = v >= 238
+        v[paper_mask] = 255  # Garantiert strahlendes Weiß
+        s[paper_mask] = 0    # Garantiert null Farbrauschen (keine Flecken)
 
         s = np.clip(s, 0, 255).astype(np.uint8)
         
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         
-        # Rauschen und Artefakte auf flächigen Bereichen stark homogenisieren
-        processed = cv2.bilateralFilter(processed, d=9, sigmaColor=75, sigmaSpace=75)
+        # Behutsames Entrauschen (schont feine Details in Grafiken)
+        processed = cv2.bilateralFilter(processed, d=5, sigmaColor=35, sigmaSpace=35)
         
-        # Unschärfe-Maske für die nötige Schärfe des Textes
+        # Unschärfe-Maske für knackigen Text, aber nicht so krass überschärft
         blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 2)
         processed = cv2.addWeighted(processed, 1.1, blurred_unsharp, -0.1, 0)
 
