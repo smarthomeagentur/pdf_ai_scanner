@@ -157,48 +157,76 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
 
     elif algorithm == "color_enhanced":
-        # Ausleuchtung und Farbverschiebung (z. B. gelbliches Raumlicht) schätzen
-        # Wir wenden die Morphologie direkt auf alle 3 Farbkanäle an.
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-        background = cv2.morphologyEx(warped, cv2.MORPH_DILATE, kernel)
-        background = cv2.GaussianBlur(background, (21, 21), 0)
+        # COMPLETT NEUER ANSATZ: 
+        # 1. Flatfield Correction (Entfernung von ungleichmäßiger Ausleuchtung)
+        # Wir erstellen ein stark verkleinertes Modell der originalen Ausleuchtung und
+        # schließen Inhalte (Bilder, Texte) rigoros aus, damit große Fotos wie die Burger 
+        # nicht plötzlich als eigener "Hintergrund" interpretiert und weißgewaschen werden!
+        h_orig, w_orig = warped.shape[:2]
+        scale = 200.0 / max(h_orig, w_orig)
+        small = cv2.resize(warped, (0, 0), fx=scale, fy=scale)
         
-        # Bild durch den farbigen Hintergrund teilen -> normiert Licht und färbt ein gelbes Blatt reinweiß
-        diff = cv2.divide(warped.astype(np.float32), background.astype(np.float32), scale=255.0)
-        diff = np.clip(diff, 0, 255).astype(np.uint8)
+        small_hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+        s_chan = small_hsv[:, :, 1]
+        v_chan = small_hsv[:, :, 2]
         
-        # In HSV konvertieren, um Helligkeit und Farben getrennt zu behandeln
-        hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
+        # Papier-Referenzwert (90% Perzentil Helligkeit repräsentiert helles Scanner-Papier)
+        paper_v = np.percentile(v_chan, 90)
         
-        # V-Kanal (Helligkeit): Sanfte Kontrastspreizung
-        # Erhält die Farben von Bildern, wäscht sie nicht aus!
-        v_float = v.astype(np.float32)
-        black_point = 15   # Sanftes Schwarz
-        white_point = 230  # Moderates Weiß
-        v_float = np.clip((v_float - black_point) * (255.0 / (white_point - black_point)), 0, 255)
-        v = v_float.astype(np.uint8)
+        # Maske für Inhalt: Entweder sehr dunkel gegenüber Papier ODER sehr sättigend (Farbfotos)
+        is_content = (v_chan < paper_v - 40) | (s_chan > 50)
         
-        # Sättigung: Leicht anheben, damit Corporate Identity Farben knackig wirken
-        s = cv2.multiply(s, 1.15) 
+        # Papiermedian berechnen, um Inhalt zu überdecken (schützt Fotoserscheinung im Hintergrund)
+        paper_pixels = small[~is_content]
+        if paper_pixels.size > 0:
+            median_paper_color = np.median(paper_pixels, axis=0)
+        else:
+            median_paper_color = np.array([255, 255, 255])
+            
+        # Glatte Illumination Map bauen, ohne dass Fotos dunkle Löcher erzeugen
+        bg_estimate = small.copy()
+        bg_estimate[is_content] = median_paper_color
         
-        # Gezielter Flecken-Killer NUR auf extrem hellen Flächen (was zu 99% echtes Papier ist)
-        # Helle Farben (z.B. in Logos) unter diesem Schwellwert bleiben erhalten!
-        paper_mask = v >= 238
-        v[paper_mask] = 255  # Garantiert strahlendes Weiß
-        s[paper_mask] = 0    # Garantiert null Farbrauschen (keine Flecken)
-
-        s = np.clip(s, 0, 255).astype(np.uint8)
+        # Massive Unschärfe auf dem kleinen Modell für perfekten sanften Raumlicht-Verlauf
+        bg_smooth = cv2.GaussianBlur(bg_estimate, (51, 51), 0)
+        bg_illumination = cv2.resize(bg_smooth, (w_orig, h_orig), interpolation=cv2.INTER_CUBIC)
         
-        hsv = cv2.merge([h, s, v])
-        processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        # 2. Division: Neutralisiert Raumlicht und Schatten; drückt Papier sauber gegen Weiß!
+        # Durch die Trennung bleiben die Kontraste von eingebetteten Farbfotos 100% original.
+        bg_illumination_f = bg_illumination.astype(np.float32)
+        bg_illumination_f[bg_illumination_f == 0] = 1.0 # Division durch Null verhindern
+        normalized = cv2.divide(warped.astype(np.float32), bg_illumination_f, scale=255.0)
+        out = np.clip(normalized, 0, 255).astype(np.uint8)
         
-        # Behutsames Entrauschen (schont feine Details in Grafiken)
-        processed = cv2.bilateralFilter(processed, d=5, sigmaColor=35, sigmaSpace=35)
+        # 3. Lebhafter Kontrast & Farberhalt im farbsicheren LAB-Farbraum
+        lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
         
-        # Unschärfe-Maske für knackigen Text, aber nicht so krass überschärft
-        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 2)
-        processed = cv2.addWeighted(processed, 1.1, blurred_unsharp, -0.1, 0)
+        # L-Kanal: Feines Clipping zur Schwarz-/Weißpunkt-Verschärfung für gestochenen Text
+        l_float = l.astype(np.float32)
+        black_p = 10
+        white_p = 245
+        l_float = np.clip((l_float - black_p) * (255.0 / (white_p - black_p)), 0, 255)
+        l = l_float.astype(np.uint8)
+        
+        # Sättigung anheben auf a/b-Kanälen (Neutralpunkt = 128) - schützt das Farbspektrum (H&V bleiben in sich logisch)
+        a_f = (a.astype(np.float32) - 128.0) * 1.15 + 128.0
+        b_f = (b.astype(np.float32) - 128.0) * 1.15 + 128.0
+        a = np.clip(a_f, 0, 255).astype(np.uint8)
+        b = np.clip(b_f, 0, 255).astype(np.uint8)
+        
+        # 4. Radikaler Anti-Fleck für reines Papier (ohne Bildbereiche zu verwaschen)
+        paper_mask_final = l > 245
+        a[paper_mask_final] = 128 # Neutral / Keine Farbe
+        b[paper_mask_final] = 128 # Neutral / Keine Farbe
+        l[paper_mask_final] = 255 # Maximales LED-Weiß
+        
+        lab = cv2.merge([l, a, b])
+        processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+        
+        # 5. Behutsame Unschärfe-Maske für crispe Buchstaben-Kanten
+        blur_for_sharp = cv2.GaussianBlur(processed, (0, 0), 1.5)
+        processed = cv2.addWeighted(processed, 1.2, blur_for_sharp, -0.2, 0)
 
     elif algorithm == "bw_adaptive":
 
