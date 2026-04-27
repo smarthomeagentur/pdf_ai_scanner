@@ -157,37 +157,19 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
 
     elif algorithm == "color_enhanced":
-        # COMPLETT NEUER ANSATZ: 
         # 1. Flatfield Correction (Entfernung von ungleichmäßiger Ausleuchtung)
-        # Wir erstellen ein stark verkleinertes Modell der originalen Ausleuchtung und
-        # schließen Inhalte (Bilder, Texte) rigoros aus, damit große Fotos wie die Burger 
-        # nicht plötzlich als eigener "Hintergrund" interpretiert und weißgewaschen werden!
         h_orig, w_orig = warped.shape[:2]
-        scale = 200.0 / max(h_orig, w_orig)
+        
+        # Auf kleine Größe skalieren für Performance bei der Morphologie
+        scale = 300.0 / max(h_orig, w_orig)
         small = cv2.resize(warped, (0, 0), fx=scale, fy=scale)
         
-        small_hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-        s_chan = small_hsv[:, :, 1]
-        v_chan = small_hsv[:, :, 2]
+        # Morphologische Dilatation verwischt dunklen Text/Inhalt und behält das helle Papier + den echten Schattenverlauf!
+        # Damit Farbfotos/Logos nicht als dunkle Löcher im Licht fungieren, nehmen wir einen extrem großen Kernel.
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        bg_estimate = cv2.morphologyEx(small, cv2.MORPH_DILATE, kernel)
         
-        # Papier-Referenzwert (90% Perzentil Helligkeit repräsentiert helles Scanner-Papier)
-        paper_v = np.percentile(v_chan, 90)
-        
-        # Maske für Inhalt: Entweder sehr dunkel gegenüber Papier ODER sehr sättigend (Farbfotos)
-        is_content = (v_chan < paper_v - 40) | (s_chan > 50)
-        
-        # Papiermedian berechnen, um Inhalt zu überdecken (schützt Fotoserscheinung im Hintergrund)
-        paper_pixels = small[~is_content]
-        if paper_pixels.size > 0:
-            median_paper_color = np.median(paper_pixels, axis=0)
-        else:
-            median_paper_color = np.array([255, 255, 255])
-            
-        # Glatte Illumination Map bauen, ohne dass Fotos dunkle Löcher erzeugen
-        bg_estimate = small.copy()
-        bg_estimate[is_content] = median_paper_color
-        
-        # Massive Unschärfe auf dem kleinen Modell für perfekten sanften Raumlicht-Verlauf
+        # Starkes Weichzeichnen (Blur) für einen perfekten, stufenlosen Schatten-Verlauf ohne harte Kanten
         bg_smooth = cv2.GaussianBlur(bg_estimate, (51, 51), 0)
         bg_illumination = cv2.resize(bg_smooth, (w_orig, h_orig), interpolation=cv2.INTER_CUBIC)
         
@@ -202,22 +184,23 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         
-        # L-Kanal: Feines Clipping zur Schwarz-/Weißpunkt-Verschärfung für gestochenen Text
+        # L-Kanal: Deutlich härteres Clipping für lupenreines Weiß!
         l_float = l.astype(np.float32)
-        black_p = 10
-        white_p = 245
+        black_p = 15   # Text und Schattenpunkte bleiben tiefschwarz
+        white_p = 210  # WICHTIG: Von 245 auf 210 gesenkt! Alles was auch nur leicht grau ist (z.B. Verläufe links), wäscht jetzt 100% weiß aus.
         l_float = np.clip((l_float - black_p) * (255.0 / (white_p - black_p)), 0, 255)
         l = l_float.astype(np.uint8)
         
-        # Sättigung anheben auf a/b-Kanälen (Neutralpunkt = 128) - schützt das Farbspektrum (H&V bleiben in sich logisch)
-        a_f = (a.astype(np.float32) - 128.0) * 1.15 + 128.0
-        b_f = (b.astype(np.float32) - 128.0) * 1.15 + 128.0
+        # Sättigung anheben auf a/b-Kanälen (Neutralpunkt = 128) - schützt das Farbspektrum
+        a_f = (a.astype(np.float32) - 128.0) * 1.1 + 128.0
+        b_f = (b.astype(np.float32) - 128.0) * 1.1 + 128.0
         a = np.clip(a_f, 0, 255).astype(np.uint8)
         b = np.clip(b_f, 0, 255).astype(np.uint8)
         
         # 4. Radikaler Anti-Fleck für reines Papier (ohne Bildbereiche zu verwaschen)
-        paper_mask_final = l > 245
-        a[paper_mask_final] = 128 # Neutral / Keine Farbe
+        # Nachdem wir `l` am Whitepoint massiv gepusht haben, ist fast alles Papier ohnehin schon nah an 255
+        paper_mask_final = l > 230
+        a[paper_mask_final] = 128 # Neutral / Keine Farbe (beseitigt rosa/grünes Rauschen im weißen Papier)
         b[paper_mask_final] = 128 # Neutral / Keine Farbe
         l[paper_mask_final] = 255 # Maximales LED-Weiß
         
