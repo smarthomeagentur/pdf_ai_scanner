@@ -138,7 +138,7 @@
         <summary class="text-secondary fw-bold p-3 m-0" style="cursor: pointer; background: #f8f9fa; display: none;">⚙️ Filtereinstellungen anzeigen</summary>
         <div class="px-3 pb-3 border-top pt-2">
             <!-- Bild-Filter ist jetzt exklusiv im Preview-Screen. Intern halten wir den State fest: -->
-            <input type="hidden" id="algorithmSelect" value="color_enhanced">
+            <input type="hidden" id="algorithmSelect" value="auto">
 
             <h6 class="text-secondary mt-3 mb-2 small fw-bold">Scanner Einstellung</h6>
             
@@ -188,6 +188,7 @@
             <div class="input-group mb-2 shadow-sm">
                 <span class="input-group-text bg-light fw-bold" style="font-size: 0.9em;">🎨 Filter</span>
                 <select id="previewAlgorithmSelect" class="form-select text-primary fw-bold" style="font-size: 0.9em;" onchange="document.getElementById('algorithmSelect').value = this.value; updatePreviewFilter();">
+                    <option value="auto">✨ Auto-Erkennung (Empfohlen)</option>
                     <option value="color_enhanced">Optimiert Farbe</option>
                     <option value="white_paper">Optimiert SW</option>
                     <option value="bw_adaptive">SW Hart (Quittungen / Kassenzettel)</option>
@@ -909,6 +910,13 @@
                 });
                 
                 if (!response.ok) throw new Error('Preview Fetch fail');
+                
+                const detectedAlgorithm = response.headers.get('X-Detected-Algorithm');
+                if (filter === 'auto' && detectedAlgorithm) {
+                    const selectEl = document.getElementById('previewAlgorithmSelect');
+                    selectEl.value = detectedAlgorithm;
+                    document.getElementById('algorithmSelect').value = detectedAlgorithm;
+                }
                 
                 const imgBlob = await response.blob();
                 const url = URL.createObjectURL(imgBlob);

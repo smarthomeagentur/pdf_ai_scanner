@@ -35,7 +35,39 @@ def four_point_transform(image, pts):
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
     return warped
 
-def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_enhanced"):
+def auto_exposure(img):
+    # Basis-Zuschneiden der extremsten 2% (Rauschen/Ausreißer), um den Bildkontrast voll zu spreizen.
+    # Gleicht zu dunkle oder flache Bilder direkt nach der Aufnahme an.
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    min_val = np.percentile(gray, 2)
+    max_val = np.percentile(gray, 98)
+    if max_val > min_val:
+        alpha = 255.0 / (max_val - min_val)
+        beta = -min_val * alpha
+        return cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+    return img
+
+def is_color_document(img):
+    # Auf Vorschaugröße skalieren für Performance
+    small = cv2.resize(img, (400, int(400 * img.shape[0] / img.shape[1])))
+    
+    # Schneller Beleuchtungsausgleich, um z.B. gelbliches Fotolicht nicht als "Bild-Farbe" zu werten
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    bg = cv2.morphologyEx(small, cv2.MORPH_DILATE, kernel)
+    diff = cv2.divide(small.astype(np.float32), bg.astype(np.float32), scale=255.0)
+    diff = np.clip(diff, 0, 255).astype(np.uint8)
+    
+    hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
+    _, s, v = cv2.split(hsv)
+    
+    # Zähle Pixel, die signifikant bunt (Sättigung > 35) und nicht fast weiß/schwarz sind
+    color_mask = (s > 35) & (v < 240) & (v > 20)
+    color_ratio = np.sum(color_mask) / (small.shape[0] * small.shape[1])
+    
+    # Ab 0.5% echter bunter Farbfläche gilt es als Farbdokument
+    return color_ratio > 0.005
+
+def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
     # 1. Bild laden...
     image = cv2.imread(image_path)
     if image is None:
@@ -79,6 +111,13 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
     else:
         # Die Datei ist bereits der beschnittene Bereich aus dem Frontend
         warped = orig
+
+    # Initial die Belichtung korrigieren (Spreizung des Kontrasts, Ausgleich der Kamera-Schwankungen)
+    warped = auto_exposure(warped)
+
+    if algorithm == "auto":
+        algorithm = "color_enhanced" if is_color_document(warped) else "white_paper"
+        print(f"Auto-Detect: Nutze Filter '{algorithm}'")
 
     # 5. Bild für Textoptimierung aufbereiten
     warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)

@@ -389,10 +389,18 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
         `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "skip" "${algorithm}"`,
         (error, stdout, stderr) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); // Original löschen
+          
           if (error) {
             console.error(`[PREVIEW ERROR]: ${error.message} | ${stderr}`);
             reject(error);
           } else {
+            // Versuche den Auto-Detect Filter aus dem stdout zu lesen
+            let detectedAlgorithm = algorithm;
+            const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
+            if (match && match[1]) {
+                detectedAlgorithm = match[1];
+                res.setHeader('X-Detected-Algorithm', detectedAlgorithm);
+            }
             resolve(outputJpgPath);
           }
         }
