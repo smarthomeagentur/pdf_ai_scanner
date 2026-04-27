@@ -104,36 +104,40 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
     elif algorithm == "color_enhanced":
         # Ausleuchtung und Farbverschiebung (z. B. gelbliches Raumlicht) schätzen
         # Wir wenden die Morphologie direkt auf alle 3 Farbkanäle an.
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
         background = cv2.morphologyEx(warped, cv2.MORPH_DILATE, kernel)
-        background = cv2.GaussianBlur(background, (51, 51), 0)
+        background = cv2.GaussianBlur(background, (21, 21), 0)
         
         # Bild durch den farbigen Hintergrund teilen -> normiert Licht und färbt ein gelbes Blatt reinweiß
         diff = cv2.divide(warped.astype(np.float32), background.astype(np.float32), scale=255.0)
         
-        # Schritt 1: Hartes "Clipping" oben und unten, um das Papierrauschen (Fleckigkeit) radikal zu glätten.
-        # Alles, was "fast weiß" (> 210) ist, wird brutal auf 255 hochgezogen. So wird der Hintergrund steril weiß.
-        black_point = 15
-        white_point = 210
-        diff = np.clip((diff - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
-        
-        # Schritt 2: ADAPTIV: Leichte Gamma-Korrektur anwenden, um die durch das Clipping blasser gewordenen,
-        # feinen (hellgrauen) Texte wieder sanft abzudunkeln, ohne das Reinweiß zu zerstören.
-        gamma = 1.3
-        diff = 255.0 * np.power(np.clip(diff / 255.0, 0, 1), gamma)
+        # Dynamische Kontrastanpassung
+        # Schwarz- und Weißpunkt etwas weicher setzen, um Farben nicht zu zerstören
+        # Wir heben den unteren Bereich etwas an für tieferes Schwarz und kappen oben leicht für reines Weiß.
         diff = np.clip(diff, 0, 255).astype(np.uint8)
         
-        # Farben deutlich pushen, damit Fotos, Logos und Stempel wieder lebendig wirken
+        # In HSV konvertieren, um Helligkeit und Farben getrennt zu behandeln
         hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
         h, s, v = cv2.split(hsv)
-        s = cv2.multiply(s, 1.3) # Sättigung um 30% erhöhen
+        
+        # V-Kanal (Helligkeit): Kontrast erhöhen
+        # Weißpunkt runtersetzen, Schwarzpunkt hochsetzen
+        v_float = v.astype(np.float32)
+        black_point = 30
+        white_point = 230
+        v_float = np.clip((v_float - black_point) * (255.0 / (white_point - black_point)), 0, 255)
+        v = v_float.astype(np.uint8)
+        
+        # S-Kanal (Sättigung): Dynamisch pushen, besonders bei schwachen Farben
+        s = cv2.multiply(s, 1.4) 
         s = np.clip(s, 0, 255).astype(np.uint8)
+        
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         
-        # Nur marginales Nachschärfen, damit Rauschen nicht potenziert wird
-        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 2)
-        processed = cv2.addWeighted(processed, 1.2, blurred_unsharp, -0.2, 0)
+        # Leichtes Nachschärfen für knackige Texte
+        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 3)
+        processed = cv2.addWeighted(processed, 1.5, blurred_unsharp, -0.5, 0)
 
     elif algorithm == "bw_adaptive":
 
