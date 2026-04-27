@@ -176,10 +176,11 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         h, s, v = cv2.split(hsv)
         
         # V-Kanal (Helligkeit): Kontrast erhöhen
-        # Weißpunkt runtersetzen, Schwarzpunkt hochsetzen
+        # Weißpunkt deutlich runtersetzen, um Papierflecken komplett "wegzubrennen" (waschen zu Reinweiß).
+        # Schwarzpunkt hochsetzen, um Text tiefschwarz zu machen.
         v_float = v.astype(np.float32)
-        black_point = 25
-        white_point = 235
+        black_point = 35
+        white_point = 215
         v_float = np.clip((v_float - black_point) * (255.0 / (white_point - black_point)), 0, 255)
         v = v_float.astype(np.uint8)
         
@@ -190,11 +191,10 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         
-        # Rauschen und Artefakte auf flächigen Bereichen homogenisieren (Edge-Preserving Blur)
-        processed = cv2.bilateralFilter(processed, d=7, sigmaColor=45, sigmaSpace=45)
+        # Rauschen und Artefakte auf flächigen Bereichen stark homogenisieren
+        processed = cv2.bilateralFilter(processed, d=9, sigmaColor=75, sigmaSpace=75)
         
-        # Das vorherige aggressive Schärfen hat die Artefakte (Halos) um den Text erzeugt.
-        # Wir reduzieren das nun auf ein Minimum.
+        # Unschärfe-Maske für die nötige Schärfe des Textes
         blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 2)
         processed = cv2.addWeighted(processed, 1.1, blurred_unsharp, -0.1, 0)
 
