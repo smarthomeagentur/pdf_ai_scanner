@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scanner Login</title>
+    
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#f4f7f6">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon.svg">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f7f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            margin: 20px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        button {
+            padding: 12px;
+            background-color: #007bff;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .error {
+            color: #ff4c4c;
+            font-size: 14px;
+            margin-top: 10px;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Scanner Login</h2>
+    <p style="color: #666; font-size: 14px;">Bitte Passwort eingeben, um fortzufahren.</p>
+    <form id="loginForm">
+        <input type="password" id="password" placeholder="Passwort" required autofocus>
+        <button type="submit">Anmelden</button>
+        <span id="errorMsg" class="error"></span>
+    </form>
+</div>
+
+<script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pwd = document.getElementById('password').value;
+        const err = document.getElementById('errorMsg');
+        err.innerText = '';
+        
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pwd })
+            });
+            const data = await res.json();
+            
+            if (data.success) {
+                window.location.href = '/';
+            } else {
+                err.innerText = data.error || 'Login fehlgeschlagen.';
+            }
+        } catch(e) {
+            err.innerText = 'Verbindungsfehler.';
+        }
+    });
+</script>
+
+</body>
+</html>

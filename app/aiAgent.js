@@ -27,7 +27,6 @@ async function generatePdfName(filename) {
   var pdfFileName = "";
   var pdfDate = setFileDate();
   var pdfData = await extractTextFromPdf(filename);
-  //var text = pdfData.substring(0, 700);
   if (debug) console.log("[AI] PDF Text text extracted: " + pdfData.length + " characters");
   var pdfContentData;
   if (pdfData.length < 100) {
@@ -36,7 +35,11 @@ async function generatePdfName(filename) {
   } else {
     pdfContentData = await getFileDataJSONGemma(pdfData);
   }
-
+  if (pdfContentData == false) {
+    return {
+      success: false,
+    };
+  }
   var firstThreeWords = pdfContentData.tags.slice(0, 3).join(" ");
   pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
 
@@ -49,23 +52,6 @@ async function generatePdfName(filename) {
     company: pdfContentData.company,
     isInvoice: pdfContentData.isInvoice,
   };
-
-  //if (debug) console.log(text);
-  var fileTags = false;
-  var fileTags = await getFilenameSuggestionGemma(pdfData);
-  if (fileTags == false) fileTags = ["no category", "no info"];
-
-  if (debug) console.log("[AI] PDF Tags: ", fileTags);
-  var category = fileTags.slice(0, 1).join("");
-  var firstThreeWords = fileTags.slice(1, 4).join(" ");
-  firstThreeWords = firstThreeWords.trim();
-  firstThreeWords = firstThreeWords.replace(/\s{2,}/g, " ");
-
-  var company = await getCompanySuggestionGemma(pdfData);
-  if (company == false) company = "unbekannt";
-
-  pdfFileName = `${pdfDate} -${category}- ${firstThreeWords} (${company})`;
-  return { success: true, full: pdfFileName, date: pdfDate, category, tags: firstThreeWords, company };
 }
 
 function setFileDate(fileName) {
@@ -152,75 +138,21 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false) {
   }
 }
 
-async function getFilenameSuggestionGemma(pdfText) {
-  if (pdfText.length < 100) {
-    return ["keine Inhalte", "unbekannt"];
-  }
-  var instructionFileName =
-    "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
-    pdfText +
-    "--- START DOKUMENT ---\n Ich möchte, dass du mir einen Dateinamen aus 4 Wörtern gibst. das 1. Wort ist die Kategorie (z.B. Buchhaltung, Personal, Rechnung, Steuer usw.). Gib mir nur die 4 Wörter zurück. Trenne die Wörter unbedingt mit Komma. Die Antwort darf nur diese 4 Wörter umfassen. Wenn es keine 4 Wörter gibt antworte mit weniger. Wenn es keinen passenden Inhalt gibt, antworte nur mit 'kein Inhalt'. Gib auch keine Anmerkungen oder Hinweise zurück. Nur die 4 Wörter!";
-  try {
-    const response = await ollama.chat({
-      model: "gemma4:e4b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
-      messages: [
-        {
-          role: "user",
-          content: instructionFileName,
-        },
-      ],
-    });
-    console.log(response.message.content);
-    var chatString = response.message.content.replace(/[-/]/g, " ");
-    chatString = chatString.trimStart();
-    chatString = chatString.split(",");
-    return chatString;
-  } catch (error) {
-    console.error("Es gab einen Fehler:", error);
-    console.error("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
-    return false;
-  }
-}
+async function fitCompanyName(companyNameIn) {
+  console.log(companyNameIn);
 
-async function getCompanySuggestionGemma(pdfText) {
-  if (pdfText.length < 100) {
-    return false;
-  }
-  var instructionCompanySuggest =
-    "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
-    pdfText +
-    "--- START DOKUMENT ---\n Ich möchte, dass du mir die Firma oder Person nennst, an welche das Dokument gerichtet ist. Antworte nur mit diesen Möglichkeiten: wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel oder Unbekannt, wenn keine der vorherigen passt. Gib mir nur die Zugehörigkeit als Wörter zurück.";
-  try {
-    const response = await ollama.chat({
-      model: "gemma4:e4b", // Hier ggf. 'gemma:7b' eintragen, falls du das größere geladen hast
-      messages: [
-        {
-          role: "user",
-          content: instructionCompanySuggest,
-        },
-      ],
-    });
+  const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
+  const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
+  const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
+  const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
 
-    var chatMessage = response.message.content;
-    console.log(chatMessage);
+  var companyName = false;
 
-    const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
-    const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
-    const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
-    const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
-
-    var companyName = false;
-
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsDaniel, "daniel");
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsTheWire, "the wire");
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsPolyxo, "polyxo");
-    if (companyName == false) companyName = searchNameInText(chatMessage, searchTermsWireWire, "wirewire");
-    return companyName;
-  } catch (error) {
-    console.error("Es gab einen Fehler:", error);
-    console.error("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
-    return false;
-  }
+  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsDaniel, "daniel");
+  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsTheWire, "the wire");
+  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsPolyxo, "polyxo");
+  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsWireWire, "wirewire");
+  return companyName;
 }
 
 async function getPdfImageBuffer(pdfPath) {
@@ -252,23 +184,6 @@ async function getPdfImageBuffer(pdfPath) {
   }
 }
 
-function searchNameInText(text, searchTerms, returnCompanyName = "unbekannt") {
-  for (const term of searchTerms) {
-    if (text.toLowerCase().includes(term)) {
-      return returnCompanyName;
-    }
-  }
-  return false;
-}
-
-function containsAnyMatch(array, searchTerms) {
-  // Convert all search terms to lowercase for case-insensitive matching
-  const lowerCaseSearchTerms = searchTerms.map((term) => term.toLowerCase());
-
-  // Check if any element in the array matches any of the search terms
-  return array.some((item) => lowerCaseSearchTerms.some((term) => item.toLowerCase().includes(term)));
-}
-
 async function extractTextFromPdf(pdfPath) {
   try {
     const dataBuffer = fs.readFileSync(pdfPath);
@@ -281,8 +196,17 @@ async function extractTextFromPdf(pdfPath) {
   }
 }
 
+function searchNameInText(text, searchTerms, returnCompanyName = "unbekannt") {
+  for (const term of searchTerms) {
+    if (text.toLowerCase().includes(term)) {
+      return returnCompanyName;
+    }
+  }
+  return false;
+}
+
 module.exports = {
-  init: function (api_key, setDebug = false) {
+  init: function (setDebug = false) {
     debug = setDebug;
     return true;
   },

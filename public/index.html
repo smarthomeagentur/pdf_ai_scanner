@@ -15,6 +15,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Scanner">
 
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -120,6 +122,83 @@
             width: 0%;
             transition: width 0.5s linear;
         }
+        
+        /* Modal Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            text-align: left;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .modal-header h3 { margin: 0; }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+            margin: 0;
+            padding: 0;
+            line-height: 1;
+        }
+        .setting-group { margin-bottom: 15px; }
+        .setting-group label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 14px; }
+        .setting-group select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+        .settings-btn { 
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: #555;
+            padding: 0;
+            cursor: pointer;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        .settings-btn:hover { background: none; color: #000; }
+        #auth-status { font-size: 14px; margin-left: 10px; }
+        
+        .fb-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background-color 0.2s;
+        }
+        .fb-item:hover { background-color: #f1f8ff; }
+        .fb-item.active { background-color: #e2f0ff; font-weight: bold; }
+        .fb-breadcrumb-item {
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        .fb-breadcrumb-item:hover { color: #0056b3; }
 
         /* Mobile Adjustments */
         .live-scanner-btn {
@@ -232,7 +311,8 @@
 </head>
 <body>
 
-<div class="container">
+<div class="container" style="position: relative;">
+    <button class="settings-btn" id="openSettingsBtn" title="Einstellungen">⚙️</button>
     <h2>AI Dokument Scanner</h2>
     
     <a href="/scanner.html" class="live-scanner-btn">Scannen</a>
@@ -254,6 +334,64 @@
     </div>
 </div>
 
+<!-- Settings Modal -->
+<div id="settings-modal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Einstellungen</h3>
+            <button class="modal-close" id="closeSettingsBtn">&times;</button>
+        </div>
+        
+        <div class="setting-group" style="display: flex; align-items: center; justify-content: space-between; background: #f8f9fa; padding: 15px; border-radius: 8px;">
+            <div>
+                <strong>Google Drive</strong>
+                <div id="auth-status" class="text-muted" style="margin-left: 0;">Status wird geladen...</div>
+            </div>
+            <button id="auth-btn" style="margin-top: 0; padding: 8px 15px; display: none;">Mit Google Anmelden</button>
+        </div>
+
+        <div class="setting-group" id="folder-settings-container" style="display: none;">
+            <label>Ordner für rohe Uploads:</label>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" id="raw-folder-display" disabled placeholder="Kein Ordner ausgewählt" style="flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 5px;" />
+                <input type="hidden" id="raw-folder-id" />
+                <button id="raw-folder-browse" disabled style="margin: 0; padding: 8px 15px;">Durchsuchen</button>
+            </div>
+        </div>
+
+        <div class="setting-group" id="ai-folder-settings-container" style="display: none;">
+            <label>Ordner für AI erkannte PDFs:</label>
+            <div style="display: flex; gap: 10px;">
+                <input type="text" id="ai-folder-display" disabled placeholder="Kein Ordner ausgewählt" style="flex-grow: 1; padding: 8px; border: 1px solid #ccc; border-radius: 5px;" />
+                <input type="hidden" id="ai-folder-id" />
+                <button id="ai-folder-browse" disabled style="margin: 0; padding: 8px 15px;">Durchsuchen</button>
+            </div>
+        </div>
+
+        <button id="saveSettingsBtn" style="width: 100%; display: none; margin-top: 10px;">Ordner Speichern</button>
+    </div>
+</div>
+
+<!-- Folder Browser Modal -->
+<div id="folder-browser-modal" class="modal-overlay" style="z-index: 2010;">
+    <div class="modal-content" style="display: flex; flex-direction: column; height: 80vh; max-height: 600px;">
+        <div class="modal-header">
+            <h3>Ordner auswählen</h3>
+            <button class="modal-close" id="closeFolderBrowserBtn">&times;</button>
+        </div>
+        <div id="fb-breadcrumbs" style="font-size: 14px; margin-bottom: 10px; color: #0d6efd; overflow-x: auto; white-space: nowrap; padding-bottom: 5px;">
+            <!-- Drive / Folder -->
+        </div>
+        <div id="fb-list" style="flex-grow: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 5px; padding: 5px;">
+            <!-- .fb-item elements -->
+        </div>
+        <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
+            <div id="fb-current-selection" style="font-size: 14px; font-weight: bold; color: #333; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Kein Ordner</div>
+            <button id="fb-select-btn" style="margin: 0; padding: 8px 15px; background: #28a745;">Auswählen</button>
+        </div>
+    </div>
+</div>
+
 <!-- PWA Install Banner -->
 <div id="pwa-install-banner">
     <div class="pwa-text">
@@ -267,6 +405,291 @@
 </div>
 
 <script>
+    const settingsModal = document.getElementById('settings-modal');
+    const openSettingsBtn = document.getElementById('openSettingsBtn');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    let googleClientId = null;
+    let authClientCode = null;
+    
+    // Folder Browser state
+    let allFolders = [];
+    let currentBrowserTarget = null;
+    let currentParentId = 'root';
+    let currentBreadcrumbs = [{ id: 'root', name: 'Meine Ablage' }];
+    let selectedFbId = null;
+    let selectedFbName = null;
+
+    openSettingsBtn.addEventListener('click', async () => {
+        settingsModal.style.display = 'flex';
+        
+        // Fetch current settings from backend
+        try {
+            const setRes = await fetch('/api/settings');
+            const setJson = await setRes.json();
+            if (setJson.success) {
+                // Populate if we already have it
+                window.currentSettings = setJson.settings;
+            }
+        } catch(e) {}
+
+        // Fetch client ID configuration
+        try {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            if (data.success && data.clientId) {
+                googleClientId = data.clientId;
+                document.getElementById('auth-status').innerText = 'Bereit zur Authentifizierung';
+                document.getElementById('auth-btn').style.display = 'inline-block';
+                
+                // Initialize Google Auth Implicit flow client
+                authClientCode = window.google.accounts.oauth2.initCodeClient({
+                    client_id: googleClientId,
+                    scope: 'https://www.googleapis.com/auth/drive',
+                    ux_mode: 'popup',
+                    callback: async (response) => {
+                        if (response.code) {
+                            document.getElementById('auth-status').innerText = 'Speichere Code am Server...';
+                            const authRes = await fetch('/api/auth/code', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ code: response.code })
+                            });
+                            if (authRes.ok) {
+                                document.getElementById('auth-status').innerText = 'Erfolgreich verbunden!';
+                                document.getElementById('auth-btn').style.display = 'none';
+                                loadFolders();
+                            } else {
+                                document.getElementById('auth-status').innerText = 'Fehler bei der Verbindung.';
+                            }
+                        }
+                    },
+                });
+                
+                loadFolders(); // Try loading folders (if already authenticated)
+            } else {
+                document.getElementById('auth-status').innerText = 'Fehler: Keine Google API Config auf dem Server gefunden.';
+            }
+        } catch(err) {
+            document.getElementById('auth-status').innerText = 'Fehler beim Laden der Konfiguration.';
+        }
+    });
+
+    closeSettingsBtn.addEventListener('click', () => {
+        settingsModal.style.display = 'none';
+    });
+    
+    document.getElementById('auth-btn').addEventListener('click', () => {
+        if(authClientCode) authClientCode.requestCode();
+    });
+
+    async function loadFolders() {
+        document.getElementById('folder-settings-container').style.display = 'block';
+        document.getElementById('ai-folder-settings-container').style.display = 'block';
+        
+        try {
+            const res = await fetch('/api/drive/folders?parentId=root');
+            const data = await res.json();
+            if (data.success) {
+                document.getElementById('auth-status').innerText = 'Google Drive verbunden';
+                document.getElementById('auth-btn').innerText = 'Neu Verbinden';
+                document.getElementById('auth-btn').style.display = 'inline-block';
+                
+                const rawBrowseBtn = document.getElementById('raw-folder-browse');
+                const aiBrowseBtn = document.getElementById('ai-folder-browse');
+                const rawDisplay = document.getElementById('raw-folder-display');
+                const aiDisplay = document.getElementById('ai-folder-display');
+                
+                rawBrowseBtn.disabled = false;
+                aiBrowseBtn.disabled = false;
+                rawDisplay.placeholder = "Klicke auf Durchsuchen...";
+                aiDisplay.placeholder = "Klicke auf Durchsuchen...";
+                
+                // Pre-fill existing settings correctly from backend API
+                if (window.currentSettings) {
+                    async function fetchFolderName(id, displayEl, idEl) {
+                        try {
+                            const nRes = await fetch('/api/drive/folder/' + id);
+                            if (nRes.ok) {
+                                const nData = await nRes.json();
+                                if (nData.success) {
+                                    displayEl.value = nData.folder.name;
+                                    idEl.value = nData.folder.id;
+                                    return;
+                                }
+                            }
+                        } catch(e) {}
+                        displayEl.value = "Ordner via ID: " + id;
+                        idEl.value = id;
+                    }
+                    
+                    if (window.currentSettings.FOLDER_ID) {
+                        fetchFolderName(window.currentSettings.FOLDER_ID, rawDisplay, document.getElementById('raw-folder-id'));
+                    }
+                    if (window.currentSettings.FOLDER_ID_SORTED) {
+                        fetchFolderName(window.currentSettings.FOLDER_ID_SORTED, aiDisplay, document.getElementById('ai-folder-id'));
+                    }
+                }
+                
+                document.getElementById('saveSettingsBtn').style.display = 'block';
+            } else {
+                document.getElementById('auth-status').innerText = 'Nicht authentifiziert.';
+            }
+        } catch(e) {
+            document.getElementById('auth-status').innerText = 'Fehler beim Laden der Ordner.';
+        }
+    }
+    
+    // --- Folder Browser Logic begin ---
+    const fbModal = document.getElementById('folder-browser-modal');
+    const fbList = document.getElementById('fb-list');
+    const fbBreadcrumbs = document.getElementById('fb-breadcrumbs');
+    const fbSelectBtn = document.getElementById('fb-select-btn');
+    const fbCurrentSelection = document.getElementById('fb-current-selection');
+
+    document.getElementById('raw-folder-browse').addEventListener('click', () => openFolderBrowser('raw'));
+    document.getElementById('ai-folder-browse').addEventListener('click', () => openFolderBrowser('ai'));
+    document.getElementById('closeFolderBrowserBtn').addEventListener('click', () => fbModal.style.display = 'none');
+
+    function openFolderBrowser(target) {
+        currentBrowserTarget = target;
+        currentParentId = 'root';
+        currentBreadcrumbs = [{ id: 'root', name: 'Meine Ablage' }];
+        selectedFbId = null;
+        selectedFbName = null;
+        fbCurrentSelection.innerText = 'Kein Ordner';
+        fbSelectBtn.disabled = true;
+        renderFolderBrowser();
+        fbModal.style.display = 'flex';
+    }
+
+    async function renderFolderBrowser() {
+        fbList.innerHTML = '<div style="padding: 10px; color: #777;">Lade Ordner...</div>';
+        fbBreadcrumbs.innerHTML = '';
+        currentBreadcrumbs.forEach((bc, idx) => {
+            const span = document.createElement('span');
+            span.className = 'fb-breadcrumb-item';
+            span.innerText = bc.name;
+            span.onclick = () => {
+                // Navigate back
+                currentBreadcrumbs = currentBreadcrumbs.slice(0, idx + 1);
+                currentParentId = bc.id;
+                renderFolderBrowser();
+            };
+            fbBreadcrumbs.appendChild(span);
+            if (idx < currentBreadcrumbs.length - 1) {
+                fbBreadcrumbs.appendChild(document.createTextNode(' > '));
+            }
+        });
+
+        try {
+            const res = await fetch('/api/drive/folders?parentId=' + currentParentId);
+            const data = await res.json();
+            fbList.innerHTML = '';
+
+            let displayFolders = data.success && data.folders ? data.folders : [];
+
+            if (displayFolders.length === 0) {
+                fbList.innerHTML = '<div style="padding: 10px; color: #777;">Dieser Ordner ist leer.</div>';
+            }
+
+            displayFolders.forEach(folder => {
+                const div = document.createElement('div');
+                div.className = 'fb-item';
+                div.style.justifyContent = 'space-between';
+                if (folder.id === selectedFbId) div.classList.add('active');
+                
+                const leftGroup = document.createElement('div');
+                leftGroup.style.display = 'flex';
+                leftGroup.style.alignItems = 'center';
+                leftGroup.style.gap = '10px';
+                leftGroup.style.flexGrow = '1';
+                
+                const icon = document.createElement('span');
+                icon.innerText = '📁';
+                const nameSpan = document.createElement('span');
+                nameSpan.innerText = folder.name;
+                
+                leftGroup.appendChild(icon);
+                leftGroup.appendChild(nameSpan);
+                
+                const rightGroup = document.createElement('button');
+                rightGroup.innerText = 'Öffnen';
+                rightGroup.style.padding = '4px 8px';
+                rightGroup.style.margin = '0';
+                rightGroup.style.fontSize = '12px';
+                rightGroup.style.backgroundColor = '#6c757d';
+                
+                div.appendChild(leftGroup);
+                div.appendChild(rightGroup);
+                
+                // Click on row to select
+                leftGroup.addEventListener('click', () => {
+                    document.querySelectorAll('.fb-item').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    selectedFbId = folder.id;
+                    selectedFbName = folder.name;
+                    fbCurrentSelection.innerText = folder.name;
+                    fbSelectBtn.disabled = false;
+                });
+
+                // Click on "Öffnen" navs into folder
+                rightGroup.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    currentParentId = folder.id;
+                    currentBreadcrumbs.push({ id: folder.id, name: folder.name });
+                    selectedFbId = null;
+                    selectedFbName = null;
+                    fbCurrentSelection.innerText = 'Kein Ordner';
+                    fbSelectBtn.disabled = true;
+                    renderFolderBrowser();
+                });
+                
+                // Keep double click for convenience
+                div.addEventListener('dblclick', () => {
+                    rightGroup.click();
+                });
+
+                fbList.appendChild(div);
+            });
+        } catch(err) {
+            fbList.innerHTML = '<div style="padding: 10px; color: red;">Fehler beim Laden.</div>';
+        }
+    }
+
+    fbSelectBtn.addEventListener('click', () => {
+        if (!selectedFbId) return;
+        if (currentBrowserTarget === 'raw') {
+            document.getElementById('raw-folder-display').value = selectedFbName;
+            document.getElementById('raw-folder-id').value = selectedFbId;
+        } else if (currentBrowserTarget === 'ai') {
+            document.getElementById('ai-folder-display').value = selectedFbName;
+            document.getElementById('ai-folder-id').value = selectedFbId;
+        }
+        fbModal.style.display = 'none';
+    });
+    // --- Folder Browser Logic end ---
+
+    document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+        const rawFolderId = document.getElementById('raw-folder-id').value;
+        const aiFolderId = document.getElementById('ai-folder-id').value;
+        
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                FOLDER_ID: rawFolderId,
+                FOLDER_ID_SORTED: aiFolderId
+            })
+        });
+        
+        if (res.ok) {
+            alert('Ordner-Einstellungen erfolgreich gespeichert!');
+            settingsModal.style.display = 'none';
+        } else {
+            alert('Fehler beim Speichern der Einstellungen.');
+        }
+    });
+
     const dropArea = document.getElementById('drop-area');
     const fileInput = document.getElementById('file-input');
     const browseBtn = document.getElementById('browse-btn');

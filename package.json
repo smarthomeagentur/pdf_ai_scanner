@@ -5,8 +5,7 @@
   "scripts": {
     "test": "node index.js --debug --test",
     "start": "node index.js",
-    "debug": "nodemon --watch . --ext js index.js --debug",
-    "login": "node index.js --debug --login"
+    "debug": "nodemon --watch . --ext js index.js --debug"
   },
   "keywords": [],
   "author": "",
@@ -14,17 +13,16 @@
   "description": "",
   "dependencies": {
     "@google-cloud/local-auth": "^2.1.0",
-    "@huggingface/inference": "^4.5.2",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "googleapis": "^105.0.0",
+    "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
     "ollama": "^0.6.3",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
-    "pdf2pic": "^3.2.0",
-    "playwright": "^1.57.0",
-    "unzipper": "^0.12.3"
+    "pdf2pic": "^3.2.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
