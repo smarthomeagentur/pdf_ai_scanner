@@ -982,13 +982,10 @@
         document.getElementById('rescanBtn').innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Bitte warten...`;
         document.getElementById('rescanBtn').disabled = true;
 
-        // Kleines Timeout, damit der UI-Loader im Browser sichtbar wird, bevor wir OpenCV blockieren
         setTimeout(() => {
             try {
-                // NEU: Hochauflösender Rescan (statt der extrem kleinen Video-Preview)
-                // Dadurch wird die KI extrem genau und fein auflösend bei den Kanten!
-                let rescanWidth = Math.min(1200, reviewState.highResCanvas.width);
-                let rescanHeight = Math.round((rescanWidth / reviewState.highResCanvas.width) * reviewState.highResCanvas.height);
+                let rescanWidth = Math.min(800, reviewState.cropW); 
+                let rescanHeight = Math.round((rescanWidth / reviewState.cropW) * reviewState.cropH);
                 
                 let tCanvas = document.createElement('canvas');
                 tCanvas.width = rescanWidth;
@@ -996,7 +993,14 @@
                 let tCtx = tCanvas.getContext('2d', { willReadFrequently: true });
                 tCtx.imageSmoothingEnabled = true;
                 tCtx.imageSmoothingQuality = 'high';
-                tCtx.drawImage(reviewState.highResCanvas, 0, 0, rescanWidth, rescanHeight);
+                
+                // Wir schneiden exakt den Bereich des bisherigen Scans aus (+15% Puffer, die im cropW/H schon drin sind)
+                tCtx.drawImage(
+                    reviewState.highResCanvas, 
+                    reviewState.cropX, reviewState.cropY, reviewState.cropW, reviewState.cropH, 
+                    0, 0, rescanWidth, rescanHeight
+                );
+                
                 let imageData = tCtx.getImageData(0, 0, rescanWidth, rescanHeight);
 
                 let hSrc = new cv.Mat(rescanHeight, rescanWidth, cv.CV_8UC4);
@@ -1009,97 +1013,83 @@
                 hSrc.data.set(imageData.data);
                 cv.cvtColor(hSrc, hGray, cv.COLOR_RGBA2GRAY, 0);
 
-                // SCALE OPTBLUR
-                // optBlur, optCanny1 und optCanny2 kommen aus dem Slider!
-                // Bei 1200px muss der Blur-Radius ebenfalls 3x-4x so groß sein, sonst greift er nicht!
-                let scaleRatio = rescanWidth / processWidth; 
-                let blurSize = Math.round(optBlur * scaleRatio);
-                if (blurSize % 2 === 0) blurSize += 1; // Muss ungerade sein
+                let blurSize = optBlur <= 3 ? 3 : (optBlur <= 5 ? 5 : 7);
+                if (blurSize % 2 === 0) blurSize += 1;
 
                 cv.GaussianBlur(hGray, hBlurred, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_DEFAULT);
-                
-                // Canny-Theresholds übernehmen wir direkt vom Slider
                 cv.Canny(hBlurred, hEdges, optCanny1, optCanny2);
 
-                // SCALE DILATE/ERODE
-                // Dilatation skaliert ebenfalls (bei 320px war es kernel 5, bei 1200px muss es ~19 sein)
-                let dSize = Math.max(3, Math.round(5 * scaleRatio));
+                let dSize = 5;
                 let kernel = cv.Mat.ones(dSize, dSize, cv.CV_8U);
                 cv.dilate(hEdges, hEdges, kernel);
                 cv.erode(hEdges, hEdges, kernel);
                 kernel.delete();
 
-                // Maskiere den neuen Kanten-Layer wie gehabt, um Rest des Dokuments grob abzuschneiden
-                if (reviewState.corners && reviewState.corners.length === 4) {
-                    try {
-                        let minX = rescanWidth, maxX = 0, minY = rescanHeight, maxY = 0;
-                        for (let i = 0; i < 4; i++) {
-                            let hX = reviewState.corners[i].x + reviewState.cropX;
-                            let hY = reviewState.corners[i].y + reviewState.cropY;
-                            let pX = Math.round((hX / reviewState.highResCanvas.width) * rescanWidth);
-                            let pY = Math.round((hY / reviewState.highResCanvas.height) * rescanHeight);
-                            if(pX < minX) minX = pX; if(pX > maxX) maxX = pX;
-                            if(pY < minY) minY = pY; if(pY > maxY) maxY = pY;
-                        }
-                        
-                        let boxW = maxX - minX;
-                        let boxH = maxY - minY;
-                        let padX = Math.max(20, Math.round(boxW * 0.15));
-                        let padY = Math.max(20, Math.round(boxH * 0.15));
-                        
-                        let pt1 = new cv.Point(Math.max(0, minX - padX), Math.max(0, minY - padY));
-                        let pt2 = new cv.Point(Math.min(rescanWidth, maxX + padX), Math.min(rescanHeight, maxY + padY));
-                        
-                        let mask = cv.Mat.zeros(rescanHeight, rescanWidth, cv.CV_8U);
-                        cv.rectangle(mask, pt1, pt2, new cv.Scalar(255), -1);
-                        
-                        cv.bitwise_and(hEdges, mask, hEdges);
-                        mask.delete();
-                    } catch(maskErr) {
-                        console.error("Mask Error:", maskErr);
-                    }
-                }
-
+                // Da wir durch tCtx.drawImage() das Bild bereits auf die "Nähe" (Bounding Box) 
+                // des vorherigen Rahmens beschränkt haben, brauchen wir KEINE riskante Maske mehr,
+                // die mögliche Linien zerschneidet (contourArea = 0).
+                
                 cv.findContours(hEdges, hContours, hHierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
                 let bestCntRaw = null;
                 let maxAreaRaw = 0;
 
-                for (let i = 0; i < hContours.size(); ++i) {
-                    let cnt = hContours.get(i);
-                    let area = cv.contourArea(cnt);
-                    if (area > (rescanWidth * rescanHeight * 0.03)) { // Erweitert auf 3% Mindestgröße
-                        let peri = cv.arcLength(cnt, true);
-                        
-                        let foundValid = false;
-                        // Viel feinere Epsilon-Schritte (0.015 bis 0.12) für detaillierte Ecken in High-Res!
-                        for (let eps of [0.015, 0.03, 0.05, 0.08, 0.10, 0.12]) {
-                            if (foundValid) break;
-                            let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, eps * peri, true);
+                function searchContours(contoursToCheck) {
+                    for (let i = 0; i < contoursToCheck.size(); ++i) {
+                        let cnt = contoursToCheck.get(i);
+                        let area = cv.contourArea(cnt);
+                        // Toleranz: Das Dokument ist jetzt groß im Crop, also reichen 15% Area
+                        if (area > (rescanWidth * rescanHeight * 0.15)) { 
+                            let peri = cv.arcLength(cnt, true);
                             
-                            if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
-                                let maxCosine = 0;
-                                for (let j = 2; j < 6; j++) {
-                                    let pt1Source = (j % 4) * 2; let pt2Source = ((j - 2) % 4) * 2; let pt0Source = ((j - 1) % 4) * 2;
-                                    let pt1 = { x: approx.data32S[pt1Source], y: approx.data32S[pt1Source + 1] };
-                                    let pt2 = { x: approx.data32S[pt2Source], y: approx.data32S[pt2Source + 1] };
-                                    let pt0 = { x: approx.data32S[pt0Source], y: approx.data32S[pt0Source + 1] };
-                                    let dx1 = pt1.x - pt0.x; let dy1 = pt1.y - pt0.y;
-                                    let dx2 = pt2.x - pt0.x; let dy2 = pt2.y - pt0.y;
-                                    let cosine = Math.abs((dx1*dx2 + dy1*dy2) / Math.sqrt((dx1*dx1 + dy1*dy1)*(dx2*dx2 + dy2*dy2) + 1e-10));
-                                    maxCosine = Math.max(maxCosine, cosine);
+                            let foundValid = false;
+                            for (let eps of [0.015, 0.02, 0.03, 0.05, 0.08, 0.10, 0.15]) {
+                                if (foundValid) break;
+                                let approx = new cv.Mat();
+                                cv.approxPolyDP(cnt, approx, eps * peri, true);
+                                
+                                if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
+                                    let maxCosine = 0;
+                                    for (let j = 2; j < 6; j++) {
+                                        let pt1Source = (j % 4) * 2; let pt2Source = ((j - 2) % 4) * 2; let pt0Source = ((j - 1) % 4) * 2;
+                                        let pt1 = { x: approx.data32S[pt1Source], y: approx.data32S[pt1Source + 1] };
+                                        let pt2 = { x: approx.data32S[pt2Source], y: approx.data32S[pt2Source + 1] };
+                                        let pt0 = { x: approx.data32S[pt0Source], y: approx.data32S[pt0Source + 1] };
+                                        let dx1 = pt1.x - pt0.x; let dy1 = pt1.y - pt0.y;
+                                        let dx2 = pt2.x - pt0.x; let dy2 = pt2.y - pt0.y;
+                                        let cosine = Math.abs((dx1*dx2 + dy1*dy2) / Math.sqrt((dx1*dx1 + dy1*dy1)*(dx2*dx2 + dy2*dy2) + 1e-10));
+                                        maxCosine = Math.max(maxCosine, cosine);
+                                    }
+                                    if (maxCosine < 0.95) {
+                                        maxAreaRaw = area;
+                                        if (bestCntRaw) bestCntRaw.delete();
+                                        bestCntRaw = approx.clone();
+                                        foundValid = true;
+                                    }
                                 }
-                                if (maxCosine < 0.9) {
-                                    maxAreaRaw = area;
-                                    if (bestCntRaw) bestCntRaw.delete();
-                                    bestCntRaw = approx.clone();
-                                    foundValid = true;
-                                }
+                                approx.delete();
                             }
-                            approx.delete();
                         }
                     }
+                }
+
+                searchContours(hContours);
+
+                // Fallback: Otsu
+                if (!bestCntRaw) {
+                    let hFb = new cv.Mat();
+                    cv.threshold(hGray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+                    cv.Canny(hFb, hFb, 50, 150);
+                    let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+                    cv.dilate(hFb, hFb, dKernel);
+                    cv.erode(hFb, hFb, dKernel);
+                    dKernel.delete();
+
+                    let fbC = new cv.MatVector();
+                    let fbH = new cv.Mat();
+                    cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+                    searchContours(fbC);
+                    fbC.delete(); fbH.delete(); hFb.delete();
                 }
 
                 if (bestCntRaw) {
@@ -1107,35 +1097,28 @@
                     bestCntRaw.delete();
                     
                     neueEcken = sorted.map(c => ({
-                        x: c.x / rescanWidth,
-                        y: c.y / rescanHeight
+                        x: (c.x / rescanWidth) * reviewState.cropW,
+                        y: (c.y / rescanHeight) * reviewState.cropH
                     }));
                 }
 
-                hSrc.delete();
-                hGray.delete();
-                hBlurred.delete();
-                hEdges.delete();
-                hHierarchy.delete();
-                hContours.delete();
+                hSrc.delete(); hGray.delete(); hBlurred.delete(); hEdges.delete(); hHierarchy.delete(); hContours.delete();
 
             } catch(e) {
-                console.error("Manueler Re-Scan fehlgeschlagen:", e);
+                console.error("Manueller Re-Scan fehlgeschlagen:", e);
             }
 
             document.getElementById('rescanBtn').innerHTML = orgBtnText;
             document.getElementById('rescanBtn').disabled = false;
 
             if (neueEcken) {
-                // Zeichnet das Bild mit neuem Puffer/Beschnitt und den neuen Ecken neu
-                showManualReview(reviewState.highResCanvas, neueEcken);
+                reviewState.corners = neueEcken;
+                drawReviewOverlay();
             } else {
                 alert("Auf diesem Foto konnte die KI kein eindeutiges Dokument erkennen. Bitte justiere die Kanten manuell.");
             }
         }, 50);
     });
-
-    let scanPagesArray = [];
 
     // Klick auf "Abbrechen"
     document.getElementById('cancelReviewBtn').addEventListener('click', () => {
