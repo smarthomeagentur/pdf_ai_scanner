@@ -127,7 +127,7 @@
     <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
         <a href="/" class="back-link m-0">&larr; Home</a>
         <div class="d-flex gap-2">
-            <button id="torchBtn" class="btn btn-sm btn-outline-secondary" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px; display: block;" title="Taschenlampe (Aus/An/Auto)">⚡ Aus</button>
+            <button id="autoCaptureBtn" class="btn btn-sm btn-primary" style="font-weight: bold; font-size: 1.1rem; padding: 2px 8px; border-radius: 6px;" title="Auto-Capture (An/Aus)">🤖 Auto: An</button>
             <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('filterMenu').open = !document.getElementById('filterMenu').open" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px;">⚙️</button>
             <button class="btn btn-sm btn-outline-primary" style="font-weight: bold;" onclick="toggleMenu()">📂 Auswahl & Upload</button>
         </div>
@@ -212,8 +212,14 @@
         <p class="mt-2 text-muted" id="loader-status">Dokument wird beschnitten und OCR-verarbeitet...</p>
     </div>
 
+    <!-- Großer Auto-Countdown Indikator -->
+    <div id="auto-countdown" style="display: none; position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%); z-index: 1015; font-size: 15vw; color: white; font-weight: bold; text-shadow: 0px 4px 15px rgba(0,0,0,0.8); pointer-events: none;">2</div>
+
     <!-- Floating Button für besseres Mobile-Bedienen -->
     <button id="captureBtn" class="btn btn-primary" style="display: none; position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 999; max-width: 500px; width: calc(100% - 60px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); font-size: 1.1rem; padding: 14px;" disabled>📸 Dokument scannen</button>
+
+    <!-- Floating Taschenlampe -->
+    <button id="torchBtn" class="btn btn-outline-secondary" style="display: none; position: fixed; bottom: 110px; right: 30px; z-index: 999; border-radius: 50%; width: 50px; height: 50px; padding: 0; box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-size: 1.1rem; backdrop-filter: blur(4px); align-items: center; justify-content: center; flex-direction: column; text-align: center; line-height: 1.2;" title="Taschenlampe (Aus/An/Auto)">⚡<br><small style="font-size:8px">Auto</small></button>
 </div>
 
 <!-- OpenCV.js asynchron laden -->
@@ -327,9 +333,68 @@
         }
     }
 
+    // --- Auto Capture Support ---
+    const autoCaptureBtn = document.getElementById('autoCaptureBtn');
+    const autoCountdown = document.getElementById('auto-countdown');
+    let autoCaptureEnabled = true;
+    let documentDetectionStart = 0;
+    let countdownInterval = null;
+    let autoCaptureTriggered = false;
+
+    autoCaptureBtn.addEventListener('click', () => {
+        autoCaptureEnabled = !autoCaptureEnabled;
+        if (autoCaptureEnabled) {
+            autoCaptureBtn.classList.replace('btn-outline-secondary', 'btn-primary');
+            autoCaptureBtn.innerHTML = '🤖 Auto: An';
+        } else {
+            autoCaptureBtn.classList.replace('btn-primary', 'btn-outline-secondary');
+            autoCaptureBtn.innerHTML = '🤖 Auto: Aus';
+            cancelAutoCountdown();
+        }
+    });
+
+    function cancelAutoCountdown() {
+        if (countdownInterval) {
+            clearInterval(countdownInterval);
+            countdownInterval = null;
+        }
+        autoCountdown.style.display = 'none';
+        autoCountdown.innerText = '2';
+        documentDetectionStart = 0;
+        autoCaptureTriggered = false;
+    }
+
+    function startAutoCountdown() {
+        if (countdownInterval || autoCaptureTriggered) return;
+        autoCaptureTriggered = true; // Sperre
+        autoCountdown.style.display = 'block';
+        autoCountdown.innerText = '2';
+        let count = 2;
+        
+        countdownInterval = setInterval(() => {
+            count--;
+            if (count > 0) {
+                autoCountdown.innerText = count.toString();
+            } else {
+                // Bei 0
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+                autoCountdown.style.display = 'none';
+                
+                // Wir haben einen gültigen Rahmen? Dann drück auf den Button
+                if (smoothedCornersRaw && !captureBtn.disabled) {
+                    // Simuliere Haptic/Optic falls nötig
+                    captureBtn.click();
+                } else {
+                    cancelAutoCountdown(); // Wenn Rahmen grad im Moment des Fotomachens verschwand oder btn disabled (im Review Screen)
+                }
+            }
+        }, 1000);
+    }
+
     // --- Taschenlampen Support ---
     const torchBtn = document.getElementById('torchBtn');
-    let torchMode = 'off'; // off, on, auto
+    let torchMode = 'auto'; // auto, off, on
     let torchSupported = false;
 
     async function updateTorchState() {
@@ -341,28 +406,31 @@
             const capabilities = videoTrack.getCapabilities();
             if (capabilities.torch) {
                 torchSupported = true;
-                torchBtn.style.display = 'block';
+                torchBtn.style.display = 'flex'; // Changed to flex since we use it to center icon
 
                 if (torchMode === 'off') {
                     await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
-                    torchBtn.innerHTML = '⚡ Aus';
+                    torchBtn.innerHTML = '⚡<br><small style="font-size:8px">Aus</small>';
                     torchBtn.classList.remove('btn-warning', 'btn-primary');
                     torchBtn.classList.add('btn-outline-secondary');
-                    torchBtn.style.color = '';
+                    torchBtn.style.color = '#333';
+                    torchBtn.style.backgroundColor = 'rgba(255,255,255,0.8)';
                 } else if (torchMode === 'on') {
                     await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                    torchBtn.innerHTML = '⚡ An';
+                    torchBtn.innerHTML = '⚡<br><small style="font-size:8px">An</small>';
                     torchBtn.classList.remove('btn-outline-secondary', 'btn-primary');
                     torchBtn.classList.add('btn-warning');
                     torchBtn.style.color = '#000';
+                    torchBtn.style.backgroundColor = '';
                 } else if (torchMode === 'auto') {
                     // WebRTC support. Erlaube Auto-Flash falls das Gerät ihn nativ hat
                     await videoTrack.applyConstraints({ advanced: [{ torch: false }] }); 
                     // Auto Modus wird effektiv später beim takePhoto() ausgelöst (fillLightMode: 'auto')
-                    torchBtn.innerHTML = '⚡ Auto';
+                    torchBtn.innerHTML = '⚡<br><small style="font-size:8px">Auto</small>';
                     torchBtn.classList.remove('btn-outline-secondary', 'btn-warning');
                     torchBtn.classList.add('btn-primary');
                     torchBtn.style.color = '#fff';
+                    torchBtn.style.backgroundColor = '';
                 }
             } else {
                 torchBtn.style.display = 'none'; // Not supported on this device/camera
@@ -512,11 +580,31 @@
                     }
                 }
                 bestCnt.delete();
+
+                // Auto-Capture Logik
+                if (autoCaptureEnabled && !document.getElementById('captureBtn').disabled) {
+                    if (documentDetectionStart === 0) {
+                        documentDetectionStart = Date.now();
+                    } else if (Date.now() - documentDetectionStart >= 1000 && !autoCaptureTriggered) {
+                        startAutoCountdown();
+                    }
+                } else {
+                    documentDetectionStart = 0;
+                    if (countdownInterval && !autoCaptureTriggered) cancelAutoCountdown(); // Abort if manual logic deactivated this
+                }
+
             } else {
                 framesWithoutDetection++;
+                
+                // Bricht den Countdown ab, wenn das Blatt zu lange (ca. 0,3s) verloren geht
+                if (autoCaptureTriggered && framesWithoutDetection > 7) {
+                    cancelAutoCountdown();
+                }
+
                 // Vergiss das Quadrat, wenn es für X Frames (MAX) komplett verschwunden ist
                 if(framesWithoutDetection > MAX_FRAMES_LOSE_TRACK) {
                     smoothedCornersRaw = null;
+                    cancelAutoCountdown(); // Tracking komplett verloren -> Timer killen
                 }
             }
 
@@ -564,6 +652,9 @@
 
     captureBtn.addEventListener('click', async () => {
         if (!streaming) return;
+        
+        cancelAutoCountdown(); // Timer und Flags resetten um Doppel-Clicks und Geister-Auslöser zu verhindern
+        
         // Ecken sofort beim Klick wegspeichern ("einfrieren"), 
         // da das Auslösen des Sensors per await ein paar Millisekunden dauert 
         // und das Bild durch Verwackeln sonst verloren ginge!
@@ -839,8 +930,11 @@
         // Pausiere Kameraanzeige
         document.getElementById('video-wrapper').style.display = 'none';
         document.getElementById('captureBtn').style.display = 'none';
+        document.getElementById('captureBtn').disabled = true;
         document.getElementById('filterMenu').style.display = 'none';
         document.getElementById('manual-review-section').style.display = 'flex';
+        // Wenn man in den Review kommt, Auto-Tracking unbedingt zurücksetzen:
+        cancelAutoCountdown();
         
         reviewState.highResCanvas = highResCanvas;
 
