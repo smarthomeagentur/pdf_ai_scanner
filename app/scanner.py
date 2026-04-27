@@ -111,15 +111,17 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
         # Bild durch den farbigen Hintergrund teilen -> normiert Licht und färbt ein gelbes Blatt reinweiß
         diff = cv2.divide(warped.astype(np.float32), background.astype(np.float32), scale=255.0)
         
-        # ADAPTIV: Gamma-Korrektur anwenden, damit grauer Text/Bilder erhalten bleiben und nicht "ausbrennen"
-        # Werte > 1.0 dunkeln die helleren Grautöne kontrolliert ab, Weiß bleibt hingegen Weiß.
-        gamma = 1.4
-        diff = 255.0 * np.power(np.clip(diff / 255.0, 0, 1), gamma)
-        
-        # Kontrast weitaus feinfühliger strecken (knackig weißes Papier, erhaltener grauer Text)
-        black_point = 10
-        white_point = 240
+        # Schritt 1: Hartes "Clipping" oben und unten, um das Papierrauschen (Fleckigkeit) radikal zu glätten.
+        # Alles, was "fast weiß" (> 210) ist, wird brutal auf 255 hochgezogen. So wird der Hintergrund steril weiß.
+        black_point = 15
+        white_point = 210
         diff = np.clip((diff - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
+        
+        # Schritt 2: ADAPTIV: Leichte Gamma-Korrektur anwenden, um die durch das Clipping blasser gewordenen,
+        # feinen (hellgrauen) Texte wieder sanft abzudunkeln, ohne das Reinweiß zu zerstören.
+        gamma = 1.3
+        diff = 255.0 * np.power(np.clip(diff / 255.0, 0, 1), gamma)
+        diff = np.clip(diff, 0, 255).astype(np.uint8)
         
         # Farben deutlich pushen, damit Fotos, Logos und Stempel wieder lebendig wirken
         hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
@@ -129,9 +131,9 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         
-        # Leichtes Nachschärfen (Unsharp Mask) für optimale OCR und klare Kanten
-        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 3)
-        processed = cv2.addWeighted(processed, 1.5, blurred_unsharp, -0.5, 0)
+        # Nur marginales Nachschärfen, damit Rauschen nicht potenziert wird
+        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 2)
+        processed = cv2.addWeighted(processed, 1.2, blurred_unsharp, -0.2, 0)
 
     elif algorithm == "bw_adaptive":
 
