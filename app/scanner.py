@@ -102,31 +102,31 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
         processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
 
     elif algorithm == "color_enhanced":
-        # Ausleuchtung (Schatten/Papierfarbe) schätzen
-        gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-        # Großer Kernel, um Texte zu "löschen" und nur das Papier übrig zu lassen
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-        background = cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)
-        background = cv2.GaussianBlur(background, (21, 21), 0)
+        # Ausleuchtung und Farbverschiebung (z. B. gelbliches Raumlicht) schätzen
+        # Wir wenden die Morphologie direkt auf alle 3 Farbkanäle an.
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31))
+        background = cv2.morphologyEx(warped, cv2.MORPH_DILATE, kernel)
+        background = cv2.GaussianBlur(background, (51, 51), 0)
         
-        # Hintergrund auf 3 Kanäle erweitern
-        bg_3c = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
+        # Bild durch den farbigen Hintergrund teilen -> normiert Licht und färbt ein gelbes Blatt reinweiß
+        diff = cv2.divide(warped.astype(np.float32), background.astype(np.float32), scale=255.0)
         
-        # Bild durch Hintergrund teilen -> Macht das ungleichmäßig beleuchtete Blatt gleichmäßig weiß
-        diff = cv2.divide(warped.astype(np.float32), bg_3c.astype(np.float32), scale=255.0)
-        
-        # Kontrast erhöhen (Schwarz- und Weißpunkt setzen)
-        black_point = 25
-        white_point = 230
+        # Kontrast weitaus aggressiver strecken (knackig weißes Papier, tiefer schwarzer Text)
+        black_point = 30
+        white_point = 205
         diff = np.clip((diff - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
         
-        # Sättigung leicht anheben für poppigere Farben (Logos, Stempel, Unterschriften)
+        # Farben deutlich pushen, damit Fotos, Logos und Stempel wieder lebendig wirken
         hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
         h, s, v = cv2.split(hsv)
-        s = cv2.multiply(s, 1.3) # Sättigung um 30% erhöhen
+        s = cv2.multiply(s, 1.4) # Sättigung um 40% erhöhen
         s = np.clip(s, 0, 255).astype(np.uint8)
         hsv = cv2.merge([h, s, v])
         processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        
+        # Leichtes Nachschärfen (Unsharp Mask) für optimale OCR und klare Kanten
+        blurred_unsharp = cv2.GaussianBlur(processed, (0, 0), 3)
+        processed = cv2.addWeighted(processed, 1.5, blurred_unsharp, -0.5, 0)
 
     elif algorithm == "bw_adaptive":
 
