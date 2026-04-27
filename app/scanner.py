@@ -41,7 +41,7 @@ def auto_exposure(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     min_val = np.percentile(gray, 2)
     # Von 98 auf 95 gesenkt: Kappt helle Bereiche früher ab und zieht die Gesamtbelichtung einen Tick heller
-    max_val = np.percentile(gray, 90)
+    max_val = np.percentile(gray, 98)
     if max_val > min_val:
         alpha = 255.0 / (max_val - min_val)
         beta = -min_val * alpha
