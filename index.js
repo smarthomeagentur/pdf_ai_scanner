@@ -382,11 +382,12 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
   const inputPath = req.file.path;
   const outputJpgPath = path.join(localDownloadFolder, `Preview_${Date.now()}.jpg`);
   const algorithm = req.body.algorithm || "color_enhanced";
+  const coords = req.body.coords || "skip"; // Now receiving crop coordinates from frontend!
 
   try {
     await new Promise((resolve, reject) => {
       exec(
-        `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "skip" "${algorithm}"`,
+        `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "${coords}" "${algorithm}"`,
         (error, stdout, stderr) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); // Original löschen
 

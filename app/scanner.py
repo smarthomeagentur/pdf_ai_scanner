@@ -86,7 +86,7 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
     # Daher ist 'orig' von nun an das bereinigte Rechteck und wir müssen keine
     # "coords" Fallbacks mehr durchführen - außer das System hat im Frontend nicht getriggert.
 
-    if not coords_str: 
+    if not coords_str or coords_str == "skip": 
         # Optional: Falls jemand ohne Kantenfindung geklickt hat..
         ratio = image.shape[0] / 500.0
         try:
@@ -113,15 +113,26 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
             warped = orig
         else:
             warped = four_point_transform(orig, screenCnt.reshape(4, 2) * ratio)
+    elif coords_str == "frontend_cropped":
+        # Die Datei ist bereits der absolut sauber beschnittene Bereich aus dem Frontend Final-Upload
+        warped = orig
     else:
-        # Die Datei ist bereits der beschnittene Bereich aus dem Frontend
+        # Für die Vorschau übergibt das Frontend hier optional die 4 Koordinaten (polygonrahmen)
+        # So kann die Farb-Detektion NUR den Inhalt INNERHALB des Rahmens testen.
+        # Wir geben trotzdem das volle Bild (orig) zurück, damit das UI im Edit-Modus nicht kaputt geht!
+        pts = np.array([float(x) for x in coords_str.split(',')]).reshape(4, 2)
+        eval_warped = auto_exposure(four_point_transform(orig, pts))
         warped = orig
 
     # Initial die Belichtung korrigieren (Spreizung des Kontrasts, Ausgleich der Kamera-Schwankungen)
     warped = auto_exposure(warped)
 
     if algorithm == "auto":
-        algorithm = "color_enhanced" if is_color_document(warped) else "white_paper"
+        # Wenn wir Koordinaten bekamen (Vorschau), prüfen wir NUR das ausgeschnittene Blatt (eval_warped)
+        if 'eval_warped' in locals():
+            algorithm = "color_enhanced" if is_color_document(eval_warped) else "white_paper"
+        else:
+            algorithm = "color_enhanced" if is_color_document(warped) else "white_paper"
         print(f"Auto-Detect: Nutze Filter '{algorithm}'")
 
     # 5. Bild für Textoptimierung aufbereiten

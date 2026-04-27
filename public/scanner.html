@@ -653,6 +653,10 @@
 
     captureBtn.addEventListener('click', async () => {
         if (!streaming) return;
+
+        // Auto-Modus für diesen neuen Scan verlässlich setzen
+        document.getElementById('algorithmSelect').value = 'auto';
+        document.getElementById('previewAlgorithmSelect').value = 'auto';
         
         cancelAutoCountdown(); // Timer und Flags resetten um Doppel-Clicks und Geister-Auslöser zu verhindern
         
@@ -901,7 +905,15 @@
             let formData = new FormData();
             formData.append('image', blob, 'preview.jpg');
             formData.append('algorithm', filter);
-            formData.append('coords', 'skip');
+            
+            // Reiche die ausgewählten 4 Eckpunkte mit an das Backend für korrekte Auto-Berechnung
+            let coordsArr = [];
+            if (reviewState.corners.length === 4) {
+                reviewState.corners.forEach(c => coordsArr.push(c.x, c.y));
+                formData.append('coords', coordsArr.join(','));
+            } else {
+                formData.append('coords', 'skip');
+            }
 
             try {
                 const response = await fetch('/api/preview', {
