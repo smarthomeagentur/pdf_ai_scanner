@@ -51,8 +51,11 @@ def is_color_document(img):
     # Auf Vorschaugröße skalieren für Performance
     small = cv2.resize(img, (400, int(400 * img.shape[0] / img.shape[1])))
     
+    # Rauschen glätten, da Bildrauschen in dunkleren Bereichen oft fälschlicherweise als Farbe (Sättigung) erkannt wird
+    small = cv2.GaussianBlur(small, (5, 5), 0)
+    
     # Schneller Beleuchtungsausgleich, um z.B. gelbliches Fotolicht nicht als "Bild-Farbe" zu werten
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
     bg = cv2.morphologyEx(small, cv2.MORPH_DILATE, kernel)
     diff = cv2.divide(small.astype(np.float32), bg.astype(np.float32), scale=255.0)
     diff = np.clip(diff, 0, 255).astype(np.uint8)
@@ -60,12 +63,14 @@ def is_color_document(img):
     hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
     _, s, v = cv2.split(hsv)
     
-    # Zähle Pixel, die signifikant bunt (Sättigung > 35) und nicht fast weiß/schwarz sind
-    color_mask = (s > 35) & (v < 240) & (v > 20)
+    # Zähle Pixel, die signifikant bunt sind. 
+    # Schwelle für Sättigung deutlich erhöht (s > 50), um Rauschen auf grauem Papier zu ignorieren.
+    # Wir kappen auch oben (v < 220) strenger ab, damit das unregelmäßige Grauweiß nicht mitzählt.
+    color_mask = (s > 50) & (v < 220) & (v > 30)
     color_ratio = np.sum(color_mask) / (small.shape[0] * small.shape[1])
     
-    # Ab 0.5% echter bunter Farbfläche gilt es als Farbdokument
-    return color_ratio > 0.005
+    # Ab ca. 1% echter bunter Farbfläche gilt es als Farbdokument
+    return color_ratio > 0.01
 
 def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
     # 1. Bild laden...
