@@ -36,11 +36,12 @@ def four_point_transform(image, pts):
     return warped
 
 def auto_exposure(img):
-    # Basis-Zuschneiden der extremsten 2% (Rauschen/Ausreißer), um den Bildkontrast voll zu spreizen.
+    # Basis-Zuschneiden der extremsten Ränder (Rauschen/Ausreißer), um den Bildkontrast voll zu spreizen.
     # Gleicht zu dunkle oder flache Bilder direkt nach der Aufnahme an.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     min_val = np.percentile(gray, 2)
-    max_val = np.percentile(gray, 98)
+    # Von 98 auf 95 gesenkt: Kappt helle Bereiche früher ab und zieht die Gesamtbelichtung einen Tick heller
+    max_val = np.percentile(gray, 95)
     if max_val > min_val:
         alpha = 255.0 / (max_val - min_val)
         beta = -min_val * alpha
