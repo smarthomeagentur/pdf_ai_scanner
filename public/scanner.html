@@ -137,14 +137,8 @@
     <details id="filterMenu" class="bg-light text-start shadow-sm position-sticky" style="top: 60px; z-index: 1020; border-bottom: 2px solid #ddd;">
         <summary class="text-secondary fw-bold p-3 m-0" style="cursor: pointer; background: #f8f9fa; display: none;">⚙️ Filtereinstellungen anzeigen</summary>
         <div class="px-3 pb-3 border-top pt-2">
-            <label class="form-label fw-bold text-dark small mb-1">Bild-Filter</label>
-            <select id="algorithmSelect" class="form-select form-select-sm mb-2">
-                <option value="white_paper" selected>Reinweißes Papier (Standard Scanner)</option>
-                <option value="bw_adaptive">Schwarz/Weiß Hart (Quittungen / Kassenzettel)</option>
-                <option value="clahe_sharp">Graustufen Schärfen (Besseres Detail bei dunkler Schrift)</option>
-                <option value="grayscale">Einfache Graustufen (kein Filter)</option>
-                <option value="color">Original in Farbe (unbearbeitet)</option>
-            </select>
+            <!-- Bild-Filter ist jetzt exklusiv im Preview-Screen. Intern halten wir den State fest: -->
+            <input type="hidden" id="algorithmSelect" value="color_enhanced">
 
             <h6 class="text-secondary mt-3 mb-2 small fw-bold">Scanner Einstellung</h6>
             
@@ -186,7 +180,22 @@
             <canvas id="reviewOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; touch-action: none;"></canvas>
         </div>
         
+        <div id="previewLoadingText" class="text-primary mt-2 fw-bold" style="display: none; font-size: 0.9em;">
+            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Warten auf Vorschau...
+        </div>
+
         <div class="mt-3 w-100 d-flex justify-content-center flex-column gap-2" style="max-width: 500px;">
+            <div class="input-group mb-2 shadow-sm">
+                <span class="input-group-text bg-light fw-bold" style="font-size: 0.9em;">🎨 Filter</span>
+                <select id="previewAlgorithmSelect" class="form-select text-primary fw-bold" style="font-size: 0.9em;" onchange="document.getElementById('algorithmSelect').value = this.value; updatePreviewFilter();">
+                    <option value="color_enhanced">Optimiert Farbe</option>
+                    <option value="white_paper">Optimiert SW</option>
+                    <option value="bw_adaptive">SW Hart (Quittungen / Kassenzettel)</option>
+                    <option value="grayscale">Original Graustufen</option>
+                    <option value="color">Original Farbe</option>
+                </select>
+            </div>
+            
             <button class="btn btn-warning w-100 py-2 fw-bold text-dark shadow-sm" id="rescanBtn">Kantenerkennung</button>
             <button class="btn btn-primary w-100 py-2 fw-bold shadow-sm" id="addPageBtn">Nächste Seite</button>
         </div>
@@ -774,6 +783,58 @@
         activeCorner: -1
     };
 
+    function updatePreviewFilter() {
+        const filter = document.getElementById('algorithmSelect').value;
+        const rCv = document.getElementById('reviewCanvas');
+        
+        // Zuerst immer das originale(ungefilterte), um 15% erweiterte Bild zurückholen
+        if (!reviewState.highResCanvas) return;
+        rCv.width = reviewState.cropW;
+        rCv.height = reviewState.cropH;
+        rCv.getContext('2d').drawImage(reviewState.highResCanvas, reviewState.cropX, reviewState.cropY, reviewState.cropW, reviewState.cropH, 0, 0, reviewState.cropW, reviewState.cropH);
+        
+        rCv.style.filter = 'none'; // CSS-Reset (falls es alte Testsachen gäbe)
+
+        // Original überspringt alles und behält einfach das ungefilterte High-Res Segment
+        if (filter === 'color') {
+            return;
+        }
+        
+        // Optisches Feedback, dass es lädt (Kein "Blurry Image" Effekt mehr)
+        document.getElementById('previewLoadingText').style.display = 'block';
+
+        // Neues echtes OpenCV-Preview generieren
+        rCv.toBlob(async (blob) => {
+            let formData = new FormData();
+            formData.append('image', blob, 'preview.jpg');
+            formData.append('algorithm', filter);
+            formData.append('coords', 'skip');
+
+            try {
+                const response = await fetch('/api/preview', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) throw new Error('Preview Fetch fail');
+                
+                const imgBlob = await response.blob();
+                const url = URL.createObjectURL(imgBlob);
+                
+                const img = new Image();
+                img.onload = () => {
+                    rCv.getContext('2d').drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
+                    document.getElementById('previewLoadingText').style.display = 'none';
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+            } catch (err) {
+                console.error("Preview Fehler: ", err);
+                document.getElementById('previewLoadingText').style.display = 'none';
+            }
+        }, 'image/jpeg', 0.85);
+    }
+
     function showManualReview(highResCanvas, relativeCorners) {
         // Pausiere Kameraanzeige
         document.getElementById('video-wrapper').style.display = 'none';
@@ -814,6 +875,10 @@
             x: (c.x * highResCanvas.width) - reviewState.cropX,
             y: (c.y * highResCanvas.height) - reviewState.cropY
         }));
+        
+        // Sync preview combo box with global config and apply Backend Preview Image
+        document.getElementById('previewAlgorithmSelect').value = document.getElementById('algorithmSelect').value;
+        updatePreviewFilter();
 
         drawReviewOverlay();
     }

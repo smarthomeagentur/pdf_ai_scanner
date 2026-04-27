@@ -35,7 +35,7 @@ def four_point_transform(image, pts):
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
     return warped
 
-def scan_document(image_path, output_pdf_path, coords_str="", algorithm="white_paper"):
+def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_enhanced"):
     # 1. Bild laden...
     image = cv2.imread(image_path)
     if image is None:
@@ -96,27 +96,38 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="white_p
         diff = cv2.divide(warped_gray, background, scale=255)
         
         # 5.2 Lineare Kontrast-Streckung (Weißpunkt / Schwarzpunkt)
-        # Da das Papier schon sehr gut homogen war, definieren wir nun einen fixen Wertebereich.
-        # Alles, was heller als 200 ist (Papier/Hintergrund), wird reines Weiß (255).
-        # Alles, was dunkler als 150 ist (Text/Tinte), wird reines Schwarz (0).
-        # Die Abstufungen dazwischen (150-200) dienen der Kantenglättung der Buchstaben, 
-        # damit die Schrift natürlich und lesbar, aber nicht "fett" wirkt.
         black_point = 150
         white_point = 200
         
         processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
 
+    elif algorithm == "color_enhanced":
+        # Globaler Weißabgleich + Kontrast, damit Fotos nicht durch den 15x15 Kernel gelöscht werden
+        gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+        brightest_mask = gray > np.percentile(gray, 95)
+        
+        b_mean = np.mean(warped[:, :, 0][brightest_mask])
+        g_mean = np.mean(warped[:, :, 1][brightest_mask])
+        r_mean = np.mean(warped[:, :, 2][brightest_mask])
+        
+        b_scale = 255.0 / max(b_mean, 1)
+        g_scale = 255.0 / max(g_mean, 1)
+        r_scale = 255.0 / max(r_mean, 1)
+        
+        wb = np.zeros_like(warped, dtype=np.float32)
+        wb[:, :, 0] = warped[:, :, 0] * b_scale
+        wb[:, :, 1] = warped[:, :, 1] * g_scale
+        wb[:, :, 2] = warped[:, :, 2] * r_scale
+        
+        black_point = 40
+        white_point = 230
+        processed = np.clip((wb - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
+
     elif algorithm == "bw_adaptive":
+
         # Herkömmlicher hart-schwarz-weiß-Modus (gut für sehr schwacht gedruckte Bons)
         #blurred = cv2.GaussianBlur(warped_gray, (5, 5), 0)
         processed = cv2.adaptiveThreshold(warped_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 15)
-
-    elif algorithm == "clahe_sharp":
-        # Lokale Kontrasterhöhung und Kanten-Sharpening, bewahrt kleine Graustufendetails
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(warped_gray)
-        kernel = np.array([[0, -1, 0], [-1, 5,-1], [0, -1, 0]])
-        processed = cv2.filter2D(enhanced, -1, kernel)
 
     elif algorithm == "grayscale":
         # Einfach Graustufen ohne Filter, optimal für Bilder 
@@ -130,6 +141,13 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="white_p
         # Fallback
         processed = warped_gray
 
+    # Falls nur eine einfache Vorschau (JPG) statt OCR PDF gewünscht ist
+    output_ext = os.path.splitext(output_pdf_path)[1].lower()
+    if output_ext in ['.jpg', '.jpeg', '.png']:
+        cv2.imwrite(output_pdf_path, processed)
+        print(f"Preview gespeichert in: {output_pdf_path}")
+        return
+
     # 6. OCR mit Tesseract und als durchsuchbares PDF speichern
     # Maximale OCR-Qualität (Darf länger dauern):
     # - Kubische Interpolation skaliert das Bild um Faktor 2 hoch. Tesseract profitiert massiv davon (simuliert > 300 DPI). 
@@ -137,6 +155,12 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="white_p
     # - --psm 3: Pseudosmartes Dokument-Layout (Erkennt Spalten viel besser als purer Textmodus).
     # - preserve_interword_spaces=1: Leerzeichen bleiben erhalten und verschwinden nicht bei dicker Schrift.
     ocr_image = cv2.resize(processed, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    
+    # PyTesseract konvertiert Numpy arrays per default als RGB, d.h. wenn wir ihm BGR übergeben, 
+    # sind Rot und Blau vertauscht, und bei sehr dunklen Flächen gehen Mischfarben verloren / wirken entsättigt.
+    if len(ocr_image.shape) == 3 and ocr_image.shape[2] == 3:
+        ocr_image = cv2.cvtColor(ocr_image, cv2.COLOR_BGR2RGB)
+
     custom_config = r'--oem 1 --psm 3 -c preserve_interword_spaces=1'
     pdf_bytes = pytesseract.image_to_pdf_or_hocr(ocr_image, extension='pdf', lang='deu+eng', config=custom_config)
     with open(output_pdf_path, 'wb') as f:
@@ -157,5 +181,5 @@ if __name__ == "__main__":
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     coords = sys.argv[3] if len(sys.argv) > 3 else ""
-    algorithm = sys.argv[4] if len(sys.argv) > 4 else "white_paper"
+    algorithm = sys.argv[4] if len(sys.argv) > 4 else "color_enhanced"
     scan_document(input_file, output_file, coords, algorithm)

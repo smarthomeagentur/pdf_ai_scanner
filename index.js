@@ -1,3 +1,17 @@
+// Unterdrücke lästige PUA (Private Use Area) Font-Warnungen von pdf-lib VOR jedem Require!
+const originalConsoleWarn = console.warn;
+console.warn = (...args) => {
+  const msg = args.join(" ");
+  if (msg.includes("Ran out of space in font private use area")) return;
+  originalConsoleWarn(...args);
+};
+const originalConsoleLog = console.log;
+console.log = (...args) => {
+  const msg = args.join(" ");
+  if (msg.includes("Ran out of space in font private use area")) return;
+  originalConsoleLog(...args);
+};
+
 const { authenticate } = require("@google-cloud/local-auth");
 const unzipper = require("unzipper");
 const fs = require("fs");
@@ -10,13 +24,6 @@ const express = require("express");
 const multer = require("multer");
 const { exec } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
-
-// Unterdrücke lästige PUA (Private Use Area) Font-Warnungen von pdf-lib
-const originalConsoleWarn = console.warn;
-console.warn = (...args) => {
-  if (typeof args[0] === "string" && args[0].includes("Ran out of space in font private use area")) return;
-  originalConsoleWarn(...args);
-};
 
 dotenv.config();
 
@@ -107,7 +114,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
 
   const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
   const coordsList = req.body.coords || []; // Coordinates might be single string or array
-  const algorithm = req.body.algorithm || "white_paper";
+  const algorithm = req.body.algorithm || "color_enhanced";
   const autoQueue = req.body.autoQueue === "true";
 
   console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
@@ -214,6 +221,47 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
+  }
+});
+
+// Neu: Vorschau generieren ohne OCR (Sehr schnell)
+app.post("/api/preview", upload.single("image"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "Kein Bild hochgeladen." });
+  }
+
+  const inputPath = req.file.path;
+  const outputJpgPath = path.join(localDownloadFolder, `Preview_${Date.now()}.jpg`);
+  const algorithm = req.body.algorithm || "color_enhanced";
+
+  try {
+    await new Promise((resolve, reject) => {
+      exec(
+        `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "skip" "${algorithm}"`,
+        (error, stdout, stderr) => {
+          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); // Original löschen
+          if (error) {
+            console.error(`[PREVIEW ERROR]: ${error.message} | ${stderr}`);
+            reject(error);
+          } else {
+            resolve(outputJpgPath);
+          }
+        }
+      );
+    });
+
+    res.download(outputJpgPath, "Preview.jpg", (err) => {
+      if (fs.existsSync(outputJpgPath)) {
+        setTimeout(() => {
+          if (fs.existsSync(outputJpgPath)) fs.unlinkSync(outputJpgPath);
+        }, 10000); // 10s Cleanup delay
+      }
+      if (err && err.code !== "ECONNABORTED" && err.code !== "EPIPE") {
+        console.error("[PREVIEW] Fehler beim Senden:", err);
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Fehler bei der Vorschaugenerierung." });
   }
 });
 
