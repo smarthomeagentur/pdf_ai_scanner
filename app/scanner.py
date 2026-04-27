@@ -102,26 +102,31 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="color_e
         processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
 
     elif algorithm == "color_enhanced":
-        # Globaler Weißabgleich + Kontrast, damit Fotos nicht durch den 15x15 Kernel gelöscht werden
+        # Ausleuchtung (Schatten/Papierfarbe) schätzen
         gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-        brightest_mask = gray > np.percentile(gray, 95)
+        # Großer Kernel, um Texte zu "löschen" und nur das Papier übrig zu lassen
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        background = cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)
+        background = cv2.GaussianBlur(background, (21, 21), 0)
         
-        b_mean = np.mean(warped[:, :, 0][brightest_mask])
-        g_mean = np.mean(warped[:, :, 1][brightest_mask])
-        r_mean = np.mean(warped[:, :, 2][brightest_mask])
+        # Hintergrund auf 3 Kanäle erweitern
+        bg_3c = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
         
-        b_scale = 255.0 / max(b_mean, 1)
-        g_scale = 255.0 / max(g_mean, 1)
-        r_scale = 255.0 / max(r_mean, 1)
+        # Bild durch Hintergrund teilen -> Macht das ungleichmäßig beleuchtete Blatt gleichmäßig weiß
+        diff = cv2.divide(warped.astype(np.float32), bg_3c.astype(np.float32), scale=255.0)
         
-        wb = np.zeros_like(warped, dtype=np.float32)
-        wb[:, :, 0] = warped[:, :, 0] * b_scale
-        wb[:, :, 1] = warped[:, :, 1] * g_scale
-        wb[:, :, 2] = warped[:, :, 2] * r_scale
-        
-        black_point = 40
+        # Kontrast erhöhen (Schwarz- und Weißpunkt setzen)
+        black_point = 25
         white_point = 230
-        processed = np.clip((wb - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
+        diff = np.clip((diff - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
+        
+        # Sättigung leicht anheben für poppigere Farben (Logos, Stempel, Unterschriften)
+        hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        s = cv2.multiply(s, 1.3) # Sättigung um 30% erhöhen
+        s = np.clip(s, 0, 255).astype(np.uint8)
+        hsv = cv2.merge([h, s, v])
+        processed = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
     elif algorithm == "bw_adaptive":
 

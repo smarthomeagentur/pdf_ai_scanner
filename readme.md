@@ -34,6 +34,33 @@ Vor dem Start muss eine `.env`-Datei im Root-Verzeichnis erstellt werden. Folgen
 
 ---
 
+## 🤖 Lokale KI mit Ollama konfigurieren
+
+Die App übermittelt die gescannten Dokumente an ein lokales KI-Modell, welches in der Standardkonfiguration **Gemma (2B Parameter)** oder ähnliche kleine Modelle wie `gemma:2b` / `gemma2:2b` verwendet.
+
+### Eingesetztes KI-Modell
+Wir verwenden hierbei leichtgewichtige Modelle (wie z.B. Gemma 2B), da diese **schnell in der Textverarbeitung** sind, **weniger Halluzinationen** bei reiner Datenextraktion aufweisen und den Server nicht überlasten. Der Zweck des Modells besteht darin, das rohe OCR-Gekritzel des Scans zu analysieren und ein sauberes JSON mit Kategorien, Dokumenten-Typ (Rechnung etc.) und automatischen Dateinamen zu generieren.
+
+### Ressourcen-Verbrauch
+- **RAM / VRAM**: Für Modelle der 2B-bis-4B-Klasse werden in der Regel nur **ca. 6 GB Arbeitsspeicher** (idealerweise VRAM auf einer GPU) benötigt.
+- **CPU**: Falls keine kompatible Grafikkarte vorhanden ist, laufen diese Modelle auch sehr passabel auf modernen CPUs (brauchen dann meist 1-4 Sekunden für eine Antwort).
+
+### Ollama im Netzwerk erreichbar machen
+Standardmäßig lauscht Ollama nur auf `localhost` (127.0.0.1). Wenn deine App im Docker/Coolify-Container auf einem Server läuft, aber Ollama auf deinem Heim-PC oder einem anderen Host betrieben wird, musst du Ollama anweisen, netzwerkweit Verbindungen anzunehmen:
+
+1. **Unter Linux / bei Systemd-Diensten:**
+   Ergänze in der Service-Datei (`systemctl edit ollama.service`) im Block `[Service]` die Umgebungsvariable:
+   `Environment="OLLAMA_HOST=0.0.0.0"`
+   Danach `systemctl daemon-reload` und `systemctl restart ollama`.
+2. **Unter Windows:**
+   Öffne die Systemumgebungsvariablen und lege eine neue Variable `OLLAMA_HOST` mit dem Wert `0.0.0.0` an. Danach Ollama (und das Terminal) neu starten.
+3. **Bei Docker-Containern (Ollama):**
+   Mappe einfach den Port: `-p 11434:11434` (Ollama lauscht im Docker-Image standardmäßig schon auf allen Interfaces).
+
+*Hinweis:* Achte darauf, dass Port 11434 in deiner Firewall freigegeben ist, wenn die beiden Systeme nicht im selben lokalen Netz liegen.
+
+---
+
 ## ☁️ Google API Key erstellen und einbinden
 
 Damit die App Dokumente auf Google Drive hochladen kann, benötigst du eigene Zugangsdaten.
