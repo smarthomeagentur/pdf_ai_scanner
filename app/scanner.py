@@ -41,7 +41,7 @@ def auto_exposure(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     min_val = np.percentile(gray, 2)
     # Von 98 auf 95 gesenkt: Kappt helle Bereiche früher ab und zieht die Gesamtbelichtung einen Tick heller
-    max_val = np.percentile(gray, 95)
+    max_val = np.percentile(gray, 90)
     if max_val > min_val:
         alpha = 255.0 / (max_val - min_val)
         beta = -min_val * alpha
@@ -81,6 +81,7 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         sys.exit(1)
 
     orig = image.copy()
+    eval_warped = None
 
     # Die perspektivische Korrektur (Entzerrung + Zuschneiden) haben wir 
     # bereits im Frontend in 1920x1080 (bzw hochauflösend) vorgenommen!
@@ -130,7 +131,7 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
 
     if algorithm == "auto":
         # Wenn wir Koordinaten bekamen (Vorschau), prüfen wir NUR das ausgeschnittene Blatt (eval_warped)
-        if 'eval_warped' in locals():
+        if eval_warped is not None:
             algorithm = "color_enhanced" if is_color_document(eval_warped) else "white_paper"
         else:
             algorithm = "color_enhanced" if is_color_document(warped) else "white_paper"
