@@ -112,7 +112,17 @@ app.post("/api/login", express.json(), loginLimiter, (req, res) => {
 
 app.use((req, res, next) => {
   if (!AUTH_ENABLED) return next();
-  const openRoutes = ["/login.html", "/api/login", "/manifest.json", "/icon.svg", "/favicon.ico", "/robots.txt"];
+  const openRoutes = [
+    "/login.html",
+    "/login.css",
+    "/login.js",
+    "/api/login",
+    "/manifest.json",
+    "/icon.svg",
+    "/favicon.ico",
+    "/robots.txt",
+    "/sw.js",
+  ];
   if (openRoutes.includes(req.path)) return next();
   const token = req.cookies.auth_token;
   if (token) {
