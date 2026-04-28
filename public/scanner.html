@@ -421,14 +421,15 @@
       </button>
     </div>
 
-    <!-- OpenCV.js asynchron laden -->
+    <!-- Zuerst die Scanner-Logik definieren, damit onOpenCvReady bekannt ist -->
+    <script src="/scanner.js?v=1777396912"></script>
+
+    <!-- OpenCV.js erst im Hintergrund (defer) laden! -->
     <script
-      async
+      defer
       src="https://docs.opencv.org/4.8.0/opencv.js"
       onload="onOpenCvReady()"
       type="text/javascript"
     ></script>
-
-    <script src="/scanner.js?v=1777396912"></script>
   </body>
 </html>

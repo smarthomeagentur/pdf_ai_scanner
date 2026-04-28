@@ -16,6 +16,11 @@ self.addEventListener("fetch", (event) => {
     fetch(event.request).catch((err) => {
       // Can be expanded to cache offline files
       console.log("Resource fetch failed (offline mode)", err);
-    }),
+      // Fallback required so respondWith doesn't fail with undefined
+      return new Response("Offline (Netzwerkfehler)", {
+        status: 503,
+        statusText: "Service Unavailable",
+      });
+    })
   );
 });
