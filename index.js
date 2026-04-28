@@ -136,7 +136,7 @@ app.use((req, res, next) => {
 });
 
 app.use(
-  express.static("public", {
+  express.static(path.join(__dirname, "public"), {
     etag: true,
     lastModified: true,
     setHeaders: (res, path) => {
