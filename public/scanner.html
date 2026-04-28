@@ -173,27 +173,7 @@
 
           <hr class="my-3" />
           <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
-          <div class="form-check form-switch mt-2">
-            <input
-              class="form-check-input"
-              type="checkbox"
-              id="autoQueueScan"
-              checked
-            />
-            <label class="form-check-label small fw-bold" for="autoQueueScan"
-              >Scan nach Abschluss direkt in KI Pipeline übertragen</label
-            >
-          </div>
-          <div class="form-check form-switch mt-2">
-            <input
-              class="form-check-input"
-              type="checkbox"
-              id="autoDownloadPdf"
-            />
-            <label class="form-check-label small fw-bold" for="autoDownloadPdf"
-              >Gescanntes PDF sofort herunterladen</label
-            >
-          </div>
+          <!-- Die Optionen wurden gemäß Audit entfernt. AutoQueue (KI Pipeline) ist nun via Button geregelt -->
         </div>
       </details>
 
@@ -307,7 +287,7 @@
 
           <div class="d-flex gap-2 w-100">
             <button
-              class="btn btn-warning w-50 py-2 fw-bold text-dark shadow-sm"
+              class="btn btn-secondary w-50 py-2 fw-bold text-white shadow-sm"
               id="rescanBtn"
               style="font-size: 0.95em"
             >
@@ -324,23 +304,35 @@
         </div>
 
         <div
-          class="d-flex w-100 gap-2 mb-3 mt-3"
+          class="d-flex w-100 gap-2 mb-3 mt-3 position-relative"
           style="
             max-width: 500px;
             padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 60px);
           "
         >
+          <!-- Close button (Abbrechen) oben rechts absolut positioniert über der Button-Zeile -->
           <button
-            class="btn btn-outline-secondary w-50 py-2"
-            id="cancelReviewBtn"
+            id="cancelReviewCrossBtn"
+            class="btn btn-sm btn-outline-secondary position-absolute"
+            style="top: -45px; right: 0; padding: 4px 10px; border-radius: 50%; font-weight: bold;"
+            title="Schließen"
           >
-            Abbrechen
+            ✕
+          </button>
+
+          <button
+            class="btn btn-secondary py-2 shadow-sm text-white fw-bold"
+            id="downloadOnlyBtn"
+            style="flex: 1;"
+          >
+            Download
           </button>
           <button
-            class="btn btn-success fw-bold w-50 py-2 shadow-sm"
-            id="confirmReviewBtn"
+            class="btn btn-success py-2 shadow-sm fw-bold"
+            style="flex: 2; font-size: 1.05em"
+            id="finishScanBtn"
           >
-            Abschließen
+            Abschließen (KI)
           </button>
         </div>
       </div>

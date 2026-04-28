@@ -285,17 +285,8 @@ function processVideo() {
     const sy = (video.videoHeight - sHeight) / 2;
 
     // Video-Frame (nur den sichtbaren Teil!) auf unsere OpenCV Arbeitsfläche zeichnen
-    ctxProcess.drawImage(
-      video,
-      sx,
-      sy,
-      sWidth,
-      sHeight,
-      0,
-      0,
-      processWidth,
-      processHeight,
-    );
+    // prettier-ignore
+    ctxProcess.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, processWidth, processHeight);
 
     // Frame an OpenCV übergeben
     let imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
@@ -305,14 +296,8 @@ function processVideo() {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
 
     // Dynamischer Blur (Glättung) um kleine Störungen zu filtern (Wert z.B. 5x5)
-    cv.GaussianBlur(
-      gray,
-      blurred,
-      new cv.Size(optBlur, optBlur),
-      0,
-      0,
-      cv.BORDER_DEFAULT,
-    );
+    cv.GaussianBlur(gray, blurred, new cv.Size(optBlur, optBlur), 0, 0, cv.BORDER_DEFAULT);
+
     cv.Canny(blurred, edges, optCanny1, optCanny2);
 
     // WICHTIG: Kanten dicker machen ("Dilatation"), damit Linien bei Kontrastschwäche der Handykamera nicht abreißen
@@ -322,13 +307,7 @@ function processVideo() {
     kernel.delete();
 
     // Konturen finden
-    cv.findContours(
-      edges,
-      contours,
-      hierarchy,
-      cv.RETR_LIST,
-      cv.CHAIN_APPROX_SIMPLE,
-    );
+    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
     let maxArea = 0;
     let bestCnt = null;
@@ -372,10 +351,7 @@ function processVideo() {
             let dy2 = pt2.y - pt0.y;
             // Skalarprodukt für Cosinus des Winkels
             let cosine = Math.abs(
-              (dx1 * dx2 + dy1 * dy2) /
-                Math.sqrt(
-                  (dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10,
-                ),
+              (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
             );
             maxCosine = Math.max(maxCosine, cosine);
           }
@@ -401,26 +377,18 @@ function processVideo() {
       } else {
         for (let i = 0; i < 4; i++) {
           smoothedCornersRaw[i].x =
-            smoothedCornersRaw[i].x * (1 - SMOOTHING_FACTOR) +
-            sortedNewCorners[i].x * SMOOTHING_FACTOR;
+            smoothedCornersRaw[i].x * (1 - SMOOTHING_FACTOR) + sortedNewCorners[i].x * SMOOTHING_FACTOR;
           smoothedCornersRaw[i].y =
-            smoothedCornersRaw[i].y * (1 - SMOOTHING_FACTOR) +
-            sortedNewCorners[i].y * SMOOTHING_FACTOR;
+            smoothedCornersRaw[i].y * (1 - SMOOTHING_FACTOR) + sortedNewCorners[i].y * SMOOTHING_FACTOR;
         }
       }
       bestCnt.delete();
 
       // Auto-Capture Logik
-      if (
-        autoCaptureEnabled &&
-        !document.getElementById("captureBtn").disabled
-      ) {
+      if (autoCaptureEnabled && !document.getElementById("captureBtn").disabled) {
         if (documentDetectionStart === 0) {
           documentDetectionStart = Date.now();
-        } else if (
-          Date.now() - documentDetectionStart >= 1000 &&
-          !autoCaptureTriggered
-        ) {
+        } else if (Date.now() - documentDetectionStart >= 1000 && !autoCaptureTriggered) {
           startAutoCountdown();
         }
       } else {
@@ -532,19 +500,14 @@ captureBtn.addEventListener("click", async () => {
       originalHeight = highResBitmap.height;
       photoWasUsed = true;
       console.log(
-        `Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight} gegenüber Video: ${video.videoWidth}x${video.videoHeight}`,
+        `Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight} gegenüber Video: ${video.videoWidth}x${video.videoHeight}`
       );
     } catch (e) {
-      console.warn(
-        "Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture",
-        e,
-      );
+      console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
     } finally {
       // GANZ WICHTIG: Licht sofort wieder aus - EGAL ob das Foto erfolgreich war oder die API abgestürzt ist!
       if (flashWasTriggered && videoTrack) {
-        videoTrack
-          .applyConstraints({ advanced: [{ torch: false }] })
-          .catch((e) => console.warn(e));
+        videoTrack.applyConstraints({ advanced: [{ torch: false }] }).catch((e) => console.warn(e));
       }
     }
   }
@@ -576,10 +539,7 @@ captureBtn.addEventListener("click", async () => {
       // 2. Wo liegt der 16:9 VideoStream als echter Pixel-Cutout auf dem 4:3 Sensor-Rohfoto?
       // Da das Rohfoto mehr Blickfeld enthält (z.B. mehr oben/unten oder links/rechts),
       // bestimmt die kleinere Skalierung, an welchen Rändern gepaddet wird ("Center Crop").
-      const scaleVidToPhoto = Math.min(
-        originalWidth / video.videoWidth,
-        originalHeight / video.videoHeight,
-      );
+      const scaleVidToPhoto = Math.min(originalWidth / video.videoWidth, originalHeight / video.videoHeight);
       const mappedVidW = video.videoWidth * scaleVidToPhoto;
       const mappedVidH = video.videoHeight * scaleVidToPhoto;
 
@@ -612,10 +572,7 @@ captureBtn.addEventListener("click", async () => {
 
     if (streaming && video) {
       const rect = video.getBoundingClientRect();
-      const vScale = Math.min(
-        originalWidth / rect.width,
-        originalHeight / rect.height,
-      );
+      const vScale = Math.min(originalWidth / rect.width, originalHeight / rect.height);
       cropWidth = rect.width * vScale;
       cropHeight = rect.height * vScale;
       sourceX = (originalWidth - cropWidth) / 2;
@@ -634,7 +591,7 @@ captureBtn.addEventListener("click", async () => {
       0,
       0,
       canvasHighRes.width,
-      canvasHighRes.height,
+      canvasHighRes.height
     );
     // Die bereits gespeicherten relativen frozenCorners stimmen hierbei noch, weil das Bild wie vom user gesehen exakt beschnitten wird.
   }
@@ -647,6 +604,11 @@ captureBtn.addEventListener("click", async () => {
       { x: 0.9, y: 0.9 },
       { x: 0.1, y: 0.9 },
     ];
+    // Automatischen Filter-Request stoppen, da wir keine Kanten haben
+    document.getElementById("previewLoadingText").style.display = "none";
+  } else {
+    // Kanten gefunden -> Starte Preload
+    document.getElementById("previewLoadingText").style.display = "block";
   }
 
   // --- NEUER RESCAN AUF DEM FERTIGEN FOTO ---
@@ -660,14 +622,7 @@ captureBtn.addEventListener("click", async () => {
     src.data.set(imageData.data);
 
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-    cv.GaussianBlur(
-      gray,
-      blurred,
-      new cv.Size(optBlur, optBlur),
-      0,
-      0,
-      cv.BORDER_DEFAULT,
-    );
+    cv.GaussianBlur(gray, blurred, new cv.Size(optBlur, optBlur), 0, 0, cv.BORDER_DEFAULT);
     cv.Canny(blurred, edges, optCanny1, optCanny2);
 
     let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
@@ -675,13 +630,7 @@ captureBtn.addEventListener("click", async () => {
     cv.erode(edges, edges, kernel);
     kernel.delete();
 
-    cv.findContours(
-      edges,
-      contours,
-      hierarchy,
-      cv.RETR_LIST,
-      cv.CHAIN_APPROX_SIMPLE,
-    );
+    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
     let bestCntRaw = null;
     let maxAreaRaw = 0;
@@ -700,11 +649,7 @@ captureBtn.addEventListener("click", async () => {
           let approx = new cv.Mat();
           cv.approxPolyDP(cnt, approx, eps * peri, true);
 
-          if (
-            approx.rows === 4 &&
-            area > maxAreaRaw &&
-            cv.isContourConvex(approx)
-          ) {
+          if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
             let maxCosine = 0;
             for (let j = 2; j < 6; j++) {
               let pt1Source = (j % 4) * 2;
@@ -727,10 +672,7 @@ captureBtn.addEventListener("click", async () => {
               let dx2 = pt2.x - pt0.x;
               let dy2 = pt2.y - pt0.y;
               let cosine = Math.abs(
-                (dx1 * dx2 + dy1 * dy2) /
-                  Math.sqrt(
-                    (dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10,
-                  ),
+                (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
               );
               maxCosine = Math.max(maxCosine, cosine);
             }
@@ -760,10 +702,8 @@ captureBtn.addEventListener("click", async () => {
       console.log("Erfolgreicher Post-Scan!");
     }
   } catch (e) {
-    console.error(
-      "Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:",
-      e,
-    );
+    console.error("Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:", e);
+    frozenCorners = null; // fallback to force blank detection
   }
 
   // Zeige Editier-Ansicht ("Manual Review")
@@ -800,7 +740,7 @@ function updatePreviewFilter() {
       0,
       0,
       reviewState.cropW,
-      reviewState.cropH,
+      reviewState.cropH
     );
 
   rCv.style.filter = "none"; // CSS-Reset (falls es alte Testsachen gäbe)
@@ -849,9 +789,7 @@ function updatePreviewFilter() {
 
         const img = new Image();
         img.onload = () => {
-          rCv
-            .getContext("2d")
-            .drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
+          rCv.getContext("2d").drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
           document.getElementById("previewLoadingText").style.display = "none";
           URL.revokeObjectURL(url);
         };
@@ -862,7 +800,7 @@ function updatePreviewFilter() {
       }
     },
     "image/jpeg",
-    0.85,
+    0.85
   );
 }
 
@@ -892,14 +830,8 @@ function showManualReview(highResCanvas, relativeCorners) {
 
   reviewState.cropX = Math.max(0, minX - padX);
   reviewState.cropY = Math.max(0, minY - padY);
-  reviewState.cropW = Math.min(
-    highResCanvas.width - reviewState.cropX,
-    maxX - minX + 2 * padX,
-  );
-  reviewState.cropH = Math.min(
-    highResCanvas.height - reviewState.cropY,
-    maxY - minY + 2 * padY,
-  );
+  reviewState.cropW = Math.min(highResCanvas.width - reviewState.cropX, maxX - minX + 2 * padX);
+  reviewState.cropH = Math.min(highResCanvas.height - reviewState.cropY, maxY - minY + 2 * padY);
 
   // Lade diesen Puffer-Zuschnitt in den ReviewCanvas
   const rCv = document.getElementById("reviewCanvas");
@@ -916,7 +848,7 @@ function showManualReview(highResCanvas, relativeCorners) {
       0,
       0,
       reviewState.cropW,
-      reviewState.cropH,
+      reviewState.cropH
     );
 
   // Passe Overlay (Zeichenfläche) exakt auf das Canvas an
@@ -931,8 +863,7 @@ function showManualReview(highResCanvas, relativeCorners) {
   }));
 
   // Sync preview combo box with global config and apply Backend Preview Image
-  document.getElementById("previewAlgorithmSelect").value =
-    document.getElementById("algorithmSelect").value;
+  document.getElementById("previewAlgorithmSelect").value = document.getElementById("algorithmSelect").value;
   updatePreviewFilter();
 
   drawReviewOverlay();
@@ -951,8 +882,7 @@ function drawReviewOverlay() {
   // Grün schimmerndes Polygon
   ctx.beginPath();
   ctx.moveTo(reviewState.corners[0].x, reviewState.corners[0].y);
-  for (let i = 1; i < 4; i++)
-    ctx.lineTo(reviewState.corners[i].x, reviewState.corners[i].y);
+  for (let i = 1; i < 4; i++) ctx.lineTo(reviewState.corners[i].x, reviewState.corners[i].y);
   ctx.closePath();
   ctx.lineWidth = Math.max(1, strokeWidth / 2); // Dünner, da man jetzt nah rangezoomt hat
   ctx.strokeStyle = "#28a745";
@@ -997,16 +927,10 @@ function onDragStart(e) {
   reviewState.activeCorner = -1;
 
   // Dynamischer Fangradius basierend auf der enormen HD-Pixelzahl der Leinwand
-  const catchRadius =
-    Math.max(reviewOverlay.width, reviewOverlay.height) * 0.08;
+  const catchRadius = Math.max(reviewOverlay.width, reviewOverlay.height) * 0.08;
 
   for (let i = 0; i < 4; i++) {
-    if (
-      Math.hypot(
-        reviewState.corners[i].x - pos.x,
-        reviewState.corners[i].y - pos.y,
-      ) < catchRadius
-    ) {
+    if (Math.hypot(reviewState.corners[i].x - pos.x, reviewState.corners[i].y - pos.y) < catchRadius) {
       reviewState.activeCorner = i;
       break;
     }
@@ -1018,14 +942,8 @@ function onDragMove(e) {
   e.preventDefault();
   const pos = getInternalPos(e);
   // Position clampen, damit Ecke nicht aus dem Zoom-Bild geschoben wird
-  reviewState.corners[reviewState.activeCorner].x = Math.max(
-    0,
-    Math.min(reviewOverlay.width, pos.x),
-  );
-  reviewState.corners[reviewState.activeCorner].y = Math.max(
-    0,
-    Math.min(reviewOverlay.height, pos.y),
-  );
+  reviewState.corners[reviewState.activeCorner].x = Math.max(0, Math.min(reviewOverlay.width, pos.x));
+  reviewState.corners[reviewState.activeCorner].y = Math.max(0, Math.min(reviewOverlay.height, pos.y));
   drawReviewOverlay();
 }
 
@@ -1047,16 +965,15 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
 
   let neueEcken = null;
   const orgBtnText = document.getElementById("rescanBtn").innerHTML;
-  document.getElementById("rescanBtn").innerHTML =
-    `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Bitte warten...`;
+  document.getElementById(
+    "rescanBtn"
+  ).innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Bitte warten...`;
   document.getElementById("rescanBtn").disabled = true;
 
   setTimeout(() => {
     try {
       let rescanWidth = Math.min(800, reviewState.cropW);
-      let rescanHeight = Math.round(
-        (rescanWidth / reviewState.cropW) * reviewState.cropH,
-      );
+      let rescanHeight = Math.round((rescanWidth / reviewState.cropW) * reviewState.cropH);
 
       let tCanvas = document.createElement("canvas");
       tCanvas.width = rescanWidth;
@@ -1075,7 +992,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
         0,
         0,
         rescanWidth,
-        rescanHeight,
+        rescanHeight
       );
 
       let imageData = tCtx.getImageData(0, 0, rescanWidth, rescanHeight);
@@ -1093,14 +1010,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
       let blurSize = optBlur <= 3 ? 3 : optBlur <= 5 ? 5 : 7;
       if (blurSize % 2 === 0) blurSize += 1;
 
-      cv.GaussianBlur(
-        hGray,
-        hBlurred,
-        new cv.Size(blurSize, blurSize),
-        0,
-        0,
-        cv.BORDER_DEFAULT,
-      );
+      cv.GaussianBlur(hGray, hBlurred, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_DEFAULT);
       cv.Canny(hBlurred, hEdges, optCanny1, optCanny2);
 
       let dSize = 5;
@@ -1113,13 +1023,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
       // des vorherigen Rahmens beschränkt haben, brauchen wir KEINE riskante Maske mehr,
       // die mögliche Linien zerschneidet (contourArea = 0).
 
-      cv.findContours(
-        hEdges,
-        hContours,
-        hHierarchy,
-        cv.RETR_LIST,
-        cv.CHAIN_APPROX_SIMPLE,
-      );
+      cv.findContours(hEdges, hContours, hHierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
       let bestCntRaw = null;
       let maxAreaRaw = 0;
@@ -1138,11 +1042,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
               let approx = new cv.Mat();
               cv.approxPolyDP(cnt, approx, eps * peri, true);
 
-              if (
-                approx.rows === 4 &&
-                area > maxAreaRaw &&
-                cv.isContourConvex(approx)
-              ) {
+              if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
                 let maxCosine = 0;
                 for (let j = 2; j < 6; j++) {
                   let pt1Source = (j % 4) * 2;
@@ -1165,11 +1065,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
                   let dx2 = pt2.x - pt0.x;
                   let dy2 = pt2.y - pt0.y;
                   let cosine = Math.abs(
-                    (dx1 * dx2 + dy1 * dy2) /
-                      Math.sqrt(
-                        (dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) +
-                          1e-10,
-                      ),
+                    (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
                   );
                   maxCosine = Math.max(maxCosine, cosine);
                 }
@@ -1234,9 +1130,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
       reviewState.corners = neueEcken;
       drawReviewOverlay();
     } else {
-      alert(
-        "Auf diesem Foto konnte die KI kein eindeutiges Dokument erkennen. Bitte justiere die Kanten manuell.",
-      );
+      alert("Auf diesem Foto konnte die KI kein eindeutiges Dokument erkennen. Bitte justiere die Kanten manuell.");
     }
   }, 50);
 });
@@ -1250,17 +1144,28 @@ document.getElementById("cancelReviewBtn").addEventListener("click", () => {
   document.getElementById("captureBtn").disabled = false;
 
   scanPagesArray = []; // Alle gesammelten Seiten resetten
-  updateConfirmBtnText();
 });
 
-function updateConfirmBtnText() {
-  const btn = document.getElementById("confirmReviewBtn");
-  if (scanPagesArray.length > 0) {
-    btn.innerText = `${scanPagesArray.length + 1} Seiten speichern`;
-  } else {
-    btn.innerText = `Scan speichern`;
-  }
-}
+// Event Listener für den neuen Schließen-Button am Panel-Rand
+document.getElementById("cancelReviewCrossBtn").addEventListener("click", () => {
+  document.getElementById("manual-review-section").style.display = "none";
+  document.getElementById("filterMenu").style.display = "block";
+  document.getElementById("video-wrapper").style.display = "flex";
+  document.getElementById("captureBtn").style.display = "block";
+  document.getElementById("captureBtn").disabled = false;
+
+  scanPagesArray = []; // Alle gesammelten Seiten resetten
+});
+
+// Neu hinzugefügter DownloadBtn Handler
+document.getElementById("downloadOnlyBtn").addEventListener("click", () => {
+  finishScanProcess(false);
+});
+
+// Neu hinzugefügter Finish-KI Btn Handler
+document.getElementById("finishScanBtn").addEventListener("click", () => {
+  finishScanProcess(true);
+});
 
 function extractCroppedBlob() {
   return new Promise((resolve) => {
@@ -1302,15 +1207,7 @@ function extractCroppedBlob() {
     let dstMat = new cv.Mat();
     let dsize = new cv.Size(maxWidth, maxHeight);
 
-    cv.warpPerspective(
-      srcMat,
-      dstMat,
-      M,
-      dsize,
-      cv.INTER_LINEAR,
-      cv.BORDER_CONSTANT,
-      new cv.Scalar(),
-    );
+    cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
     let finalImageCanvas = document.createElement("canvas");
     cv.imshow(finalImageCanvas, dstMat);
@@ -1325,7 +1222,7 @@ function extractCroppedBlob() {
         resolve(blob);
       },
       "image/jpeg",
-      0.95,
+      0.95
     );
   });
 }
@@ -1334,8 +1231,7 @@ function extractCroppedBlob() {
 document.getElementById("addPageBtn").addEventListener("click", async () => {
   document.getElementById("manual-review-section").style.display = "none";
   loader.style.display = "block";
-  loaderStatus.innerText =
-    "Seite zwischengespeichert. Mache Platz für die nächste...";
+  loaderStatus.innerText = "Seite zwischengespeichert. Mache Platz für die nächste...";
 
   const blob = await extractCroppedBlob();
   scanPagesArray.push(blob);
@@ -1350,110 +1246,102 @@ document.getElementById("addPageBtn").addEventListener("click", async () => {
   }, 500);
 });
 
-// Klick auf "Scan speichern" -> Abschließende Berechnung und Hochladen aller Seiten
-document
-  .getElementById("confirmReviewBtn")
-  .addEventListener("click", async () => {
-    document.getElementById("manual-review-section").style.display = "none";
-    loader.style.display = "block";
-    loaderStatus.innerText = "Bereite Seiten vor...";
+// Klick auf "Abschließen" (KI) o. "Download" -> Abschließende Berechnung und Hochladen aller Seiten
+async function finishScanProcess(sendToAI) {
+  document.getElementById("manual-review-section").style.display = "none";
+  loader.style.display = "block";
+  loaderStatus.innerText = "Bereite Seiten vor...";
 
-    const finalBlob = await extractCroppedBlob();
-    scanPagesArray.push(finalBlob);
+  const finalBlob = await extractCroppedBlob();
+  scanPagesArray.push(finalBlob);
 
-    // Canvas Array an Server API pushen
-    const formData = new FormData();
-    scanPagesArray.forEach((blob, index) => {
-      formData.append("images", blob, `page_${index}.jpg`);
-      formData.append("coords", "frontend_cropped");
-    });
+  // Canvas Array an Server API pushen
+  const formData = new FormData();
+  scanPagesArray.forEach((blob, index) => {
+    formData.append("images", blob, `page_${index}.jpg`);
+    formData.append("coords", "frontend_cropped");
+  });
 
-    formData.append(
-      "algorithm",
-      document.getElementById("algorithmSelect").value,
-    );
-    formData.append(
-      "autoQueue",
-      document.getElementById("autoQueueScan").checked,
-    );
+  formData.append("algorithm", document.getElementById("algorithmSelect").value);
+  // KI Pipeline Flag basiert jetzt direkt auf dem aufgerufenen Button
+  formData.append("autoQueue", sendToAI ? "true" : "false");
 
-    // Non-blocking Toast als Feedback
-    const toastId = "toast-" + Date.now();
-    const toastHtml = `
+  // Non-blocking Toast als Feedback
+  const toastId = "toast-" + Date.now();
+  const toastHtml = `
             <div id="${toastId}" class="position-fixed start-50 translate-middle-x p-3 bg-dark text-white rounded shadow text-center" style="top: 75px; z-index: 9999; font-weight: bold; width: max-content; max-width: 90vw;">
                 verarbeite ${scanPagesArray.length} Seite(n)...
             </div>
         `;
-    document.body.insertAdjacentHTML("beforeend", toastHtml);
+  document.body.insertAdjacentHTML("beforeend", toastHtml);
 
-    // Direkt UI freigeben, ohne auf fetch warten!
-    loader.style.display = "none";
-    document.getElementById("filterMenu").style.display = "block";
-    document.getElementById("video-wrapper").style.display = "flex";
-    document.getElementById("captureBtn").style.display = "block";
-    document.getElementById("captureBtn").disabled = false;
+  // Direkt UI freigeben, ohne auf fetch warten!
+  loader.style.display = "none";
+  document.getElementById("filterMenu").style.display = "block";
+  document.getElementById("video-wrapper").style.display = "flex";
+  document.getElementById("captureBtn").style.display = "block";
+  document.getElementById("captureBtn").disabled = false;
 
-    // Letzte Aufräum-Schritte, damit man fröhlich weiterscannen kann
-    scanPagesArray = [];
-    updateConfirmBtnText();
+  // Letzte Aufräum-Schritte, damit man fröhlich weiterscannen kann
+  scanPagesArray = [];
 
-    // Der asynchrone Upload-Prozess im Hintergrund
-    try {
-      const response = await fetch("/api/scan", {
-        method: "POST",
-        body: formData,
-      });
+  // Der asynchrone Upload-Prozess im Hintergrund
+  try {
+    const response = await fetch("/api/scan", {
+      method: "POST",
+      body: formData,
+    });
 
-      const toastEl = document.getElementById(toastId);
+    const toastEl = document.getElementById(toastId);
 
-      if (response.ok) {
-        const fileName = response.headers.get("X-File-Name");
-        const autoJobHeader = response.headers.get("X-Auto-Job");
-        const pdfBlob = await response.blob();
+    if (response.ok) {
+      const fileName = response.headers.get("X-File-Name");
+      const autoJobHeader = response.headers.get("X-Auto-Job");
+      const pdfBlob = await response.blob();
 
-        if (document.getElementById("autoDownloadPdf").checked) {
-          const downloadUrl = window.URL.createObjectURL(pdfBlob);
-          const a = document.createElement("a");
-          a.href = downloadUrl;
-          a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
+      // Nur beim "Download"-Button wird das PDF heruntergeladen
+      if (!sendToAI) {
+        const downloadUrl = window.URL.createObjectURL(pdfBlob);
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = `Scanned_Document_${new Date().toISOString().slice(0, 10)}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+
+      if (autoJobHeader && sendToAI) {
+        try {
+          const jobData = JSON.parse(autoJobHeader);
+          // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
+          toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
+        } catch (e) {
+          toastEl.innerText = "❌ KI Upload Fehler beim Lesen der Server-Daten.";
+          toastEl.classList.replace("bg-dark", "bg-danger");
         }
-
-        if (autoJobHeader) {
-          try {
-            const jobData = JSON.parse(autoJobHeader);
-            // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
-            toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
-          } catch (e) {
-            toastEl.innerText =
-              "❌ KI Upload Fehler beim Lesen der Server-Daten.";
-            toastEl.classList.replace("bg-dark", "bg-danger");
-          }
-        } else {
-          toastEl.innerText = "✅ Dokument verarbeitet und sicher im Menü!";
-        }
-
-        toastEl.classList.replace("bg-dark", "bg-success");
-        loadSavedScans();
-
-        setTimeout(() => toastEl.remove(), 4000);
       } else {
-        const errorData = await response.json();
-        toastEl.innerText = "❌ Fehler: " + (errorData.error || "Unbekannt");
-        toastEl.classList.replace("bg-dark", "bg-danger");
-        setTimeout(() => toastEl.remove(), 6000);
+        toastEl.innerText = "✅ Dokument verarbeitet und lokal gesichert!";
       }
-    } catch (error) {
-      const toastEl = document.getElementById(toastId);
-      if (toastEl) {
-        toastEl.innerText = "❌ Fehler: Netzwerkfehler / Timeout";
-        toastEl.classList.replace("bg-dark", "bg-danger");
-        setTimeout(() => toastEl.remove(), 6000);
-      }
+
+      toastEl.classList.replace("bg-dark", "bg-success");
+      loadSavedScans();
+
+      setTimeout(() => toastEl.remove(), 4000);
+    } else {
+      const errorData = await response.json();
+      toastEl.innerText = "❌ Fehler: " + (errorData.error || "Unbekannt");
+      toastEl.classList.replace("bg-dark", "bg-danger");
+      setTimeout(() => toastEl.remove(), 6000);
     }
-  });
+  } catch (error) {
+    const toastEl = document.getElementById(toastId);
+    if (toastEl) {
+      toastEl.innerText = "❌ Fehler: Netzwerkfehler / Timeout";
+      toastEl.classList.replace("bg-dark", "bg-danger");
+      setTimeout(() => toastEl.remove(), 6000);
+    }
+  }
+}
 
 // Menü-Steuerung
 function toggleMenu() {
@@ -1482,22 +1370,31 @@ async function loadSavedScans() {
     } else {
       data.files.forEach((f, idx) => {
         let imgHtml = f.hasThumbnail
-          ? `<img src="/downloads/${f.name.replace(".pdf", ".jpg")}" class="scan-thumb" onclick="toggleFullscreen(event, this)" onerror="this.style.display='none'"/>`
+          ? `<img src="/downloads/${f.name.replace(
+              ".pdf",
+              ".jpg"
+            )}" class="scan-thumb" onclick="toggleFullscreen(event, this)" onerror="this.style.display='none'"/>`
           : `<div class="scan-thumb d-flex justify-content-center align-items-center bg-light border"><small class="text-muted">PDF</small></div>`;
 
         htmlForm += `
                   <div class="form-check border-bottom pb-3 mb-2 d-flex align-items-center justify-content-between" style="padding-left: 0; padding-right: 10px;">
                       <div class="d-flex align-items-center flex-grow-1" style="min-width: 0;">
-                          <input class="form-check-input ms-2 me-3" type="checkbox" name="scans" value="${f.name}" id="scan_${idx}" onchange="checkSelections()" style="transform: scale(1.5); flex-shrink: 0; margin-top: 0;">
+                          <input class="form-check-input ms-2 me-3" type="checkbox" name="scans" value="${
+                            f.name
+                          }" id="scan_${idx}" onchange="checkSelections()" style="transform: scale(1.5); flex-shrink: 0; margin-top: 0;">
                           <label class="form-check-label scan-item-label pe-2" for="scan_${idx}" style="min-width: 0;">
                               ${imgHtml}
                               <div style="line-height:1.2; word-break: break-word; overflow-wrap: anywhere;">
                                   <strong>📄 ${f.name.replace("Scanned_", "").replace(".pdf", "")}</strong><br>
-                                  <small class="text-muted">${new Date(f.date).toLocaleDateString()} ${new Date(f.date).toLocaleTimeString()} - ${(f.size / 1024).toFixed(1)} kb</small>
+                                  <small class="text-muted">${new Date(f.date).toLocaleDateString()} ${new Date(
+          f.date
+        ).toLocaleTimeString()} - ${(f.size / 1024).toFixed(1)} kb</small>
                               </div>
                           </label>
                       </div>
-                      <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteScan('${f.name}')" title="Scan löschen">🗑️</button>
+                      <button type="button" class="btn btn-outline-danger btn-sm" onclick="deleteScan('${
+                        f.name
+                      }')" title="Scan löschen">🗑️</button>
                   </div>`;
       });
       htmlForm += "</form>";
@@ -1549,79 +1446,74 @@ function checkSelections() {
 }
 
 // Ausgewählte direkt als Kopie herunterladen
-document
-  .getElementById("download-selected-btn")
-  ?.addEventListener("click", () => {
-    const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
-    const selectedFiles = Array.from(checkboxes).map((c) => c.value);
-    if (selectedFiles.length === 0) return;
+document.getElementById("download-selected-btn")?.addEventListener("click", () => {
+  const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
+  const selectedFiles = Array.from(checkboxes).map((c) => c.value);
+  if (selectedFiles.length === 0) return;
 
-    let delay = 0;
-    selectedFiles.forEach((file) => {
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = `/downloads/${file}`;
-        a.download = `Manuell_${file}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }, delay);
-      delay += 500;
-    });
+  let delay = 0;
+  selectedFiles.forEach((file) => {
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = `/downloads/${file}`;
+      a.download = `Manuell_${file}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, delay);
+    delay += 500;
   });
+});
 
 // Ausgewählte PDFs an die Upload-Pipeline in index.js pingen
-document
-  .getElementById("upload-selected-btn")
-  ?.addEventListener("click", async () => {
-    const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
-    const selectedFiles = Array.from(checkboxes).map((c) => c.value);
+document.getElementById("upload-selected-btn")?.addEventListener("click", async () => {
+  const checkboxes = document.querySelectorAll('input[name="scans"]:checked');
+  const selectedFiles = Array.from(checkboxes).map((c) => c.value);
 
-    if (selectedFiles.length === 0) return;
+  if (selectedFiles.length === 0) return;
 
-    const info = document.getElementById("server-upload-status");
-    const btn = document.getElementById("upload-selected-btn");
-    btn.disabled = true;
+  const info = document.getElementById("server-upload-status");
+  const btn = document.getElementById("upload-selected-btn");
+  btn.disabled = true;
 
-    info.style.display = "block";
-    info.innerText =
-      "Übertrage " + selectedFiles.length + " Datei(en) in die AI Pipeline...";
+  info.style.display = "block";
+  info.innerText = "Übertrage " + selectedFiles.length + " Datei(en) in die AI Pipeline...";
 
-    try {
-      const response = await fetch("/api/upload-scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filenames: selectedFiles }),
-      });
+  try {
+    const response = await fetch("/api/upload-scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filenames: selectedFiles }),
+    });
 
-      if (response.ok) {
-        const resData = await response.json();
+    if (response.ok) {
+      const resData = await response.json();
 
-        // Jobs im LocalStorage ablegen, damit das Start-Portal die Queue sofort kennt!
-        if (resData.jobs) {
-          // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
-        }
-
-        info.innerText = "Erfolgreich! Leite zum Upload-Portal weiter...";
-        info.classList.replace("alert-info", "alert-success");
-
-        // Sobald erfolgreich: Seite wechseln!
-        setTimeout(() => {
-          window.location.href = "/";
-        }, 800);
-      } else {
-        info.innerText = "Fehler beim Übergeben an die Pipeline.";
-        info.classList.replace("alert-info", "alert-danger");
+      // Jobs im LocalStorage ablegen, damit das Start-Portal die Queue sofort kennt!
+      if (resData.jobs) {
+        // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
       }
-    } catch (e) {
-      info.innerText = "Server Verbindungsfehler.";
+
+      info.innerText = "Erfolgreich! Leite zum Upload-Portal weiter...";
+      info.classList.replace("alert-info", "alert-success");
+
+      // Sobald erfolgreich: Seite wechseln!
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 800);
+    } else {
+      info.innerText = "Fehler beim Übergeben an die Pipeline.";
       info.classList.replace("alert-info", "alert-danger");
     }
+  } catch (e) {
+    info.innerText = "Server Verbindungsfehler.";
+    info.classList.replace("alert-info", "alert-danger");
+  }
 
-    setTimeout(() => {
-      info.style.display = "none";
-    }, 5000);
-  });
+  setTimeout(() => {
+    info.style.display = "none";
+  }, 5000);
+});
 
 // Service Worker registrieren (PWA Support)
 if ("serviceWorker" in navigator) {
