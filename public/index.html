@@ -396,7 +396,19 @@
             </div>
         </div>
 
-        <button id="saveSettingsBtn" class="action-button" style="width: 100%; display: none; margin-top: 10px;">Ordner Speichern</button>
+        <div class="setting-group" id="ai-prompt-settings-container" style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
+            <label>KI Prompt Konfiguration:</label>
+            <div style="margin-top: 10px;">
+                <label style="font-size: 0.9em; color: #555;">Kategorien (Komma-getrennt):</label>
+                <textarea id="ai-categories-input" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; resize: vertical;" rows="2" placeholder="Administration, Personal, Projekte..."></textarea>
+            </div>
+            <div style="margin-top: 10px;">
+                <label style="font-size: 0.9em; color: #555;">Firmen / Rechnungsempfänger (Komma-getrennt):</label>
+                <textarea id="ai-company-input" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; resize: vertical;" rows="2" placeholder="wirewire GmbH, Daniel..."></textarea>
+            </div>
+        </div>
+
+        <button id="saveSettingsBtn" class="action-button" style="width: 100%; display: none; margin-top: 15px;">Einstellungen Speichern</button>
     </div>
 </div>
 
@@ -556,8 +568,12 @@
                     if (window.currentSettings.FOLDER_ID_SORTED) {
                         fetchFolderName(window.currentSettings.FOLDER_ID_SORTED, aiDisplay, document.getElementById('ai-folder-id'));
                     }
+                    
+                    document.getElementById('ai-categories-input').value = window.currentSettings.AI_CATEGORIES || 'Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige';
+                    document.getElementById('ai-company-input').value = window.currentSettings.AI_COMPANY || 'wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt';
                 }
                 
+                document.getElementById('ai-prompt-settings-container').style.display = 'block';
                 document.getElementById('saveSettingsBtn').style.display = 'block';
             } else {
                 document.getElementById('auth-status').innerText = 'Nicht authentifiziert.';
@@ -700,18 +716,35 @@
     document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
         const rawFolderId = document.getElementById('raw-folder-id').value;
         const aiFolderId = document.getElementById('ai-folder-id').value;
+        const aiCategories = document.getElementById('ai-categories-input').value.trim();
+        const aiCompany = document.getElementById('ai-company-input').value.trim();
+        
+        // Validierung für kommagetrennte Listen (keine leeren Einträge wie "A,,B" oder "A,")
+        const isValidCommaList = (str) => !str || str.split(',').every(s => s.trim().length > 0);
+        
+        if (!isValidCommaList(aiCategories)) {
+            alert('Bitte prüfen Sie die Kategorien: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!');
+            return;
+        }
+        
+        if (!isValidCommaList(aiCompany)) {
+            alert('Bitte prüfen Sie die Firmen: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!');
+            return;
+        }
         
         const res = await fetch('/api/settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 FOLDER_ID: rawFolderId,
-                FOLDER_ID_SORTED: aiFolderId
+                FOLDER_ID_SORTED: aiFolderId,
+                AI_CATEGORIES: aiCategories,
+                AI_COMPANY: aiCompany
             })
         });
         
         if (res.ok) {
-            alert('Ordner-Einstellungen erfolgreich gespeichert!');
+            alert('Einstellungen erfolgreich gespeichert!');
             settingsModal.style.display = 'none';
         } else {
             alert('Fehler beim Speichern der Einstellungen.');

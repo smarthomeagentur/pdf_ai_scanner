@@ -23,7 +23,7 @@ const customFetch = async (url, options) => {
 const ollama = new Ollama({ host: LOCAL_AI_HOST, fetch: customFetch });
 //const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
-async function generatePdfName(filename) {
+async function generatePdfName(filename, settings = {}) {
   var pdfFileName = "";
   var pdfDate = setFileDate();
   var pdfData = await extractTextFromPdf(filename);
@@ -31,15 +31,27 @@ async function generatePdfName(filename) {
   var pdfContentData;
   if (pdfData.length < 100) {
     var pdfImageBuffer = await getPdfImageBuffer(filename);
-    pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer);
+    pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
   } else {
-    pdfContentData = await getFileDataJSONGemma(pdfData);
+    pdfContentData = await getFileDataJSONGemma(pdfData, false, settings);
   }
   if (pdfContentData == false) {
     return {
       success: false,
     };
   }
+
+  if (pdfContentData.documentDate) {
+    // Falls die AI ein Dokumentendatum gefunden hat, dies bevorzugen
+    const match = pdfContentData.documentDate.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
+    if (match) {
+      const day = match[1];
+      const month = match[2];
+      const year = match[3].length === 4 ? match[3].slice(2) : match[3];
+      pdfDate = `${year}${month}${day}`;
+    }
+  }
+
   var firstThreeWords = pdfContentData.tags.slice(0, 3).join(" ");
   pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
 
@@ -85,21 +97,28 @@ function setFileDate(fileName) {
   }
 }
 
-async function getFileDataJSONGemma(pdfText, imageBuffer = false) {
+async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {}) {
   if (pdfText.length < 100 && imageBuffer == false) {
     console.log("[AI] PDF Text too short for analysis and no image buffer available");
     return false;
   }
+
+  const allowedCompanies = settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
+  const allowedCategories =
+    settings.AI_CATEGORIES ||
+    "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
+
   var instructionFileName =
     "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den untenstehenden Text und extrahiere die angeforderten Informationen.\n" +
     "Gib das Ergebnis AUSSCHLIESSLICH als valides JSON aus.Füge keinen Text vor oder nach dem JSON hinzu.Verwende keine Markdown-Formatierung (kein ```json).\n" +
     "Regeln für die Datengewinnung:\n" +
-    '1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind AUSSCHLIESSLICH: "wirewire GmbH", "The Wire UG", "Polyxo Studios GmbH", "Daniel" oder "Unbekannt" (wenn keine der vorherigen Optionen passt).\n' +
-    '2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments Nutze Folgende Kategorien: Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat. Wenn keine dieser passt vergib die Kategorie "Sonstige"\n' +
-    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein. Gib diese als Array von Strings zurück.\n' +
+    `1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind: ${allowedCompanies}. Wenn keine der vorherigen Optionen passt, fülle das Feld mit "Unbekannt".\n` +
+    `2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments. Nutze folgende Kategorien: ${allowedCategories}. Wenn keine dieser passt, vergib die Kategorie "Sonstige".\n` +
+    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein und sich dadurch widerholen. Gib diese als Array von Strings zurück.\n' +
     'WICHTIG: Wenn es keinen passenden Inhalt für Kategorie und Tags gibt, setze "category" auf "unknown" und "tags" auf ["none"].\n' +
     '4. "isInvoice": Boolean. Setze den Wert auf true, wenn es sich bei dem Dokument um eine Rechnung handelt, wenn eine Zahlung vorgenommen werden muss oder das Dokument irgend einen buchhalterischen Bezug hat. Andernfalls false.\n' +
-    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean}"\n';
+    '5. "documentDate": String. Suche nach dem Datum auf dem Dokument (z.B. Rechnungsdatum oder Erstellungsdatum) und gib es im Format "DD.MM.YYYY" aus. Wenn keines abgedruckt ist, setze "unknown".\n' +
+    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String"}\n';
 
   var aiSettings = {
     model: "gemma4:e2b",
@@ -210,7 +229,7 @@ module.exports = {
     debug = setDebug;
     return true;
   },
-  getPdfName: async function (filePath) {
-    return await generatePdfName(filePath);
+  getPdfName: async function (filePath, settings = {}) {
+    return await generatePdfName(filePath, settings);
   },
 };

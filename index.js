@@ -41,6 +41,9 @@ const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "
 const appSettings = {
   FOLDER_ID: process.env.DRIVE_FOLDER_ID,
   FOLDER_ID_SORTED: process.env.DRIVE_FOLDER_ID_SORTED,
+  AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
+  AI_CATEGORIES:
+    "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
 };
 const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
 if (fs.existsSync(SETTINGS_FILE)) {
@@ -48,6 +51,8 @@ if (fs.existsSync(SETTINGS_FILE)) {
     const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE));
     if (saved.FOLDER_ID) appSettings.FOLDER_ID = saved.FOLDER_ID;
     if (saved.FOLDER_ID_SORTED) appSettings.FOLDER_ID_SORTED = saved.FOLDER_ID_SORTED;
+    if (saved.AI_COMPANY) appSettings.AI_COMPANY = saved.AI_COMPANY;
+    if (saved.AI_CATEGORIES) appSettings.AI_CATEGORIES = saved.AI_CATEGORIES;
   } catch (e) {}
 }
 
@@ -129,6 +134,8 @@ app.get("/api/settings", (req, res) => {
 app.post("/api/settings", express.json(), async (req, res) => {
   if (req.body.FOLDER_ID !== undefined) appSettings.FOLDER_ID = req.body.FOLDER_ID;
   if (req.body.FOLDER_ID_SORTED !== undefined) appSettings.FOLDER_ID_SORTED = req.body.FOLDER_ID_SORTED;
+  if (req.body.AI_COMPANY !== undefined) appSettings.AI_COMPANY = req.body.AI_COMPANY;
+  if (req.body.AI_CATEGORIES !== undefined) appSettings.AI_CATEGORIES = req.body.AI_CATEGORIES;
   await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
   res.json({ success: true });
 });
@@ -527,7 +534,7 @@ async function processQueue() {
       }
 
       const aiStartTime = Date.now();
-      var sortedName = await aiAgent.getPdfName(job.filePath);
+      var sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
       const aiEndTime = Date.now();
       const aiDurationMs = aiEndTime - aiStartTime;
       sortedName.duration = (aiDurationMs / 1000).toFixed(2); // save duration in seconds
@@ -620,7 +627,7 @@ async function init() {
   if (testrun) {
     return;
     for (var i = 1; i <= 10; i++) {
-      var sortedName = await aiAgent.getPdfName(i + ".pdf");
+      var sortedName = await aiAgent.getPdfName(i + ".pdf", appSettings);
       console.log(sortedName);
     }
     return;
