@@ -49,6 +49,8 @@ if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
 });
 
 const localDownloadFolder = path.join(__dirname, "downloads");
+if (!fs.existsSync(localDownloadFolder)) fs.mkdirSync(localDownloadFolder, { recursive: true });
+
 const SETTINGS_FILE = path.join(storeFolder, "settings.json");
 const TOKEN_PATH = path.join(storeFolder, "token.json");
 const JOBS_FILE = path.join(storeFolder, "jobs.json");
