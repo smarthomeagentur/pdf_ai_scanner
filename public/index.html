@@ -385,6 +385,10 @@
                 <input type="hidden" id="raw-folder-id" />
                 <button id="raw-folder-browse" class="action-button" disabled style="margin: 0; padding: 8px 15px; flex-shrink: 0;">Durchsuchen</button>
             </div>
+            <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="monitor-drive-checkbox" style="width: 18px; height: 18px;" />
+                <label for="monitor-drive-checkbox" style="margin: 0; font-weight: normal; font-size: 14px; cursor: pointer;">Ordner automatisch auf neue Dateien überwachen (alle 5 Min)</label>
+            </div>
         </div>
 
         <div class="setting-group" id="ai-folder-settings-container" style="display: none;">
@@ -571,6 +575,7 @@
                     
                     document.getElementById('ai-categories-input').value = window.currentSettings.AI_CATEGORIES || 'Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige';
                     document.getElementById('ai-company-input').value = window.currentSettings.AI_COMPANY || 'wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt';
+                    document.getElementById('monitor-drive-checkbox').checked = window.currentSettings.MONITOR_DRIVE || false;
                 }
                 
                 document.getElementById('ai-prompt-settings-container').style.display = 'block';
@@ -718,6 +723,7 @@
         const aiFolderId = document.getElementById('ai-folder-id').value;
         const aiCategories = document.getElementById('ai-categories-input').value.trim();
         const aiCompany = document.getElementById('ai-company-input').value.trim();
+        const monitorDriveState = document.getElementById('monitor-drive-checkbox').checked;
         
         // Validierung für kommagetrennte Listen (keine leeren Einträge wie "A,,B" oder "A,")
         const isValidCommaList = (str) => !str || str.split(',').every(s => s.trim().length > 0);
@@ -739,7 +745,8 @@
                 FOLDER_ID: rawFolderId,
                 FOLDER_ID_SORTED: aiFolderId,
                 AI_CATEGORIES: aiCategories,
-                AI_COMPANY: aiCompany
+                AI_COMPANY: aiCompany,
+                MONITOR_DRIVE: monitorDriveState
             })
         });
         
@@ -759,15 +766,12 @@
     const jobList = document.getElementById('job-list');
     const clearJobsBtn = document.getElementById('clear-jobs-btn');
     
-    let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
+    let activeJobs = [];
     let pollingInterval = null;
 
-    // Load initial jobs (always start polling to get any server-side queued jobs)
-    if (activeJobs.length > 0) {
-        jobListContainer.style.display = 'block';
-        renderJobs();
-    }
-    startPolling(); // Always start polling on load to retrieve auto-queued background jobs
+    // We don't rely on localStorage anymore, we'll fetch state from server.
+    // Start polling immediately to get current global active jobs
+    startPolling();
 
     // Drag & Drop Events
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -803,7 +807,6 @@
     
     clearJobsBtn.addEventListener('click', async () => {
         activeJobs = [];
-        localStorage.removeItem('uploadJobs');
         jobListContainer.style.display = 'none';
         statusDiv.innerHTML = '';
         try { await fetch('/api/jobs', { method: 'DELETE' }); } catch(e) {}
@@ -841,11 +844,7 @@
                     uploadDate: job.uploadDate
                 }));
                 
-                activeJobs = [...newJobs, ...activeJobs];
-                localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
-                
                 jobListContainer.style.display = 'block';
-                renderJobs();
                 startPolling();
                 
                 setTimeout(() => {
@@ -877,34 +876,19 @@
                 if (data.success) {
                     let updated = false;
                     
-                    data.statuses.forEach(serverJob => {
-                        const localJob = activeJobs.find(j => j.id === serverJob.id);
-                        if (!localJob) {
-                            // Completely new job discovered from backend
-                            activeJobs.unshift(serverJob);
-                            jobListContainer.style.display = 'block';
-                            updated = true;
-                        } else if (
-                            localJob.status !== serverJob.status || 
-                            (!localJob.processingStartedAt && serverJob.processingStartedAt)
-                        ) {
-                            localJob.status = serverJob.status;
-                            localJob.result = serverJob.result;
-                            localJob.error = serverJob.error;
-                            if (serverJob.processingStartedAt) localJob.processingStartedAt = serverJob.processingStartedAt;
-                            if (serverJob.uploadDate && !localJob.uploadDate) localJob.uploadDate = serverJob.uploadDate;
-                            updated = true;
-                        }
-                    });
+                    activeJobs = data.statuses || [];
                     
-                    if (updated) {
-                        localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
-                        renderJobs();
+                    if (activeJobs.length > 0) {
+                        jobListContainer.style.display = 'block';
+                    } else {
+                        jobListContainer.style.display = 'none';
                     }
+                    
+                    renderJobs();
 
                     // Stop polling dynamically if no jobs are pending on server
-                    const hasPendingServerJobs = data.statuses.some(j => j.status === 'pending' || j.status === 'processing');
-                    if (!hasPendingServerJobs) {
+                    const hasPendingServerJobs = activeJobs.some(j => j.status === 'pending' || j.status === 'processing');
+                    if (!hasPendingServerJobs && activeJobs.length === 0) {
                         clearInterval(pollingInterval);
                         pollingInterval = null;
                     }
@@ -912,7 +896,7 @@
             } catch (err) {
                 console.error("Polling error", err);
             }
-        }, 2000);
+        }, 5000); // 5 Sekunden Polling
     }
     
     function renderJobs() {

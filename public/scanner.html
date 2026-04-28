@@ -1391,10 +1391,7 @@
                 if (autoJobHeader) {
                     try {
                         const jobData = JSON.parse(autoJobHeader);
-                        let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
-                        activeJobs.unshift(jobData);
-                        localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
-                        
+                        // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
                         toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
                     } catch(e) {
                          toastEl.innerText = "❌ KI Upload Fehler beim Lesen der Server-Daten.";
@@ -1563,9 +1560,7 @@
                 
                 // Jobs im LocalStorage ablegen, damit das Start-Portal die Queue sofort kennt!
                 if (resData.jobs) {
-                    let activeJobs = JSON.parse(localStorage.getItem('uploadJobs') || '[]');
-                    activeJobs.unshift(...resData.jobs);
-                    localStorage.setItem('uploadJobs', JSON.stringify(activeJobs));
+                    // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
                 }
 
                 info.innerText = 'Erfolgreich! Leite zum Upload-Portal weiter...';
