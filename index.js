@@ -271,13 +271,13 @@ async function processQueue() {
         } catch (e) {}
         await fs.promises.unlink(jpgPath).catch(() => {});
       }
-      
+
       // Fallback: Falls kein Thumbnail existiert (z.B. reiner Google Drive Upload)
       if (!localThumbBase64 && typeof aiAgent.generateThumbnail === "function") {
         try {
           localThumbBase64 = await aiAgent.generateThumbnail(job.filePath);
         } catch (e) {
-            console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
+          console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
         }
       }
 

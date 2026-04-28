@@ -284,7 +284,7 @@ module.exports = {
   },
   generateThumbnail: async function (pdfPath) {
     try {
-      if (!pdfPath.toLowerCase().endsWith('.pdf')) return null;
+      if (!pdfPath.toLowerCase().endsWith(".pdf")) return null;
       const options = {
         density: 72,
         saveFilename: "thumb",
@@ -303,5 +303,5 @@ module.exports = {
       console.error("[AI] Fehler bei Fallback-Vorschaubild:", err);
       return null;
     }
-  }
+  },
 };
