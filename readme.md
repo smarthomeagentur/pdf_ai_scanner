@@ -96,17 +96,17 @@ Damit die App Dokumente auf Google Drive hochladen kann, benötigst du eigene Zu
 
 ## 🐳 Deployment mit Coolify
 
-Dank des vorhandenen `Dockerfile` lässt sich die Anwendung spielend leicht mit [Coolify](https://coolify.io/) hosten.
+Dank der `docker-compose.yml` Methode und dem bereiten `Dockerfile` lässt sich die Anwendung spielend leicht mit [Coolify](https://coolify.io/) hosten. Alle erforderlichen Datenträgerpfade (Volumes) und Umgebungsvariablen (Environment Variables) werden von Coolify automatisch aus der Compose-Datei eingelesen.
 
 1. **Service in Coolify erstellen:**
-   - Verbinde dein GitHub/GitLab-Repository oder wähle "Public Repository" in Coolify.
-   - Wähle als Build Pack **Docker** oder **Nixpacks** (Docker wird empfohlen, da das `Dockerfile` bereitliegt).
+   - Wähle als Basis **Docker Compose** und verknüpfe dein GitHub/GitLab-Repository. Alternativ funktioniert auch der Standard **Dockerfile** Build (bei dem du die Storage-Pfade dann allerdings manuell eintragen musst).
 2. **Environment Variables setzen:**
-   - Gehe im Coolify-Dashboard auf den Tab **Environment Variables** für diesen Service.
-   - Trage dort `AUTH_ENABLED`, `APP_PASSWORD`, `JWT_SECRET` und `LOCAL_AI_HOST` ein (für `LOCAL_AI_HOST` verwende die interne oder externe IP deines Ollama/AI-Containers).
-3. **Google Drive Credentials hinterlegen:**
-   - Da `.json`-Dateien nicht ins Git-Repo gehören, kannst du die generierte `gdrive_secret.json` und `token.json` über das Tab **Volumes / Persistent Storage** bereitstellen oder die Secrets direkt mit `docker exec` / Shell in deinen Coolify-Container legen.
+   - Gehe in das Dashboard für den konfigurierten Service zum Tab **Environment Variables**.
+   - Die in der `docker-compose.yml` definierten Variablen wie `PORT`, `LOCAL_AI_HOST`, `APP_PASSWORD`, `JWT_SECRET` und `AUTH_ENABLED` sind hier bereits vorausgefüllt. Passe die Werte entsprechend an (insbesondere das Passwort und `LOCAL_AI_HOST`).
+3. **Google Drive Credentials / Konfiguration (Persistent Storage):**
+   - Coolify scannt den Block `volumes:` mit.
+   - Da `.json`-Dateien nicht ins öffentliche Git-Repo gehören, füllst du die fehlenden Configs via **"Configuration Files"**-Tab in Coolify ab. Alternativ im **"Persistent Storage"**-Tab sicherstellen, dass `/app/token.json`, `/app/settings.json` und `/app/gdrive_secret.json` richtig zugeordnet sind.
 4. **Deploy:**
-   - Klicke auf `Deploy`. Coolify baut das Image und veröffentlicht die Anwendung samt automatisch eingerichtetem SSL-Zertifikat.
+   - Klicke auf `Deploy`. Coolify baut das Image vom `Dockerfile` und veröffentlicht die Anwendung samt automatisch eingerichtetem SSL-Zertifikat.
 
 ---

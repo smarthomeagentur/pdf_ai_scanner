@@ -1,0 +1,6 @@
+{
+  "type": "authorized_user",
+  "client_id": "DEINE_CLIENT_ID.apps.googleusercontent.com",
+  "client_secret": "DEIN_CLIENT_SECRET",
+  "refresh_token": "DEIN_REFRESH_TOKEN"
+}

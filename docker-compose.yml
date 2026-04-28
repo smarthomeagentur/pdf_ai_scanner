@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  smart-cloud-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-cloud-scanner
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=${PORT:-3000}
+      - LOCAL_AI_HOST=${LOCAL_AI_HOST}
+      - APP_PASSWORD=${APP_PASSWORD:-admin}
+      - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_123}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+    volumes:
+      # Verzeichnisse für temporäre Uploads/Downloads
+      - scanner-downloads:/app/downloads
+      # Persistente Konfigurationsdateien
+      # In Coolify werden diese automatisch ins "Persistent Storage" Panel bzw. "Configuration Files" übernommen, 
+      # wenn als Dockerfile/Nixpacks / Docker Compose deployt wird.
+      - ./gdrive_secret.json:/app/gdrive_secret.json
+      - ./token.json:/app/token.json
+      - ./settings.json:/app/settings.json
+
+volumes:
+  scanner-downloads:
