@@ -48,28 +48,7 @@ async function generatePdfName(filename, settings = {}) {
     }
   }
 
-  var pdfContentData;
-  if (pdfData.length < 100) {
-    pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
-  } else {
-    pdfContentData = await getFileDataJSONGemma(pdfData, false, settings);
-  }
-  if (pdfContentData == false) {
-    return {
-      success: false,
-    };
-  }
-
-  if (pdfContentData.documentDate) {
-    // Falls die AI ein Dokumentendatum gefunden hat, dies bevorzugen
-    const match = pdfContentData.documentDate.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
-    if (match) {
-      const day = match[1];
-      const month = match[2];
-      const year = match[3].length === 4 ? match[3].slice(2) : match[3];
-      pdfDate = `${year}${month}${day}`;
-    }
-  }
+  pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
 
   var firstThreeWords = pdfContentData.tags.slice(0, 3).join(" ");
   pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
@@ -78,6 +57,7 @@ async function generatePdfName(filename, settings = {}) {
     success: true,
     full: pdfFileName,
     date: pdfDate,
+    documentDate: pdfContentData.documentDate,
     category: pdfContentData.category,
     tags: pdfContentData.tags,
     company: pdfContentData.company,
@@ -148,7 +128,7 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {})
       },
     ],
   };
-  if (imageBuffer != false) {
+  if (imageBuffer != false && pdfText.length < 100) {
     console.log("[AI] use PDF image Buffer");
     aiSettings.messages[0].images = [imageBuffer];
     aiSettings.messages[0].content = aiSettings.messages[0].content + "Hier ist der Inhalt eines Dokuments als Bild";
@@ -164,6 +144,7 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {})
     if (debug) console.log("[AI] Response: " + response.message.content);
     try {
       var chatString = JSON.parse(response.message.content);
+      chatString.documentDate = checkFileDate(chatString.documentDate);
       return chatString;
     } catch (error) {
       console.log("[ERROR] No JSON response from AI. Response was: " + response.message.content);
@@ -176,7 +157,7 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {})
   }
 }
 
-async function fitCompanyName(companyNameIn) {
+async function checkCompanyName(companyNameIn) {
   console.log(companyNameIn);
 
   const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
@@ -193,6 +174,20 @@ async function fitCompanyName(companyNameIn) {
   return companyName;
 }
 
+checkFileDate = (text) => {
+  if (text) {
+    // Falls die AI ein Dokumentendatum gefunden hat, dies bevorzugen
+    const match = text.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
+    if (match) {
+      const day = match[1];
+      const month = match[2];
+      const year = match[3].length === 4 ? match[3].slice(2) : match[3];
+      return `${year}${month}${day}`;
+    }
+  }
+  return false;
+};
+
 async function getPdfImageBuffer(pdfPath) {
   try {
     const options = {
@@ -200,8 +195,6 @@ async function getPdfImageBuffer(pdfPath) {
       saveFilename: "pdfPic",
       savePath: ".",
       format: "png",
-      width: 800,
-      height: 1100,
     };
 
     const convert = fromPath(pdfPath, options);
@@ -286,12 +279,10 @@ module.exports = {
     try {
       if (!pdfPath.toLowerCase().endsWith(".pdf")) return null;
       const options = {
-        density: 72,
+        density: 150,
         saveFilename: "thumb",
         savePath: ".",
         format: "jpeg",
-        width: 600,
-        height: 800,
       };
       const convert = fromPath(pdfPath, options);
       const result = await convert(1, { responseType: "base64" });
