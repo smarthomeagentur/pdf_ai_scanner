@@ -324,7 +324,13 @@ async function processQueue() {
           ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
           : null;
 
-      }
+        driveFile = driveFile || defaultDriveFile;
+
+        if (driveFile) {
+          sortedName.webViewLink = driveFile.webViewLink;
+          sortedName.thumbnailLink = driveFile.thumbnailLink;
+          sortedName.webContentLink = driveFile.webContentLink;
+        }
 
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
       let localThumbBase64 = null;
