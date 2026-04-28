@@ -135,7 +135,7 @@ app.use((req, res, next) => {
   res.redirect("/login.html");
 });
 
-app.use(express.static("public"));
+app.use(express.static("public", { etag: true, lastModified: true, setHeaders: (res, path) => { res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate"); } }));
 app.use("/downloads", express.static(localDownloadFolder));
 
 // App Config & Settings

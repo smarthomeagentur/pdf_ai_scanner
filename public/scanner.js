@@ -596,8 +596,8 @@ captureBtn.addEventListener("click", async () => {
     // Die bereits gespeicherten relativen frozenCorners stimmen hierbei noch, weil das Bild wie vom user gesehen exakt beschnitten wird.
   }
 
-    let hasRealCorners = !!frozenCorners;
-    // Falls absolut kein Dokument gefunden
+  let hasRealCorners = !!frozenCorners;
+  // Falls absolut kein Dokument gefunden
   if (!frozenCorners) {
     frozenCorners = [
       { x: 0.1, y: 0.1 },
@@ -701,15 +701,15 @@ captureBtn.addEventListener("click", async () => {
         y: c.y / processHeight,
       }));
       hasRealCorners = true;
-        console.log("Erfolgreicher Post-Scan!");
+      console.log("Erfolgreicher Post-Scan!");
     }
   } catch (e) {
     console.error("Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:", e);
   }
 
   // Wenn am Ende immer noch keine gültigen Ecken vorliegen
-    // bestCntRaw is block scoped, handle it here safely
-    // hasRealCorners is already managed above
+  // bestCntRaw is block scoped, handle it here safely
+  // hasRealCorners is already managed above
   if (!frozenCorners) {
     hasRealCorners = false;
     frozenCorners = [
@@ -1178,61 +1178,66 @@ document.getElementById("finishScanBtn").addEventListener("click", () => {
 
 function extractCroppedBlob() {
   return new Promise((resolve) => {
-    // Rückrechnung der modifizierten lokalen Crop-Punkte auf das Originale Mega-Pixel-Speicherbild
-    let finalAbsoluteCorners = reviewState.corners.map((c) => ({
-      x: c.x + reviewState.cropX,
-      y: c.y + reviewState.cropY,
-    }));
+    try {
+      // Rückrechnung der modifizierten lokalen Crop-Punkte auf das Originale Mega-Pixel-Speicherbild
+      let finalAbsoluteCorners = reviewState.corners.map((c) => ({
+        x: c.x + reviewState.cropX,
+        y: c.y + reviewState.cropY,
+      }));
 
-    let srcMat = cv.imread(reviewState.highResCanvas);
-    let ptsArray = [];
-    for (let i = 0; i < 4; i++) {
-      ptsArray.push(finalAbsoluteCorners[i].x);
-      ptsArray.push(finalAbsoluteCorners[i].y);
+      let srcMat = cv.imread(reviewState.highResCanvas);
+      let ptsArray = [];
+      for (let i = 0; i < 4; i++) {
+        ptsArray.push(finalAbsoluteCorners[i].x);
+        ptsArray.push(finalAbsoluteCorners[i].y);
+      }
+
+      let [tlX, tlY, trX, trY, brX, brY, blX, blY] = ptsArray;
+
+      let widthA = Math.sqrt(Math.pow(brX - blX, 2) + Math.pow(brY - blY, 2));
+      let widthB = Math.sqrt(Math.pow(trX - tlX, 2) + Math.pow(trY - tlY, 2));
+      let maxWidth = Math.round(Math.max(widthA, widthB));
+      let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
+      let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
+      let maxHeight = Math.round(Math.max(heightA, heightB));
+
+      let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
+      let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        0,
+        0,
+        maxWidth - 1,
+        0,
+        maxWidth - 1,
+        maxHeight - 1,
+        0,
+        maxHeight - 1,
+      ]);
+
+      let M = cv.getPerspectiveTransform(srcTri, dstTri);
+      let dstMat = new cv.Mat();
+      let dsize = new cv.Size(maxWidth, maxHeight);
+
+      cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+
+      let finalImageCanvas = document.createElement("canvas");
+      cv.imshow(finalImageCanvas, dstMat);
+      srcMat.delete();
+      dstMat.delete();
+      M.delete();
+      srcTri.delete();
+      dstTri.delete();
+
+      finalImageCanvas.toBlob(
+        (blob) => {
+          resolve(blob);
+        },
+        "image/jpeg",
+        0.95
+      );
+    } catch (e) {
+      console.error("Fehler beim Croppen via OpenCV.JS, nutze Originalbild:", e);
+      reviewState.highResCanvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.95);
     }
-
-    let [tlX, tlY, trX, trY, brX, brY, blX, blY] = ptsArray;
-
-    let widthA = Math.sqrt(Math.pow(brX - blX, 2) + Math.pow(brY - blY, 2));
-    let widthB = Math.sqrt(Math.pow(trX - tlX, 2) + Math.pow(trY - tlY, 2));
-    let maxWidth = Math.max(widthA, widthB);
-    let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
-    let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
-    let maxHeight = Math.max(heightA, heightB);
-
-    let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
-    let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-      0,
-      0,
-      maxWidth - 1,
-      0,
-      maxWidth - 1,
-      maxHeight - 1,
-      0,
-      maxHeight - 1,
-    ]);
-
-    let M = cv.getPerspectiveTransform(srcTri, dstTri);
-    let dstMat = new cv.Mat();
-    let dsize = new cv.Size(maxWidth, maxHeight);
-
-    cv.warpPerspective(srcMat, dstMat, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
-
-    let finalImageCanvas = document.createElement("canvas");
-    cv.imshow(finalImageCanvas, dstMat);
-    srcMat.delete();
-    dstMat.delete();
-    M.delete();
-    srcTri.delete();
-    dstTri.delete();
-
-    finalImageCanvas.toBlob(
-      (blob) => {
-        resolve(blob);
-      },
-      "image/jpeg",
-      0.95
-    );
   });
 }
 
