@@ -1,24 +1,13 @@
-// Unterdrücke lästige PUA (Private Use Area) Font-Warnungen von pdf-lib VOR jedem Require!
+// Prevent pdf-lib font warnings
 const originalConsoleWarn = console.warn;
-console.warn = (...args) => {
-  const msg = args.join(" ");
-  if (msg.includes("Ran out of space in font private use area")) return;
-  originalConsoleWarn(...args);
-};
+console.warn = (...args) => { if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleWarn(...args); };
 const originalConsoleLog = console.log;
-console.log = (...args) => {
-  const msg = args.join(" ");
-  if (msg.includes("Ran out of space in font private use area")) return;
-  originalConsoleLog(...args);
-};
+console.log = (...args) => { if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleLog(...args); };
 
-const { authenticate } = require("@google-cloud/local-auth");
-const { google } = require("googleapis");
 const fs = require("fs");
 const path = require("path");
 const process = require("process");
 const dotenv = require("dotenv");
-var aiAgent = require("./app/aiAgent.js");
 const express = require("express");
 const multer = require("multer");
 const { exec } = require("child_process");
@@ -26,65 +15,74 @@ const { PDFDocument } = require("pdf-lib");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 
+const aiAgent = require("./app/aiAgent.js");
+const DriveAPI = require("./app/driveApi.js");
+
 dotenv.config();
 
-var debug = false;
-var testrun = false;
-var firststart = true;
+let debug = false;
+let testrun = false;
+let firststart = true;
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === "true" || "true";
 const APP_PASSWORD = process.env.APP_PASSWORD || "admin";
 const JWT_SECRET = process.env.JWT_SECRET || "default_super_secret_key_123";
 
-const localDownloadFolder = path.join(__dirname, "downloads"); // Path to your "downloads" folder
+// Store paths
+const storeFolder = path.join(process.cwd(), "store");
+if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
+
+// Move old dynamic files to store/ if they exist in root
+["settings.json", "jobs.json", "token.json"].forEach(f => {
+  const oldPath = path.join(process.cwd(), f);
+  const newPath = path.join(storeFolder, f);
+  if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {
+    try { 
+      fs.renameSync(oldPath, newPath);
+      console.log(`Moved ${f} to store/`);
+    } catch(e) {}
+  }
+});
+
+const localDownloadFolder = path.join(__dirname, "downloads");
+const SETTINGS_FILE = path.join(storeFolder, "settings.json");
+const TOKEN_PATH = path.join(storeFolder, "token.json");
+const JOBS_FILE = path.join(storeFolder, "jobs.json");
+const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json"); // Secret usually stays in root or via env
+
+const driveApi = new DriveAPI(TOKEN_PATH, CREDENTIALS_PATH);
 
 const appSettings = {
   FOLDER_ID: process.env.DRIVE_FOLDER_ID,
   FOLDER_ID_SORTED: process.env.DRIVE_FOLDER_ID_SORTED,
   MONITOR_DRIVE: false,
   AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
-  AI_CATEGORIES:
-    "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
+  AI_CATEGORIES: "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
 };
-const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
+
 if (fs.existsSync(SETTINGS_FILE)) {
   try {
-    const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE));
-    if (saved.FOLDER_ID) appSettings.FOLDER_ID = saved.FOLDER_ID;
-    if (saved.FOLDER_ID_SORTED) appSettings.FOLDER_ID_SORTED = saved.FOLDER_ID_SORTED;
-    if (saved.MONITOR_DRIVE !== undefined) appSettings.MONITOR_DRIVE = saved.MONITOR_DRIVE;
-    if (saved.AI_COMPANY) appSettings.AI_COMPANY = saved.AI_COMPANY;
-    if (saved.AI_CATEGORIES) appSettings.AI_CATEGORIES = saved.AI_CATEGORIES;
+    Object.assign(appSettings, JSON.parse(fs.readFileSync(SETTINGS_FILE)));
   } catch (e) {}
 }
 
-const SCOPES = ["https://www.googleapis.com/auth/drive"];
-const TOKEN_PATH = path.join(process.cwd(), "token.json");
-const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json");
-const JOBS_FILE = path.join(process.cwd(), "jobs.json");
-
-// Webserver setup
 const app = express();
 const port = process.env.PORT || 3000;
 
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    if (!fs.existsSync(localDownloadFolder)) {
-      fs.mkdirSync(localDownloadFolder, { recursive: true });
-    }
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(localDownloadFolder)) fs.mkdirSync(localDownloadFolder, { recursive: true });
     cb(null, localDownloadFolder);
   },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + "-" + file.originalname);
-  },
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
 
 app.use(cookieParser());
 
+// Auth
 app.post("/api/login", express.json(), (req, res) => {
-  const { password } = req.body;
-  if (password === APP_PASSWORD) {
+  if (req.body.password === APP_PASSWORD) {
     const token = jwt.sign({ authenticated: true }, JWT_SECRET, { expiresIn: "30d" });
     res.cookie("auth_token", token, { httpOnly: true, secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 });
     res.json({ success: true });
@@ -95,65 +93,49 @@ app.post("/api/login", express.json(), (req, res) => {
 
 app.use((req, res, next) => {
   if (!AUTH_ENABLED) return next();
-
   const openRoutes = ["/login.html", "/api/login", "/manifest.json", "/icon.svg", "/favicon.ico", "/robots.txt"];
-  if (openRoutes.includes(req.path)) {
-    return next();
-  }
-
+  if (openRoutes.includes(req.path)) return next();
   const token = req.cookies.auth_token;
   if (token) {
     try {
       jwt.verify(token, JWT_SECRET);
-      return next(); // Auth OK
+      return next();
     } catch (err) {}
   }
-
-  if (req.path.startsWith("/api/")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
+  if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Unauthorized" });
   res.redirect("/login.html");
 });
 
 app.use(express.static("public"));
-app.use("/downloads", express.static(localDownloadFolder)); // Neu: Um Thumbnails der PDFs anzeigen zu können
+app.use("/downloads", express.static(localDownloadFolder));
 
+// App Config & Settings
 app.get("/api/config", async (req, res) => {
   try {
-    const content = await fs.promises.readFile(CREDENTIALS_PATH);
-    const keys = JSON.parse(content);
-    const key = keys.installed || keys.web;
-    res.json({ clientId: key.client_id, success: true });
+    const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH));
+    res.json({ clientId: (keys.installed || keys.web).client_id, success: true });
   } catch (err) {
     res.json({ success: false });
   }
 });
 
-app.get("/api/settings", (req, res) => {
-  res.json({ success: true, settings: appSettings });
-});
+app.get("/api/settings", (req, res) => res.json({ success: true, settings: appSettings }));
 
 app.post("/api/settings", express.json(), async (req, res) => {
-  if (req.body.FOLDER_ID !== undefined) appSettings.FOLDER_ID = req.body.FOLDER_ID;
-  if (req.body.FOLDER_ID_SORTED !== undefined) appSettings.FOLDER_ID_SORTED = req.body.FOLDER_ID_SORTED;
-  if (req.body.AI_COMPANY !== undefined) appSettings.AI_COMPANY = req.body.AI_COMPANY;
-  if (req.body.AI_CATEGORIES !== undefined) appSettings.AI_CATEGORIES = req.body.AI_CATEGORIES;
-  if (req.body.MONITOR_DRIVE !== undefined) appSettings.MONITOR_DRIVE = req.body.MONITOR_DRIVE;
+  ["FOLDER_ID", "FOLDER_ID_SORTED", "AI_COMPANY", "AI_CATEGORIES", "MONITOR_DRIVE"].forEach((key) => {
+    if (req.body[key] !== undefined) appSettings[key] = req.body[key];
+  });
   await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
   res.json({ success: true });
 });
 
+// Drive Auth Workflow
 app.post("/api/auth/code", express.json(), async (req, res) => {
   try {
-    const { code } = req.body;
-    const content = await fs.promises.readFile(CREDENTIALS_PATH);
-    const keys = JSON.parse(content);
+    const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH));
     const key = keys.installed || keys.web;
-
-    // Use postmessage for Google Identity Services code implicit exchange
-    const oauth2Client = new google.auth.OAuth2(key.client_id, key.client_secret, "postmessage");
-    const { tokens } = await oauth2Client.getToken(code);
+    const oauth2Client = new (require("googleapis").google.auth.OAuth2)(key.client_id, key.client_secret, "postmessage");
+    const { tokens } = await oauth2Client.getToken(req.body.code);
 
     const payload = JSON.stringify({
       type: "authorized_user",
@@ -162,17 +144,10 @@ app.post("/api/auth/code", express.json(), async (req, res) => {
       refresh_token: tokens.refresh_token || undefined,
     });
 
-    // We only overwrite or merge if refresh exists. If not, it means user re-auth'd without revoking access.
     let existingToken = {};
-    if (fs.existsSync(TOKEN_PATH)) {
-      existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH));
-    }
-    if (tokens.refresh_token) {
-      await fs.promises.writeFile(TOKEN_PATH, payload);
-    } else if (existingToken.refresh_token) {
-      // Just keep the old refresh token
-    } else {
-      // Save anyway, but might have short-lived access
+    if (fs.existsSync(TOKEN_PATH)) existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH));
+
+    if (tokens.refresh_token || !existingToken.refresh_token) {
       await fs.promises.writeFile(TOKEN_PATH, payload);
     }
     res.json({ success: true });
@@ -182,13 +157,12 @@ app.post("/api/auth/code", express.json(), async (req, res) => {
   }
 });
 
+// Drive Routes
 app.get("/api/drive/folders", async (req, res) => {
   try {
-    const parentId = req.query.parentId || "root";
-    const authClient = await authorize();
-    const drive = google.drive({ version: "v3", auth: authClient });
+    const drive = await driveApi.getClient();
     const result = await drive.files.list({
-      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`,
+      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${req.query.parentId || "root"}' in parents`,
       fields: "files(id, name, parents)",
       orderBy: "name",
       pageSize: 1000,
@@ -201,339 +175,35 @@ app.get("/api/drive/folders", async (req, res) => {
 
 app.get("/api/drive/folder/:id", async (req, res) => {
   try {
-    const authClient = await authorize();
-    const drive = google.drive({ version: "v3", auth: authClient });
-    const result = await drive.files.get({
-      fileId: req.params.id,
-      fields: "id, name",
-    });
+    const drive = await driveApi.getClient();
+    const result = await drive.files.get({ fileId: req.params.id, fields: "id, name" });
     res.json({ success: true, folder: result.data });
   } catch (e) {
     res.status(500).json({ error: e.toString() });
   }
 });
 
+// Job Queue
 let uploadJobs = {};
 let uploadQueue = [];
 let processedDriveFiles = [];
 let isProcessingQueue = false;
 
 function loadJobs() {
-  if (fs.existsSync(JOBS_FILE)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(JOBS_FILE));
-      if (data.uploadJobs) uploadJobs = data.uploadJobs;
-      if (data.uploadQueue) uploadQueue = data.uploadQueue;
-      if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
-    } catch (e) {}
-  }
+  if (!fs.existsSync(JOBS_FILE)) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(JOBS_FILE));
+    if (data.uploadJobs) uploadJobs = data.uploadJobs;
+    if (data.uploadQueue) uploadQueue = data.uploadQueue;
+    if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
+  } catch (e) {}
 }
 function saveJobs() {
-  try {
-    fs.writeFileSync(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles }));
-  } catch (e) {}
+  try { fs.writeFileSync(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles })); } catch (e) {}
 }
 loadJobs();
 
-app.post("/api/upload", upload.array("files"), async (req, res) => {
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: "Es wurden keine Dateien hochgeladen." });
-  }
-
-  const jobs = [];
-  for (const file of req.files) {
-    const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
-    const job = {
-      id: jobId,
-      originalName: file.originalname,
-      status: "pending",
-      result: null,
-      error: null,
-      filePath: file.path,
-      uploadDate: new Date().toISOString(),
-    };
-    console.log("[WEB] Add new upload job for " + file.originalname + " with ID " + jobId);
-
-    uploadJobs[jobId] = job;
-    uploadQueue.push(jobId);
-    jobs.push(job);
-  }
-
-  saveJobs();
-  // Start processing if not already
-  processQueue();
-
-  res.json({ success: true, jobs: jobs });
-});
-
-app.get("/api/status", (req, res) => {
-  let statuses = [];
-  if (req.query.ids === "all") {
-    // Sort so newest is first
-    statuses = Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
-  } else {
-    const ids = req.query.ids ? req.query.ids.split(",") : [];
-    statuses = ids.map((id) => uploadJobs[id]).filter(Boolean);
-  }
-  res.json({ success: true, statuses: statuses });
-});
-
-// Neu: Clears the in-memory jobs from backend
-app.delete("/api/jobs", (req, res) => {
-  uploadJobs = {};
-  uploadQueue = [];
-  saveJobs();
-  res.json({ success: true });
-});
-
-app.post("/api/scan", upload.array("images", 50), async (req, res) => {
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: "Keine Bilder hochgeladen." });
-  }
-
-  const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
-  const coordsList = req.body.coords || []; // Coordinates might be single string or array
-  const algorithm = req.body.algorithm || "color_enhanced";
-  const autoQueue = req.body.autoQueue === "true";
-
-  console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
-
-  try {
-    const tempPdfs = [];
-
-    // Helper functions for running the Python scanner sync-ish via Promisification
-    const runScannerTask = (inputPath, tempPdfPath, coordsStr) => {
-      return new Promise((resolve, reject) => {
-        exec(
-          `./venv/bin/python ./app/scanner.py "${inputPath}" "${tempPdfPath}" "${coordsStr}" "${algorithm}"`,
-          (error, stdout, stderr) => {
-            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-            if (error) {
-              console.error(`[SCANNER ERROR]: ${error.message} | ${stderr}`);
-              reject(error);
-            } else {
-              resolve(tempPdfPath);
-            }
-          }
-        );
-      });
-    };
-
-    // Verarbeite jede Seite mit Tesseract einzeln
-    for (let i = 0; i < req.files.length; i++) {
-      const file = req.files[i];
-      const inputPath = file.path;
-      const tempPdfPath = path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`);
-      let coordsStr = Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : "";
-
-      await runScannerTask(inputPath, tempPdfPath, coordsStr);
-      tempPdfs.push(tempPdfPath);
-    }
-
-    // Wenn mehrere Dateien, dann per pdf-lib mergen, ansonsten einfach umbenennen
-    if (tempPdfs.length === 1) {
-      fs.renameSync(tempPdfs[0], outputPdfPath);
-      let tempJpg = tempPdfs[0].replace(".pdf", ".jpg");
-      if (fs.existsSync(tempJpg)) {
-        fs.renameSync(tempJpg, outputPdfPath.replace(".pdf", ".jpg"));
-      }
-    } else {
-      const mergedPdf = await PDFDocument.create();
-      for (const pdfPath of tempPdfs) {
-        const pdfBytes = fs.readFileSync(pdfPath);
-        const pdf = await PDFDocument.load(pdfBytes);
-        const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-        copiedPages.forEach((page) => mergedPdf.addPage(page));
-      }
-
-      const mergedPdfBytes = await mergedPdf.save();
-      fs.writeFileSync(outputPdfPath, mergedPdfBytes);
-
-      // Temporäre PDFs + Vorschau-Jpgs löschen, behalte das neue Output JPG von Seite 1
-      for (let i = 0; i < tempPdfs.length; i++) {
-        if (fs.existsSync(tempPdfs[i])) fs.unlinkSync(tempPdfs[i]);
-        let tempJpg = tempPdfs[i].replace(".pdf", ".jpg");
-        if (fs.existsSync(tempJpg)) {
-          if (i === 0) fs.renameSync(tempJpg, outputPdfPath.replace(".pdf", ".jpg")); // 1. JPG Preview behalten
-          else fs.unlinkSync(tempJpg);
-        }
-      }
-    }
-
-    let createdJob = null;
-    if (autoQueue) {
-      const filename = path.basename(outputPdfPath);
-      const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
-      const job = {
-        id: jobId,
-        originalName: filename,
-        status: "pending",
-        result: null,
-        error: null,
-        filePath: outputPdfPath,
-        uploadDate: new Date().toISOString(),
-      };
-      console.log("[SCANNER] Auto-queuing job for " + filename);
-      uploadJobs[jobId] = job;
-      uploadQueue.push(jobId);
-      createdJob = job;
-      saveJobs();
-      processQueue();
-    }
-
-    console.log(`[SCANNER] Erfolgreich verarbeitet: ${outputPdfPath}`);
-    res.set("X-File-Name", path.basename(outputPdfPath));
-    res.set("Access-Control-Expose-Headers", "X-File-Name, X-Auto-Job");
-    if (createdJob) {
-      res.set("X-Auto-Job", JSON.stringify(createdJob));
-    }
-
-    res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
-      if (err) {
-        if (err.code === "ECONNABORTED" || err.message === "Request aborted" || err.code === "EPIPE") {
-          console.log(
-            "[SCANNER] Client hat die Verbindung getrennt (Verbindung vorzeitig beendet). Hintergrund-Verarbeitung läuft weiter."
-          );
-        } else {
-          console.error("[SCANNER] Fehler beim Senden der Datei:", err);
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
-  }
-});
-
-// Neu: Vorschau generieren ohne OCR (Sehr schnell)
-app.post("/api/preview", upload.single("image"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "Kein Bild hochgeladen." });
-  }
-
-  const inputPath = req.file.path;
-  const outputJpgPath = path.join(localDownloadFolder, `Preview_${Date.now()}.jpg`);
-  const algorithm = req.body.algorithm || "color_enhanced";
-  const coords = req.body.coords || "skip"; // Now receiving crop coordinates from frontend!
-
-  try {
-    await new Promise((resolve, reject) => {
-      exec(
-        `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "${coords}" "${algorithm}"`,
-        (error, stdout, stderr) => {
-          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath); // Original löschen
-
-          if (error) {
-            console.error(`[PREVIEW ERROR]: ${error.message} | ${stderr}`);
-            reject(error);
-          } else {
-            // Versuche den Auto-Detect Filter aus dem stdout zu lesen
-            let detectedAlgorithm = algorithm;
-            const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
-            if (match && match[1]) {
-              detectedAlgorithm = match[1];
-              res.setHeader("X-Detected-Algorithm", detectedAlgorithm);
-            }
-            resolve(outputJpgPath);
-          }
-        }
-      );
-    });
-
-    res.download(outputJpgPath, "Preview.jpg", (err) => {
-      if (fs.existsSync(outputJpgPath)) {
-        setTimeout(() => {
-          if (fs.existsSync(outputJpgPath)) fs.unlinkSync(outputJpgPath);
-        }, 10000); // 10s Cleanup delay
-      }
-      if (err && err.code !== "ECONNABORTED" && err.code !== "EPIPE") {
-        console.error("[PREVIEW] Fehler beim Senden:", err);
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Fehler bei der Vorschaugenerierung." });
-  }
-});
-
-// Neu: Liste aller lokal gescannten Dateien abrufen
-app.get("/api/scans", (req, res) => {
-  if (!fs.existsSync(localDownloadFolder)) {
-    return res.json({ success: true, files: [] });
-  }
-
-  const files = fs
-    .readdirSync(localDownloadFolder)
-    .filter((file) => file.startsWith("Scanned_") && file.endsWith(".pdf"))
-    .map((file) => {
-      const stats = fs.statSync(path.join(localDownloadFolder, file));
-      const hasThumbnail = fs.existsSync(path.join(localDownloadFolder, file.replace(".pdf", ".jpg")));
-      return {
-        name: file,
-        path: path.join(localDownloadFolder, file),
-        date: stats.mtime,
-        size: stats.size,
-        hasThumbnail: hasThumbnail,
-      };
-    })
-    .sort((a, b) => b.date - a.date); // Neueste zuerst
-
-  res.json({ success: true, files: files });
-});
-
-// Neu: Datei löschen
-app.delete("/api/scans/:filename", (req, res) => {
-  const filename = req.params.filename;
-  if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf")) {
-    return res.status(400).json({ error: "Ungültiger Dateiname" });
-  }
-
-  const pdfPath = path.join(localDownloadFolder, filename);
-  const jpgPath = path.join(localDownloadFolder, filename.replace(".pdf", ".jpg"));
-
-  try {
-    if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-    if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Error deleting scan:", err);
-    res.status(500).json({ error: "Fehler beim Löschen" });
-  }
-});
-
-// Neu: Bereits existierende gescannte Datei in die KI-Pipeline werfen
-app.post("/api/upload-scan", express.json(), (req, res) => {
-  const filenames = req.body.filenames;
-  if (!filenames || !Array.isArray(filenames) || filenames.length === 0) {
-    return res.status(400).json({ error: "Keine Dateien ausgewählt." });
-  }
-
-  const jobs = [];
-  for (const filename of filenames) {
-    const filePath = path.join(localDownloadFolder, filename);
-    if (!fs.existsSync(filePath)) continue;
-
-    const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
-    const job = {
-      id: jobId,
-      originalName: filename,
-      status: "pending",
-      result: null,
-      error: null,
-      // Datei bleibt am originalen Ort, wird nach erfolgreichem Upload gelöscht
-      filePath: filePath,
-      uploadDate: new Date().toISOString(),
-    };
-
-    console.log("[WEB] Add local scan to upload job: " + filename);
-    uploadJobs[jobId] = job;
-    uploadQueue.push(jobId);
-    jobs.push(job);
-  }
-
-  saveJobs();
-  processQueue();
-  res.json({ success: true, jobs: jobs });
-});
-
+// Process core queue
 async function processQueue() {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
@@ -549,39 +219,19 @@ async function processQueue() {
 
     try {
       console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
-      const authClient = await authorize();
-      const drive = google.drive({ version: "v3", auth: authClient });
-
-      let folderId;
-      if (isValidGoogleDriveId(appSettings.FOLDER_ID)) {
-        folderId = appSettings.FOLDER_ID;
-      } else {
-        folderId = await findFolderId(appSettings.FOLDER_ID);
-      }
+      let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID) ? appSettings.FOLDER_ID : await driveApi.findFolderId(appSettings.FOLDER_ID);
 
       const aiStartTime = Date.now();
-      var sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
-      const aiEndTime = Date.now();
-      const aiDurationMs = aiEndTime - aiStartTime;
-      sortedName.duration = (aiDurationMs / 1000).toFixed(2); // save duration in seconds
+      const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
+      sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
 
-      if (sortedName.success === false) {
-        throw new Error("KI Verarbeitung fehlgeschlagen.");
-      }
+      if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
 
-      let driveFile = null;
-      if (appSettings.FOLDER_ID_SORTED) {
-        driveFile = await uploadFile(drive, job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full);
-      }
-      let defaultDriveFile = await uploadFile(drive, job.filePath, folderId);
-
-      if (defaultDriveFile) {
-        processedDriveFiles.push(defaultDriveFile.id);
-      }
-
-      if (!driveFile) {
-        driveFile = defaultDriveFile;
-      }
+      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
+      let driveFile = appSettings.FOLDER_ID_SORTED ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug) : null;
+      
+      if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
+      driveFile = driveFile || defaultDriveFile;
 
       if (driveFile) {
         sortedName.webViewLink = driveFile.webViewLink;
@@ -589,39 +239,29 @@ async function processQueue() {
         sortedName.webContentLink = driveFile.webContentLink;
       }
 
-      console.log(`[WEB] Job ${jobId} finished. File uploaded to Drive:`);
-      console.log(sortedName);
+      await fs.promises.unlink(job.filePath).catch(() => {});
 
-      // Delete file after upload
-      await fs.promises.unlink(job.filePath);
-
-      // Read thumbnail for frontend dashboard preview before deleting it
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
       let localThumbBase64 = null;
       if (fs.existsSync(jpgPath)) {
-        try {
-          const imgBuf = await fs.promises.readFile(jpgPath);
-          localThumbBase64 = `data:image/jpeg;base64,${imgBuf.toString("base64")}`;
-        } catch (e) {}
-        await fs.promises.unlink(jpgPath);
+        try { localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`; } catch (e) {}
+        await fs.promises.unlink(jpgPath).catch(() => {});
       }
 
       job.status = "completed";
       sortedName.localThumbnail = localThumbBase64;
       job.result = sortedName;
       saveJobs();
+      console.log(`[WEB] Job ${jobId} finished.`);
     } catch (error) {
       console.error(`[WEB] Error processing job ${jobId}:`, error);
       job.status = "error";
       job.error = error.message;
       saveJobs();
-      // Try to clean up file on error
       try {
-        if (fs.existsSync(job.filePath)) {
-          await fs.promises.unlink(job.filePath);
-        }
+        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
         const jpgPath = job.filePath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath);
+        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => {});
       } catch (e) {}
     }
   }
@@ -629,161 +269,18 @@ async function processQueue() {
   isProcessingQueue = false;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-async function init() {
-  console.log("starting script");
-
-  if (firststart) {
-    firststart = false;
-    app.listen(port, "0.0.0.0", () => {
-      console.log(`Web UI läuft auf http://0.0.0.0:${port}`);
-    });
-    const args = process.argv.slice(2);
-    console.log(args);
-    if (args.includes("--debug")) {
-      debug = true;
-      console.log("[START] Debug mode enabled");
-    }
-    if (args.includes("--test")) {
-      testrun = true;
-      console.log("[START] Test mode enabled");
-    }
-    aiAgent.init(debug);
-    setInterval(checkDriveForNewFiles, 5 * 60 * 1000);
-    setTimeout(checkDriveForNewFiles, 10000); // Check once after 10s
-  }
-
-  if (testrun) {
-    return;
-    for (var i = 1; i <= 10; i++) {
-      var sortedName = await aiAgent.getPdfName(i + ".pdf", appSettings);
-      console.log(sortedName);
-    }
-    return;
-  }
-} //
-
-/**
- * Reads previously authorized credentials from the save file.
- *
- * @return {Promise<OAuth2Client|null>}
- */
-async function loadSavedCredentialsIfExist() {
-  try {
-    const content = await fs.promises.readFile(TOKEN_PATH);
-    const credentials = JSON.parse(content);
-    return google.auth.fromJSON(credentials);
-  } catch (err) {
-    return null;
-  }
-}
-
-/**
- * Serializes credentials to a file compatible with GoogleAuth.fromJSON.
- *
- * @param {OAuth2Client} client
- * @return {Promise<void>}
- */
-async function saveCredentials(client) {
-  const content = await fs.promises.readFile(CREDENTIALS_PATH);
-  const keys = JSON.parse(content);
-  const key = keys.installed || keys.web;
-  const payload = JSON.stringify({
-    type: "authorized_user",
-    client_id: key.client_id,
-    client_secret: key.client_secret,
-    refresh_token: client.credentials.refresh_token,
-  });
-  await fs.promises.writeFile(TOKEN_PATH, payload);
-}
-
-/**
- * Load or request or authorization to call APIs.
- *
- */
-async function authorize() {
-  let client = await loadSavedCredentialsIfExist();
-  if (client) {
-    return client;
-  }
-  client = await authenticate({
-    scopes: SCOPES,
-    keyfilePath: CREDENTIALS_PATH,
-  });
-  if (client.credentials) {
-    await saveCredentials(client);
-  }
-  return client;
-}
-
-async function uploadFile(drive, filePath, folderId, name = undefined) {
-  try {
-    let filename = name || path.basename(filePath);
-    const fileMetadata = {
-      name: filename,
-      parents: [folderId],
-    };
-    const media = {
-      mimeType: null,
-      body: fs.createReadStream(filePath), // Create a readable stream from the file path
-    };
-    const file = await drive.files.create({
-      resource: fileMetadata,
-      media: media,
-      fields: "id, webViewLink, thumbnailLink, webContentLink",
-    });
-    if (debug) console.log(`[DRIVE] Uploaded ${filename} (ID: ${file.data.id})`);
-    return file.data;
-  } catch (error) {
-    console.error(`Error uploading file ${filePath}:`, error);
-    return null;
-  }
-}
-
-async function findFolderId(drive, folderName) {
-  let nextPageToken = null;
-  do {
-    const res = await drive.files.list({
-      q: `mimeType='application/vnd.google-apps.folder' and name='${folderName}'`,
-      fields: "nextPageToken, files(id, name)",
-      pageToken: nextPageToken,
-    });
-    if (res.data.files && res.data.files.length > 0) {
-      return res.data.files[0].id;
-    }
-    nextPageToken = res.data.nextPageToken;
-  } while (nextPageToken);
-  return null;
-}
-
-function isValidGoogleDriveId(str) {
-  // A Google Drive ID is a string of alphanumeric characters and some special symbols
-  return typeof str === "string" && /^[a-zA-Z0-9_-]+$/.test(str) && str.length > 10;
-}
-
+// Check Drive Folder Loop
 async function checkDriveForNewFiles() {
-  if (!appSettings.MONITOR_DRIVE || !appSettings.FOLDER_ID) return;
-  if (!fs.existsSync(TOKEN_PATH)) return;
+  if (!appSettings.MONITOR_DRIVE || !appSettings.FOLDER_ID || !fs.existsSync(TOKEN_PATH)) return;
 
   try {
-    const authClient = await authorize();
-    const drive = google.drive({ version: "v3", auth: authClient });
-
-    let folderId;
-    if (isValidGoogleDriveId(appSettings.FOLDER_ID)) {
-      folderId = appSettings.FOLDER_ID;
-    } else {
-      folderId = await findFolderId(drive, appSettings.FOLDER_ID);
-    }
+    const drive = await driveApi.getClient();
+    let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID) ? appSettings.FOLDER_ID : await driveApi.findFolderId(appSettings.FOLDER_ID);
     if (!folderId) return;
 
     let nextPageToken = null;
     let newFound = 0;
+    
     do {
       const res = await drive.files.list({
         q: `mimeType != 'application/vnd.google-apps.folder' and trashed=false and '${folderId}' in parents`,
@@ -791,44 +288,24 @@ async function checkDriveForNewFiles() {
         pageToken: nextPageToken,
       });
 
-      if (res.data.files && res.data.files.length > 0) {
-        for (const file of res.data.files) {
-          if (!processedDriveFiles.includes(file.id)) {
-            processedDriveFiles.push(file.id);
+      for (const file of res.data.files || []) {
+        if (!processedDriveFiles.includes(file.id)) {
+          processedDriveFiles.push(file.id);
+          saveJobs();
+
+          const localPath = path.join(localDownloadFolder, `${Date.now()}-${file.name}`);
+          try {
+            const dest = fs.createWriteStream(localPath);
+            const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
+            await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+
+            const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+            uploadJobs[jobId] = { id: jobId, originalName: file.name, status: "pending", result: null, error: null, filePath: localPath, uploadDate: new Date().toISOString() };
+            uploadQueue.push(jobId);
+            newFound++;
             saveJobs();
-
-            const localPath = path.join(localDownloadFolder, `${Date.now()}-${file.name}`);
-
-            try {
-              // Download file
-              const dest = fs.createWriteStream(localPath);
-              const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
-              await new Promise((resolve, reject) => {
-                downloadRes.data
-                  .on("end", () => resolve())
-                  .on("error", (err) => reject(err))
-                  .pipe(dest);
-              });
-
-              // Create job
-              const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
-              const job = {
-                id: jobId,
-                originalName: file.name,
-                status: "pending",
-                result: null,
-                error: null,
-                filePath: localPath,
-                uploadDate: new Date().toISOString(),
-              };
-
-              uploadJobs[jobId] = job;
-              uploadQueue.push(jobId);
-              newFound++;
-              saveJobs();
-            } catch (downloadErr) {
-              console.error("[MONITOR] Fehler beim Download:", downloadErr);
-            }
+          } catch (downloadErr) {
+            console.error("[MONITOR] Fehler beim Download:", downloadErr);
           }
         }
       }
@@ -841,6 +318,186 @@ async function checkDriveForNewFiles() {
     }
   } catch (error) {
     if (debug) console.error("[MONITOR] Fehler bei Ordner-Überwachung:", error);
+  }
+}
+
+// File routing
+app.post("/api/upload", upload.array("files"), async (req, res) => {
+  if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
+
+  const jobs = req.files.map((file) => {
+    const job = { id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9), originalName: file.originalname, status: "pending", result: null, error: null, filePath: file.path, uploadDate: new Date().toISOString() };
+    uploadJobs[job.id] = job;
+    uploadQueue.push(job.id);
+    return job;
+  });
+
+  saveJobs();
+  processQueue();
+  res.json({ success: true, jobs });
+});
+
+app.post("/api/upload-scan", express.json(), (req, res) => {
+  if (!req.body.filenames?.length) return res.status(400).json({ error: "Keine Dateien ausgewählt." });
+
+  const jobs = req.body.filenames.filter(f => fs.existsSync(path.join(localDownloadFolder, f))).map((filename) => {
+    const job = { id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9), originalName: filename, status: "pending", result: null, error: null, filePath: path.join(localDownloadFolder, filename), uploadDate: new Date().toISOString() };
+    uploadJobs[job.id] = job;
+    uploadQueue.push(job.id);
+    return job;
+  });
+
+  saveJobs();
+  processQueue();
+  res.json({ success: true, jobs });
+});
+
+app.get("/api/status", (req, res) => {
+  let statuses = req.query.ids === "all" 
+    ? Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
+    : (req.query.ids ? req.query.ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
+  res.json({ success: true, statuses });
+});
+
+app.delete("/api/jobs", (req, res) => {
+  uploadJobs = {};
+  uploadQueue = [];
+  saveJobs();
+  res.json({ success: true });
+});
+
+app.post("/api/scan", upload.array("images", 50), async (req, res) => {
+  if (!req.files?.length) return res.status(400).json({ error: "Keine Bilder hochgeladen." });
+
+  const outputPdfPath = path.join(localDownloadFolder, `Scanned_${Date.now()}.pdf`);
+  const coordsList = req.body.coords || [];
+  const algorithm = req.body.algorithm || "color_enhanced";
+  const autoQueue = req.body.autoQueue === "true";
+
+  console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
+
+  try {
+    const tempPdfs = [];
+    const runScannerTask = (inputPath, tempPdfPath, coordsStr) => new Promise((resolve, reject) => {
+      exec(`./venv/bin/python ./app/scanner.py "${inputPath}" "${tempPdfPath}" "${coordsStr}" "${algorithm}"`, (error, stdout, stderr) => {
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+        if (error) { console.error(`[SCANNER]: ${error.message}`); reject(error); } else resolve(tempPdfPath);
+      });
+    });
+
+    for (let i = 0; i < req.files.length; i++) {
+        tempPdfs.push(await runScannerTask(req.files[i].path, path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`), Array.isArray(coordsList) ? coordsList[i] || "" : (i === 0 ? coordsList : "")));
+    }
+
+    if (tempPdfs.length === 1) {
+      fs.renameSync(tempPdfs[0], outputPdfPath);
+      const tempJpg = tempPdfs[0].replace(".pdf", ".jpg");
+      if (fs.existsSync(tempJpg)) fs.renameSync(tempJpg, outputPdfPath.replace(".pdf", ".jpg"));
+    } else {
+      const mergedPdf = await PDFDocument.create();
+      for (const pdfPath of tempPdfs) {
+        const pdf = await PDFDocument.load(fs.readFileSync(pdfPath));
+        (await mergedPdf.copyPages(pdf, pdf.getPageIndices())).forEach((page) => mergedPdf.addPage(page));
+      }
+      fs.writeFileSync(outputPdfPath, await mergedPdf.save());
+
+      tempPdfs.forEach((p, i) => {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+        const jpg = p.replace(".pdf", ".jpg");
+        if (fs.existsSync(jpg)) i === 0 ? fs.renameSync(jpg, outputPdfPath.replace(".pdf", ".jpg")) : fs.unlinkSync(jpg);
+      });
+    }
+
+    let createdJob = null;
+    if (autoQueue) {
+      const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+      createdJob = uploadJobs[jobId] = { id: jobId, originalName: path.basename(outputPdfPath), status: "pending", result: null, error: null, filePath: outputPdfPath, uploadDate: new Date().toISOString() };
+      uploadQueue.push(jobId);
+      saveJobs();
+      processQueue();
+    }
+
+    res.set("X-File-Name", path.basename(outputPdfPath));
+    res.set("Access-Control-Expose-Headers", "X-File-Name, X-Auto-Job");
+    if (createdJob) res.set("X-Auto-Job", JSON.stringify(createdJob));
+    
+    res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
+      if (err && !["ECONNABORTED", "EPIPE"].includes(err.code)) console.error("[SCANNER] Fehler beim Senden:", err);
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
+  }
+});
+
+app.post("/api/preview", upload.single("image"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Kein Bild hochgeladen." });
+
+  const inputPath = req.file.path;
+  const outputJpgPath = path.join(localDownloadFolder, `Preview_${Date.now()}.jpg`);
+  const algorithm = req.body.algorithm || "color_enhanced";
+
+  try {
+    await new Promise((resolve, reject) => {
+      exec(`./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "${req.body.coords || "skip"}" "${algorithm}"`, (error, stdout) => {
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+        if (error) return reject(error);
+        const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
+        if (match) res.setHeader("X-Detected-Algorithm", match[1]);
+        resolve(outputJpgPath);
+      });
+    });
+
+    res.download(outputJpgPath, "Preview.jpg", (err) => {
+      if (fs.existsSync(outputJpgPath)) setTimeout(() => fs.existsSync(outputJpgPath) && fs.unlinkSync(outputJpgPath), 10000);
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Fehler bei der Vorschaugenerierung." });
+  }
+});
+
+app.get("/api/scans", (req, res) => {
+  if (!fs.existsSync(localDownloadFolder)) return res.json({ success: true, files: [] });
+  const files = fs.readdirSync(localDownloadFolder)
+    .filter((file) => file.startsWith("Scanned_") && file.endsWith(".pdf"))
+    .map((file) => ({
+      name: file,
+      path: path.join(localDownloadFolder, file),
+      date: fs.statSync(path.join(localDownloadFolder, file)).mtime,
+      size: fs.statSync(path.join(localDownloadFolder, file)).size,
+      hasThumbnail: fs.existsSync(path.join(localDownloadFolder, file.replace(".pdf", ".jpg"))),
+    })).sort((a, b) => b.date - a.date);
+  res.json({ success: true, files });
+});
+
+app.delete("/api/scans/:filename", (req, res) => {
+  const filename = req.params.filename;
+  if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf")) return res.status(400).json({ error: "Ungültiger Dateiname" });
+  try {
+    const pdfPath = path.join(localDownloadFolder, filename);
+    const jpgPath = path.join(localDownloadFolder, filename.replace(".pdf", ".jpg"));
+    if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+    if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Fehler beim Löschen" });
+  }
+});
+
+// Start
+async function init() {
+  if (firststart) {
+    firststart = false;
+    app.listen(port, "0.0.0.0", () => console.log(`Web UI läuft auf http://0.0.0.0:${port}`));
+    const args = process.argv.slice(2);
+    if (args.includes("--debug")) debug = true;
+    if (args.includes("--test")) testrun = true;
+    
+    aiAgent.init(debug);
+    setInterval(checkDriveForNewFiles, 5 * 60 * 1000);
+    setTimeout(checkDriveForNewFiles, 10000);
+  }
+  if (testrun) {
+    for (var i = 1; i <= 10; i++) console.log(await aiAgent.getPdfName(i + ".pdf", appSettings));
   }
 }
 

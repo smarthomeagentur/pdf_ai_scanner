@@ -16,6 +16,10 @@ services:
       - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_123}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
     volumes:
+      # Hier werden dynamische Dateistorage-Daten, Logins, Jobs und Settings persistent abgelegt
+      - scanner-store:/app/store
+      # Geheimnis für den Google Drive Zugriff
+      - ./gdrive_secret.json:/app/gdrive_secret.json
       # Verzeichnisse für temporäre Uploads/Downloads
       - scanner-downloads:/app/downloads
       # Persistente Konfigurationsdateien
@@ -27,3 +31,4 @@ services:
 
 volumes:
   scanner-downloads:
+  scanner-store:
