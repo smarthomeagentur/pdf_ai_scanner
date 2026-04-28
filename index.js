@@ -263,8 +263,6 @@ async function processQueue() {
         sortedName.webContentLink = driveFile.webContentLink;
       }
 
-      await fs.promises.unlink(job.filePath).catch(() => {});
-
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
       let localThumbBase64 = null;
       if (fs.existsSync(jpgPath)) {
@@ -273,6 +271,17 @@ async function processQueue() {
         } catch (e) {}
         await fs.promises.unlink(jpgPath).catch(() => {});
       }
+      
+      // Fallback: Falls kein Thumbnail existiert (z.B. reiner Google Drive Upload)
+      if (!localThumbBase64 && typeof aiAgent.generateThumbnail === "function") {
+        try {
+          localThumbBase64 = await aiAgent.generateThumbnail(job.filePath);
+        } catch (e) {
+            console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
+        }
+      }
+
+      await fs.promises.unlink(job.filePath).catch(() => {});
 
       job.status = "completed";
       sortedName.localThumbnail = localThumbBase64;
@@ -579,7 +588,7 @@ async function init() {
     if (args.includes("--test")) testrun = true;
 
     aiAgent.init(debug);
-    setInterval(checkDriveForNewFiles, 5 * 60 * 1000);
+    setInterval(checkDriveForNewFiles, 15 * 1000); // 15 Sekunden Intervall für schnellen Upload-Sync
     setTimeout(checkDriveForNewFiles, 10000);
   }
   if (testrun) {

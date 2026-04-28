@@ -282,4 +282,26 @@ module.exports = {
   getPdfName: async function (filePath, settings = {}) {
     return await generatePdfName(filePath, settings);
   },
+  generateThumbnail: async function (pdfPath) {
+    try {
+      if (!pdfPath.toLowerCase().endsWith('.pdf')) return null;
+      const options = {
+        density: 72,
+        saveFilename: "thumb",
+        savePath: ".",
+        format: "jpeg",
+        width: 600,
+        height: 800,
+      };
+      const convert = fromPath(pdfPath, options);
+      const result = await convert(1, { responseType: "base64" });
+      if (result && result.base64) {
+        return `data:image/jpeg;base64,${result.base64}`;
+      }
+      return null;
+    } catch (err) {
+      console.error("[AI] Fehler bei Fallback-Vorschaubild:", err);
+      return null;
+    }
+  }
 };
