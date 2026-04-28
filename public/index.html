@@ -1,1093 +1,375 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>AI Dokument Scanner</title>
-    
-    <!-- PWA Meta Tags -->
-    <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#f4f7f6">
-    <link rel="icon" href="/icon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/icon.svg">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Scanner">
 
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- PWA Meta Tags -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#f4f7f6" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="Scanner" />
+
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f8f9fa;
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+    <link rel="stylesheet" href="/index.css" />
+  </head>
+  <body>
+    <!-- Sticky Header matching scanner.html -->
+    <div
+      class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3"
+    >
+      <h5 class="m-0 fw-bold text-dark">AI Scanner</h5>
+      <div class="d-flex gap-2">
+        <button
+          class="btn btn-sm btn-outline-secondary"
+          id="openSettingsBtn"
+          style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px"
+          title="Einstellungen"
+        >
+          ⚙️
+        </button>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="container" style="position: relative">
+        <!-- Legacy large Scannen button (removed because we have it in the top bar, or we can keep it as a main call to action) -->
+        <a href="/scanner.html" class="live-scanner-btn"
+          >📸 Live Scanner öffnen</a
+        >
+
+        <h2 style="margin-top: 10px">Upload</h2>
+
+        <div id="drop-area" style="margin-top: 20px">
+          <p>Datei(en) hier ablegen oder</p>
+          <button id="browse-btn" class="action-button">
+            Dateien auswählen
+          </button>
+          <input
+            type="file"
+            id="file-input"
+            accept=".pdf,.jpeg,.jpg,.png"
+            multiple
+          />
+        </div>
+
+        <div id="status"></div>
+
+        <div id="job-list-container" style="display: none">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-top: 20px;
+            "
+          >
+            <h3 style="margin: 0">
+              Upload Status
+              <span
+                id="active-job-count"
+                style="
+                  font-size: 14px;
+                  font-weight: normal;
+                  color: #666;
+                  margin-left: 10px;
+                "
+              ></span>
+            </h3>
+            <button id="clear-jobs-btn" class="clear-btn">Liste leeren</button>
+          </div>
+          <div id="job-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Einstellungen</h3>
+          <button class="modal-close" id="closeSettingsBtn">&times;</button>
+        </div>
+
+        <div
+          class="setting-group"
+          style="
             display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-        }
-        .main-content {
-            flex-grow: 1;
-            display: flex;
-            justify-content: center;
             align-items: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            text-align: center;
-            width: 100%;
-            max-width: 600px;
-        }
-        #drop-area {
-            border: 2px dashed #007bff;
-            border-radius: 10px;
-            padding: 50px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        #drop-area.hover {
-            background-color: #e9f5ff;
-        }
-        #file-input {
-            display: none;
-        }
-        .action-button {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            margin-top: 15px;
-        }
-        .action-button:hover {
-            background: #0056b3;
-        }
-        #status {
-            margin-top: 20px;
-            font-weight: bold;
-        }
-        .loading {
-            color: #ff9800;
-        }
-        .success {
-            color: #4caf50;
-        }
-        .error {
-            color: #f44336;
-        }
-        #job-list {
-            margin-top: 20px;
-            text-align: left;
-        }
-        .job-item {
+            justify-content: space-between;
             background: #f8f9fa;
             padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-            font-size: 14px;
-            border-left: 5px solid #ccc;
-            position: relative;
-        }
-        .job-item.pending { border-left-color: #ccc; }
-        .job-item.processing { border-left-color: #ff9800; }
-        .job-item.completed { border-left-color: #4caf50; }
-        .job-item.error { border-left-color: #f44336; }
-        
-        .job-title { font-weight: bold; margin-bottom: 5px; }
-        .job-status { font-size: 12px; color: #666; margin-bottom: 10px;}
-        .job-result { font-size: 13px; }
-        
-        .clear-btn {
-            background: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-top: 10px;
-            font-size: 14px;
-            padding: 5px 10px;
-        }
-        .clear-btn:hover {
-            background: #c82333;
-        }
-        .progress-container {
-            width: 100%;
-            background-color: #e9ecef;
-            border-radius: 5px;
-            height: 10px;
-            margin-top: 10px;
-            overflow: hidden;
-        }
-        .progress-bar {
-            height: 100%;
-            background-color: #ff9800;
-            width: 0%;
-            transition: width 0.5s linear;
-        }
-        
-        /* Modal Styles */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5);
-            z-index: 2000;
-            justify-content: center;
-            align-items: center;
-        }
-        .modal-content {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            width: 90%;
-            max-width: 500px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-            text-align: left;
-        }
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
-        }
-        .modal-header h3 { margin: 0; }
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 24px;
-            cursor: pointer;
-            color: #666;
-            margin: 0;
-            padding: 0;
-            line-height: 1;
-        }
-        .setting-group { margin-bottom: 15px; }
-        .setting-group label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 14px; }
-        .setting-group select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
-        .settings-btn { 
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: none;
-            border: none;
-            font-size: 24px;
-            color: #555;
-            padding: 0;
-            cursor: pointer;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-        }
-        .settings-btn:hover { background: none; color: #000; }
-        #auth-status { font-size: 14px; margin-left: 10px; }
-        
-        .fb-item {
-            padding: 10px;
-            border-bottom: 1px solid #eee;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            transition: background-color 0.2s;
-        }
-        .fb-item:hover { background-color: #f1f8ff; }
-        .fb-item.active { background-color: #e2f0ff; font-weight: bold; }
-        .fb-breadcrumb-item {
-            cursor: pointer;
-            text-decoration: underline;
-        }
-        .fb-breadcrumb-item:hover { color: #0056b3; }
-
-        /* Legacy Scanner Button */
-        .live-scanner-btn {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #0d6efd;
-            color: white;
-            padding: 12px 20px;
             border-radius: 8px;
-            text-decoration: none;
-            font-weight: bold;
-            font-size: 1.1rem;
-            margin-bottom: 20px;
-            margin-top: 10px;
-            width: 100%;
-            box-sizing: border-box;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
+          "
+        >
+          <div>
+            <strong>Google Drive</strong>
+            <div id="auth-status" class="text-muted" style="margin-left: 0">
+              Status wird geladen...
+            </div>
+          </div>
+          <button
+            id="auth-btn"
+            class="action-button"
+            style="margin-top: 0; padding: 8px 15px; display: none"
+          >
+            Mit Google Anmelden
+          </button>
+        </div>
 
-        .live-scanner-btn:hover {
-            background: #0b5ed7;
-            color: white;
-        }
-
-        /* Mobile Adjustments */
-
-        @media (max-width: 600px) {
-            body {
-                padding: 0;
-            }
-            .live-scanner-btn {
-                padding: 16px 20px;
-                font-size: 1.3rem; /* Make the button bigger */
-            }
-            .main-content {
-                align-items: flex-start; /* Start from top on mobile */
-                padding: 10px;
-            }
-            .container {
-                box-shadow: none;
-                border-radius: 0;
-                padding: 20px 15px;
-                min-height: 100vh; /* Fill entire screen */
-            }
-            #drop-area {
-                padding: 25px 15px; /* Make the file upload area smaller */
-            }
-            #drop-area p {
+        <div
+          class="setting-group"
+          id="folder-settings-container"
+          style="display: none"
+        >
+          <label>Ordner für rohe Uploads:</label>
+          <div style="display: flex; gap: 10px">
+            <input
+              type="text"
+              id="raw-folder-display"
+              disabled
+              placeholder="Kein Ordner ausgewählt"
+              style="
+                flex-grow: 1;
+                min-width: 0;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+              "
+            />
+            <input type="hidden" id="raw-folder-id" />
+            <button
+              id="raw-folder-browse"
+              class="action-button"
+              disabled
+              style="margin: 0; padding: 8px 15px; flex-shrink: 0"
+            >
+              Durchsuchen
+            </button>
+          </div>
+          <div
+            style="
+              margin-top: 10px;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+            "
+          >
+            <input
+              type="checkbox"
+              id="monitor-drive-checkbox"
+              style="width: 18px; height: 18px"
+            />
+            <label
+              for="monitor-drive-checkbox"
+              style="
                 margin: 0;
+                font-weight: normal;
                 font-size: 14px;
-            }
-            button#browse-btn {
-                padding: 8px 16px;
-                font-size: 14px;
-            }
-        }
+                cursor: pointer;
+              "
+              >Ordner automatisch auf neue Dateien überwachen (alle 15
+              Sek)</label
+            >
+          </div>
+        </div>
 
-        #pwa-install-banner {
+        <div
+          class="setting-group"
+          id="ai-folder-settings-container"
+          style="display: none"
+        >
+          <label>Ordner für AI erkannte PDFs:</label>
+          <div style="display: flex; gap: 10px">
+            <input
+              type="text"
+              id="ai-folder-display"
+              disabled
+              placeholder="Kein Ordner ausgewählt"
+              style="
+                flex-grow: 1;
+                min-width: 0;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+              "
+            />
+            <input type="hidden" id="ai-folder-id" />
+            <button
+              id="ai-folder-browse"
+              class="action-button"
+              disabled
+              style="margin: 0; padding: 8px 15px; flex-shrink: 0"
+            >
+              Durchsuchen
+            </button>
+          </div>
+        </div>
+
+        <div
+          class="setting-group"
+          id="ai-prompt-settings-container"
+          style="
             display: none;
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 90%;
-            max-width: 400px;
-            background: #0d6efd;
-            color: white;
-            padding: 12px 18px;
-            border-radius: 10px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-            z-index: 1000;
-            align-items: center;
-            justify-content: space-between;
-            box-sizing: border-box;
-            font-family: inherit;
-        }
-        #pwa-install-banner.show {
-            display: flex;
-            animation: slideUp 0.3s ease-out forwards;
-        }
-        @keyframes slideUp {
-            from { transform: translate(-50%, 100%); opacity: 0; }
-            to { transform: translate(-50%, 0); opacity: 1; }
-        }
-        .pwa-text {
-            text-align: left;
+            border-top: 1px solid #ddd;
+            margin-top: 15px;
+            padding-top: 15px;
+          "
+        >
+          <label>KI Prompt Konfiguration:</label>
+          <div style="margin-top: 10px">
+            <label style="font-size: 0.9em; color: #555"
+              >Kategorien (Komma-getrennt):</label
+            >
+            <textarea
+              id="ai-categories-input"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                resize: vertical;
+              "
+              rows="2"
+              placeholder="Administration, Personal, Projekte..."
+            ></textarea>
+          </div>
+          <div style="margin-top: 10px">
+            <label style="font-size: 0.9em; color: #555"
+              >Firmen / Rechnungsempfänger (Komma-getrennt):</label
+            >
+            <textarea
+              id="ai-company-input"
+              style="
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                resize: vertical;
+              "
+              rows="2"
+              placeholder="wirewire GmbH, Daniel..."
+            ></textarea>
+          </div>
+        </div>
+
+        <button
+          id="saveSettingsBtn"
+          class="action-button"
+          style="width: 100%; display: none; margin-top: 15px"
+        >
+          Einstellungen Speichern
+        </button>
+      </div>
+    </div>
+
+    <!-- Folder Browser Modal -->
+    <div id="folder-browser-modal" class="modal-overlay" style="z-index: 2010">
+      <div
+        class="modal-content"
+        style="
+          display: flex;
+          flex-direction: column;
+          height: 80vh;
+          max-height: 600px;
+        "
+      >
+        <div class="modal-header">
+          <h3>Ordner auswählen</h3>
+          <button class="modal-close" id="closeFolderBrowserBtn">
+            &times;
+          </button>
+        </div>
+        <div
+          id="fb-breadcrumbs"
+          style="
             font-size: 14px;
-            line-height: 1.3;
-        }
-        .pwa-actions {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-        .pwa-btn {
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        .btn-install {
-            padding: 8px 14px;
-            background: white;
+            margin-bottom: 10px;
             color: #0d6efd;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .btn-close-pwa {
-            background: transparent;
-            color: rgba(255,255,255,0.8);
-            font-size: 24px;
-            padding: 0;
-            line-height: 1;
-        }
-    </style>
-</head>
-<body>
-
-<!-- Sticky Header matching scanner.html -->
-<div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
-    <h5 class="m-0 fw-bold text-dark">AI Scanner</h5>
-    <div class="d-flex gap-2">
-        <button class="btn btn-sm btn-outline-secondary" id="openSettingsBtn" style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px;" title="Einstellungen">⚙️</button>
+            overflow-x: auto;
+            white-space: nowrap;
+            padding-bottom: 5px;
+          "
+        >
+          <!-- Drive / Folder -->
+        </div>
+        <div
+          id="fb-list"
+          style="
+            flex-grow: 1;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            padding: 5px;
+          "
+        >
+          <!-- .fb-item elements -->
+        </div>
+        <div
+          style="
+            margin-top: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          "
+        >
+          <div
+            id="fb-current-selection"
+            style="
+              font-size: 14px;
+              font-weight: bold;
+              color: #333;
+              max-width: 60%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            "
+          >
+            Kein Ordner
+          </div>
+          <button
+            id="fb-select-btn"
+            class="action-button"
+            style="margin: 0; padding: 8px 15px; background: #28a745"
+          >
+            Auswählen
+          </button>
+        </div>
+      </div>
     </div>
-</div>
 
-<div class="main-content">
-    <div class="container" style="position: relative;">
-        <!-- Legacy large Scannen button (removed because we have it in the top bar, or we can keep it as a main call to action) -->
-        <a href="/scanner.html" class="live-scanner-btn">📸 Live Scanner öffnen</a>
-
-        <h2 style="margin-top: 10px;">Upload</h2>
-        
-        <div id="drop-area" style="margin-top: 20px;">
-            <p>Datei(en) hier ablegen oder</p>
-            <button id="browse-btn" class="action-button">Dateien auswählen</button>
-            <input type="file" id="file-input" accept=".pdf,.jpeg,.jpg,.png" multiple>
-        </div>
-
-    <div id="status"></div>
-    
-    <div id="job-list-container" style="display: none;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
-            <h3 style="margin: 0;">Upload Status <span id="active-job-count" style="font-size: 14px; font-weight: normal; color: #666; margin-left: 10px;"></span></h3>
-            <button id="clear-jobs-btn" class="clear-btn">Liste leeren</button>
-        </div>
-        <div id="job-list"></div>
-    </div>
-</div>
-</div>
-
-<!-- Settings Modal -->
-<div id="settings-modal" class="modal-overlay">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Einstellungen</h3>
-            <button class="modal-close" id="closeSettingsBtn">&times;</button>
-        </div>
-        
-        <div class="setting-group" style="display: flex; align-items: center; justify-content: space-between; background: #f8f9fa; padding: 15px; border-radius: 8px;">
-            <div>
-                <strong>Google Drive</strong>
-                <div id="auth-status" class="text-muted" style="margin-left: 0;">Status wird geladen...</div>
-            </div>
-            <button id="auth-btn" class="action-button" style="margin-top: 0; padding: 8px 15px; display: none;">Mit Google Anmelden</button>
-        </div>
-
-        <div class="setting-group" id="folder-settings-container" style="display: none;">
-            <label>Ordner für rohe Uploads:</label>
-            <div style="display: flex; gap: 10px;">
-                <input type="text" id="raw-folder-display" disabled placeholder="Kein Ordner ausgewählt" style="flex-grow: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 5px;" />
-                <input type="hidden" id="raw-folder-id" />
-                <button id="raw-folder-browse" class="action-button" disabled style="margin: 0; padding: 8px 15px; flex-shrink: 0;">Durchsuchen</button>
-            </div>
-            <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" id="monitor-drive-checkbox" style="width: 18px; height: 18px;" />
-                <label for="monitor-drive-checkbox" style="margin: 0; font-weight: normal; font-size: 14px; cursor: pointer;">Ordner automatisch auf neue Dateien überwachen (alle 15 Sek)</label>
-            </div>
-        </div>
-
-        <div class="setting-group" id="ai-folder-settings-container" style="display: none;">
-            <label>Ordner für AI erkannte PDFs:</label>
-            <div style="display: flex; gap: 10px;">
-                <input type="text" id="ai-folder-display" disabled placeholder="Kein Ordner ausgewählt" style="flex-grow: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 5px;" />
-                <input type="hidden" id="ai-folder-id" />
-                <button id="ai-folder-browse" class="action-button" disabled style="margin: 0; padding: 8px 15px; flex-shrink: 0;">Durchsuchen</button>
-            </div>
-        </div>
-
-        <div class="setting-group" id="ai-prompt-settings-container" style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
-            <label>KI Prompt Konfiguration:</label>
-            <div style="margin-top: 10px;">
-                <label style="font-size: 0.9em; color: #555;">Kategorien (Komma-getrennt):</label>
-                <textarea id="ai-categories-input" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; resize: vertical;" rows="2" placeholder="Administration, Personal, Projekte..."></textarea>
-            </div>
-            <div style="margin-top: 10px;">
-                <label style="font-size: 0.9em; color: #555;">Firmen / Rechnungsempfänger (Komma-getrennt):</label>
-                <textarea id="ai-company-input" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; resize: vertical;" rows="2" placeholder="wirewire GmbH, Daniel..."></textarea>
-            </div>
-        </div>
-
-        <button id="saveSettingsBtn" class="action-button" style="width: 100%; display: none; margin-top: 15px;">Einstellungen Speichern</button>
-    </div>
-</div>
-
-<!-- Folder Browser Modal -->
-<div id="folder-browser-modal" class="modal-overlay" style="z-index: 2010;">
-    <div class="modal-content" style="display: flex; flex-direction: column; height: 80vh; max-height: 600px;">
-        <div class="modal-header">
-            <h3>Ordner auswählen</h3>
-            <button class="modal-close" id="closeFolderBrowserBtn">&times;</button>
-        </div>
-        <div id="fb-breadcrumbs" style="font-size: 14px; margin-bottom: 10px; color: #0d6efd; overflow-x: auto; white-space: nowrap; padding-bottom: 5px;">
-            <!-- Drive / Folder -->
-        </div>
-        <div id="fb-list" style="flex-grow: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 5px; padding: 5px;">
-            <!-- .fb-item elements -->
-        </div>
-        <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
-            <div id="fb-current-selection" style="font-size: 14px; font-weight: bold; color: #333; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Kein Ordner</div>
-            <button id="fb-select-btn" class="action-button" style="margin: 0; padding: 8px 15px; background: #28a745;">Auswählen</button>
-        </div>
-    </div>
-</div>
-
-<!-- PWA Install Banner -->
-<div id="pwa-install-banner">
-    <div class="pwa-text">
-        <strong>App installieren</strong><br>
+    <!-- PWA Install Banner -->
+    <div id="pwa-install-banner">
+      <div class="pwa-text">
+        <strong>App installieren</strong><br />
         Installieren als native App.
+      </div>
+      <div class="pwa-actions">
+        <button id="pwa-install-btn" class="pwa-btn btn-install">
+          Installieren
+        </button>
+        <button id="pwa-close-btn" class="pwa-btn btn-close-pwa">
+          &times;
+        </button>
+      </div>
     </div>
-    <div class="pwa-actions">
-        <button id="pwa-install-btn" class="pwa-btn btn-install">Installieren</button>
-        <button id="pwa-close-btn" class="pwa-btn btn-close-pwa">&times;</button>
-    </div>
-</div>
 
-<script>
-    const settingsModal = document.getElementById('settings-modal');
-    const openSettingsBtn = document.getElementById('openSettingsBtn');
-    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-    let googleClientId = null;
-    let authClientCode = null;
-    
-    // Folder Browser state
-    let allFolders = [];
-    let currentBrowserTarget = null;
-    let currentParentId = 'root';
-    let currentBreadcrumbs = [{ id: 'root', name: 'Meine Ablage' }];
-    let selectedFbId = null;
-    let selectedFbName = null;
-
-    openSettingsBtn.addEventListener('click', async () => {
-        settingsModal.style.display = 'flex';
-        
-        // Fetch current settings from backend
-        try {
-            const setRes = await fetch('/api/settings');
-            const setJson = await setRes.json();
-            if (setJson.success) {
-                // Populate if we already have it
-                window.currentSettings = setJson.settings;
-            }
-        } catch(e) {}
-
-        // Fetch client ID configuration
-        try {
-            const res = await fetch('/api/config');
-            const data = await res.json();
-            if (data.success && data.clientId) {
-                googleClientId = data.clientId;
-                document.getElementById('auth-status').innerText = 'Bereit zur Authentifizierung';
-                document.getElementById('auth-btn').style.display = 'inline-block';
-                
-                // Initialize Google Auth Implicit flow client
-                authClientCode = window.google.accounts.oauth2.initCodeClient({
-                    client_id: googleClientId,
-                    scope: 'https://www.googleapis.com/auth/drive',
-                    ux_mode: 'popup',
-                    callback: async (response) => {
-                        if (response.code) {
-                            document.getElementById('auth-status').innerText = 'Speichere Code am Server...';
-                            const authRes = await fetch('/api/auth/code', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ code: response.code })
-                            });
-                            if (authRes.ok) {
-                                document.getElementById('auth-status').innerText = 'Erfolgreich verbunden!';
-                                document.getElementById('auth-btn').style.display = 'none';
-                                loadFolders();
-                            } else {
-                                document.getElementById('auth-status').innerText = 'Fehler bei der Verbindung.';
-                            }
-                        }
-                    },
-                });
-                
-                loadFolders(); // Try loading folders (if already authenticated)
-            } else {
-                document.getElementById('auth-status').innerText = 'Fehler: Keine Google API Config auf dem Server gefunden.';
-            }
-        } catch(err) {
-            document.getElementById('auth-status').innerText = 'Fehler beim Laden der Konfiguration.';
-        }
-    });
-
-    closeSettingsBtn.addEventListener('click', () => {
-        settingsModal.style.display = 'none';
-    });
-    
-    document.getElementById('auth-btn').addEventListener('click', () => {
-        if(authClientCode) authClientCode.requestCode();
-    });
-
-    async function loadFolders() {
-        document.getElementById('folder-settings-container').style.display = 'block';
-        document.getElementById('ai-folder-settings-container').style.display = 'block';
-        
-        try {
-            const res = await fetch('/api/drive/folders?parentId=root');
-            const data = await res.json();
-            if (data.success) {
-                document.getElementById('auth-status').innerText = 'Google Drive verbunden';
-                document.getElementById('auth-btn').innerText = 'Neu Verbinden';
-                document.getElementById('auth-btn').style.display = 'inline-block';
-                
-                const rawBrowseBtn = document.getElementById('raw-folder-browse');
-                const aiBrowseBtn = document.getElementById('ai-folder-browse');
-                const rawDisplay = document.getElementById('raw-folder-display');
-                const aiDisplay = document.getElementById('ai-folder-display');
-                
-                rawBrowseBtn.disabled = false;
-                aiBrowseBtn.disabled = false;
-                rawDisplay.placeholder = "Klicke auf Durchsuchen...";
-                aiDisplay.placeholder = "Klicke auf Durchsuchen...";
-                
-                // Pre-fill existing settings correctly from backend API
-                if (window.currentSettings) {
-                    async function fetchFolderName(id, displayEl, idEl) {
-                        try {
-                            const nRes = await fetch('/api/drive/folder/' + id);
-                            if (nRes.ok) {
-                                const nData = await nRes.json();
-                                if (nData.success) {
-                                    displayEl.value = nData.folder.name;
-                                    idEl.value = nData.folder.id;
-                                    return;
-                                }
-                            }
-                        } catch(e) {}
-                        displayEl.value = "Ordner via ID: " + id;
-                        idEl.value = id;
-                    }
-                    
-                    if (window.currentSettings.FOLDER_ID) {
-                        fetchFolderName(window.currentSettings.FOLDER_ID, rawDisplay, document.getElementById('raw-folder-id'));
-                    }
-                    if (window.currentSettings.FOLDER_ID_SORTED) {
-                        fetchFolderName(window.currentSettings.FOLDER_ID_SORTED, aiDisplay, document.getElementById('ai-folder-id'));
-                    }
-                    
-                    document.getElementById('ai-categories-input').value = window.currentSettings.AI_CATEGORIES || 'Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige';
-                    document.getElementById('ai-company-input').value = window.currentSettings.AI_COMPANY || 'wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt';
-                    document.getElementById('monitor-drive-checkbox').checked = window.currentSettings.MONITOR_DRIVE || false;
-                }
-                
-                document.getElementById('ai-prompt-settings-container').style.display = 'block';
-                document.getElementById('saveSettingsBtn').style.display = 'block';
-            } else {
-                document.getElementById('auth-status').innerText = 'Nicht authentifiziert.';
-            }
-        } catch(e) {
-            document.getElementById('auth-status').innerText = 'Fehler beim Laden der Ordner.';
-        }
-    }
-    
-    // --- Folder Browser Logic begin ---
-    const fbModal = document.getElementById('folder-browser-modal');
-    const fbList = document.getElementById('fb-list');
-    const fbBreadcrumbs = document.getElementById('fb-breadcrumbs');
-    const fbSelectBtn = document.getElementById('fb-select-btn');
-    const fbCurrentSelection = document.getElementById('fb-current-selection');
-
-    document.getElementById('raw-folder-browse').addEventListener('click', () => openFolderBrowser('raw'));
-    document.getElementById('ai-folder-browse').addEventListener('click', () => openFolderBrowser('ai'));
-    document.getElementById('closeFolderBrowserBtn').addEventListener('click', () => fbModal.style.display = 'none');
-
-    function openFolderBrowser(target) {
-        currentBrowserTarget = target;
-        currentParentId = 'root';
-        currentBreadcrumbs = [{ id: 'root', name: 'Meine Ablage' }];
-        selectedFbId = null;
-        selectedFbName = null;
-        fbCurrentSelection.innerText = 'Kein Ordner';
-        fbSelectBtn.disabled = true;
-        renderFolderBrowser();
-        fbModal.style.display = 'flex';
-    }
-
-    async function renderFolderBrowser() {
-        fbList.innerHTML = '<div style="padding: 10px; color: #777;">Lade Ordner...</div>';
-        fbBreadcrumbs.innerHTML = '';
-        currentBreadcrumbs.forEach((bc, idx) => {
-            const span = document.createElement('span');
-            span.className = 'fb-breadcrumb-item';
-            span.innerText = bc.name;
-            span.onclick = () => {
-                // Navigate back
-                currentBreadcrumbs = currentBreadcrumbs.slice(0, idx + 1);
-                currentParentId = bc.id;
-                renderFolderBrowser();
-            };
-            fbBreadcrumbs.appendChild(span);
-            if (idx < currentBreadcrumbs.length - 1) {
-                fbBreadcrumbs.appendChild(document.createTextNode(' > '));
-            }
-        });
-
-        try {
-            const res = await fetch('/api/drive/folders?parentId=' + currentParentId);
-            const data = await res.json();
-            fbList.innerHTML = '';
-
-            let displayFolders = data.success && data.folders ? data.folders : [];
-
-            if (displayFolders.length === 0) {
-                fbList.innerHTML = '<div style="padding: 10px; color: #777;">Dieser Ordner ist leer.</div>';
-            }
-
-            displayFolders.forEach(folder => {
-                const div = document.createElement('div');
-                div.className = 'fb-item';
-                div.style.justifyContent = 'space-between';
-                if (folder.id === selectedFbId) div.classList.add('active');
-                
-                const leftGroup = document.createElement('div');
-                leftGroup.style.display = 'flex';
-                leftGroup.style.alignItems = 'center';
-                leftGroup.style.gap = '10px';
-                leftGroup.style.flexGrow = '1';
-                
-                const icon = document.createElement('span');
-                icon.innerText = '📁';
-                const nameSpan = document.createElement('span');
-                nameSpan.innerText = folder.name;
-                
-                leftGroup.appendChild(icon);
-                leftGroup.appendChild(nameSpan);
-                
-                const rightGroup = document.createElement('button');
-                rightGroup.innerText = 'Öffnen';
-                rightGroup.style.padding = '4px 8px';
-                rightGroup.style.margin = '0';
-                rightGroup.style.fontSize = '12px';
-                rightGroup.style.backgroundColor = '#6c757d';
-                
-                div.appendChild(leftGroup);
-                div.appendChild(rightGroup);
-                
-                // Click on row to select
-                leftGroup.addEventListener('click', () => {
-                    document.querySelectorAll('.fb-item').forEach(el => el.classList.remove('active'));
-                    div.classList.add('active');
-                    selectedFbId = folder.id;
-                    selectedFbName = folder.name;
-                    fbCurrentSelection.innerText = folder.name;
-                    fbSelectBtn.disabled = false;
-                });
-
-                // Click on "Öffnen" navs into folder
-                rightGroup.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    currentParentId = folder.id;
-                    currentBreadcrumbs.push({ id: folder.id, name: folder.name });
-                    selectedFbId = null;
-                    selectedFbName = null;
-                    fbCurrentSelection.innerText = 'Kein Ordner';
-                    fbSelectBtn.disabled = true;
-                    renderFolderBrowser();
-                });
-                
-                // Keep double click for convenience
-                div.addEventListener('dblclick', () => {
-                    rightGroup.click();
-                });
-
-                fbList.appendChild(div);
-            });
-        } catch(err) {
-            fbList.innerHTML = '<div style="padding: 10px; color: red;">Fehler beim Laden.</div>';
-        }
-    }
-
-    fbSelectBtn.addEventListener('click', () => {
-        if (!selectedFbId) return;
-        if (currentBrowserTarget === 'raw') {
-            document.getElementById('raw-folder-display').value = selectedFbName;
-            document.getElementById('raw-folder-id').value = selectedFbId;
-        } else if (currentBrowserTarget === 'ai') {
-            document.getElementById('ai-folder-display').value = selectedFbName;
-            document.getElementById('ai-folder-id').value = selectedFbId;
-        }
-        fbModal.style.display = 'none';
-    });
-    // --- Folder Browser Logic end ---
-
-    document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
-        const rawFolderId = document.getElementById('raw-folder-id').value;
-        const aiFolderId = document.getElementById('ai-folder-id').value;
-        const aiCategories = document.getElementById('ai-categories-input').value.trim();
-        const aiCompany = document.getElementById('ai-company-input').value.trim();
-        const monitorDriveState = document.getElementById('monitor-drive-checkbox').checked;
-        
-        // Validierung für kommagetrennte Listen (keine leeren Einträge wie "A,,B" oder "A,")
-        const isValidCommaList = (str) => !str || str.split(',').every(s => s.trim().length > 0);
-        
-        if (!isValidCommaList(aiCategories)) {
-            alert('Bitte prüfen Sie die Kategorien: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!');
-            return;
-        }
-        
-        if (!isValidCommaList(aiCompany)) {
-            alert('Bitte prüfen Sie die Firmen: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!');
-            return;
-        }
-        
-        const res = await fetch('/api/settings', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                FOLDER_ID: rawFolderId,
-                FOLDER_ID_SORTED: aiFolderId,
-                AI_CATEGORIES: aiCategories,
-                AI_COMPANY: aiCompany,
-                MONITOR_DRIVE: monitorDriveState
-            })
-        });
-        
-        if (res.ok) {
-            alert('Einstellungen erfolgreich gespeichert!');
-            settingsModal.style.display = 'none';
-        } else {
-            alert('Fehler beim Speichern der Einstellungen.');
-        }
-    });
-
-    const dropArea = document.getElementById('drop-area');
-    const fileInput = document.getElementById('file-input');
-    const browseBtn = document.getElementById('browse-btn');
-    const statusDiv = document.getElementById('status');
-    const jobListContainer = document.getElementById('job-list-container');
-    const jobList = document.getElementById('job-list');
-    const clearJobsBtn = document.getElementById('clear-jobs-btn');
-    
-    let activeJobs = [];
-    let pollingInterval = null;
-
-    // We don't rely on localStorage anymore, we'll fetch state from server.
-    // Start polling immediately to get current global active jobs
-    startPolling();
-
-    // Drag & Drop Events
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, preventDefaults, false);
-    });
-
-    function preventDefaults(e) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
-
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropArea.addEventListener(eventName, () => dropArea.classList.add('hover'), false);
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropArea.addEventListener(eventName, () => dropArea.classList.remove('hover'), false);
-    });
-
-    dropArea.addEventListener('drop', handleDrop, false);
-
-    function handleDrop(e) {
-        let dt = e.dataTransfer;
-        let files = dt.files;
-        if (files.length > 0) uploadFiles(files);
-    }
-
-    browseBtn.addEventListener('click', () => fileInput.click());
-
-    fileInput.addEventListener('change', function() {
-        if (this.files.length > 0) uploadFiles(this.files);
-    });
-    
-    clearJobsBtn.addEventListener('click', async () => {
-        activeJobs = [];
-        jobListContainer.style.display = 'none';
-        statusDiv.innerHTML = '';
-        try { await fetch('/api/jobs', { method: 'DELETE' }); } catch(e) {}
-        renderJobs();
-    });
-
-    async function uploadFiles(files) {
-        let formData = new FormData();
-        for (let i = 0; i < files.length; i++) {
-            formData.append('files', files[i]);
-        }
-
-        statusDiv.innerHTML = 'Lade Dateien hoch... Bitte warten.';
-        statusDiv.className = 'loading';
-
-        try {
-            const response = await fetch('/api/upload', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                statusDiv.innerHTML = 'Dateien hochgeladen & in der Warteschlange!';
-                statusDiv.className = 'success';
-                
-                // Add new jobs to active jobs
-                const newJobs = data.jobs.map(job => ({
-                    id: job.id,
-                    originalName: job.originalName,
-                    status: job.status,
-                    result: job.result,
-                    error: job.error,
-                    uploadDate: job.uploadDate
-                }));
-                
-                jobListContainer.style.display = 'block';
-                startPolling();
-                
-                setTimeout(() => {
-                    if(statusDiv.className === 'success') {
-                        statusDiv.innerHTML = '';
-                    }
-                }, 3000);
-            } else {
-                statusDiv.innerHTML = 'Fehler: ' + (data.error || 'Unbekannter Fehler');
-                statusDiv.className = 'error';
-            }
-        } catch (error) {
-            statusDiv.innerHTML = 'Verbindungsfehler beim Hochladen aufgetreten.';
-            statusDiv.className = 'error';
-        }
-        
-        // Reset file input
-        fileInput.value = '';
-    }
-    
-    function startPolling() {
-        if (pollingInterval) return;
-        
-        const fetchStatus = async () => {
-            try {
-                const res = await fetch(`/api/status?ids=all`);
-                const data = await res.json();
-                
-                if (data.success) {
-                    let updated = false;
-                    
-                    activeJobs = data.statuses || [];
-                    
-                    if (activeJobs.length > 0) {
-                        jobListContainer.style.display = 'block';
-                    } else {
-                        jobListContainer.style.display = 'none';
-                    }
-                    
-                    renderJobs();
-
-                    // Stop polling dynamically if no jobs are pending on server
-                    const hasPendingServerJobs = activeJobs.some(j => j.status === 'pending' || j.status === 'processing');
-                    if (!hasPendingServerJobs && activeJobs.length === 0) {
-                        clearInterval(pollingInterval);
-                        pollingInterval = null;
-                    }
-                }
-            } catch (err) {
-                console.error("Polling error", err);
-            }
-        };
-
-        fetchStatus();
-        pollingInterval = setInterval(fetchStatus, 5000); // 5 Sekunden Polling
-    }
-    
-    function renderJobs() {
-        const countSpan = document.getElementById('active-job-count');
-        if (countSpan) {
-            const activeCount = activeJobs.filter(j => j.status === 'pending' || j.status === 'processing').length;
-            countSpan.innerHTML = activeCount > 0 ? `(${activeCount} in Arbeit)` : '';
-        }
-
-        // Offene Details-Boxen merken, damit sie beim Polling-Refresh nicht zuklappen
-        const openStates = {};
-        document.querySelectorAll('details.job-result').forEach(details => {
-            const id = details.getAttribute('data-job-id');
-            if (id && details.open) openStates[id] = true;
-        });
-
-        jobList.innerHTML = '';
-        if (activeJobs.length === 0) {
-            jobListContainer.style.display = 'none';
-            return;
-        }
-        
-        activeJobs.forEach(job => {
-            const div = document.createElement('div');
-            div.className = `job-item ${job.status}`;
-            
-            let statusText = job.status === 'pending' ? 'In der Warteschlange...' : 
-                             job.status === 'processing' ? 'Wird verarbeitet (KI)...' : 
-                             job.status === 'completed' ? 'Erfolgreich abgeschlossen' : 'Fehlergeschlagen';
-            
-            const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString('de-DE') : '-';
-
-            let resultHtml = '';
-            let previewHtml = '';
-
-            if (job.status === 'completed' && job.result) {
-                const tagsStr = (job.result.tags && Array.isArray(job.result.tags)) ? job.result.tags.join(', ') : '-';
-                const isInvoiceStr = job.result.isInvoice ? 'Ja' : 'Nein';
-                const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : '-';
-                
-                if (job.result.localThumbnail || job.result.thumbnailLink) {
-                    const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
-                    previewHtml = `<a href="${job.result.webViewLink || '#'}" target="_blank" style="position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none;">
-                        <img src="${imgSrc}" alt="PDF Vorschau" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: #fff; display: block; border: 1px solid #ddd;">
-                    </a>`;
-                }
-
-                let driveBtnHtml = '';
-                if (job.result.webViewLink) {
-                    driveBtnHtml = `<div style="text-align: right; margin-top: 10px;">
-                        <a href="${job.result.webViewLink}" target="_blank" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; background: #0d6efd; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 87.3 78" width="18" height="18" style="background: white; border-radius: 3px; padding: 2px;">
-                                <path d="M6.6 66.5l21.8-37.3h43.6L50.2 66.5H6.6z" fill="#FFC107"/>
-                                <path d="M41.6 6.5L19.8 43.9 8.9 25 30.7 6.5h10.9z" fill="#1976D2"/>
-                                <path d="M80.7 66.5L58.9 29.2 48 48l21.8 37.4h10.9z" fill="#4CAF50"/>
-                            </svg>
-                            Google Drive Link
-                        </a>
-                    </div>`;
-                }
-
-                resultHtml = `
-                    <details class="job-result" data-job-id="${job.id}" style="margin-top: 10px; width: 100%;" ${openStates[job.id] ? 'open' : ''}>
-                        <summary style="cursor: pointer; color: #007bff; font-weight: bold; margin-bottom: 0px; width: fit-content; padding-right: 15px;">Details</summary>
-                        <div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; border: 1px solid #eee; margin-right: -65px;">
-                            <strong style="color: #4caf50;">Dateiname:</strong> ${job.result.full}<br>
-                            <strong>Dokumentendatum:</strong> ${job.result.documentDate || '-'}<br>
-                            <strong>Unternehmen:</strong> ${job.result.company || '-'}<br>
-                            <strong>Kategorie:</strong> ${job.result.category || '-'}<br>
-                            <strong>Tags:</strong> ${tagsStr}<br>
-                            <strong>Rechnung:</strong> ${isInvoiceStr}<br>
-                            <br><strong style="color: #007bff;">Verarbeitungszeit:</strong> ${durationStr}<br>
-                            ${driveBtnHtml}
-                        </div>
-                    </details>
-                `;
-            } else if (job.status === 'error') {
-                resultHtml = `<div class="job-result error">${job.error || 'Unbekannter Fehler'}</div>`;
-            } else if (job.status === 'processing') {
-                let progressStyles = '';
-                if (job.processingStartedAt) {
-                    const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
-                    // 0 to 100% over 200 seconds, max out at 99% while processing
-                    const progress = Math.min((elapsedSec / 200) * 100, 99);
-                    progressStyles = `width: ${progress}%;`;
-                }
-                resultHtml = `
-                    <div class="progress-container">
-                        <div class="progress-bar" data-job-id="${job.id}" style="${progressStyles}"></div>
-                    </div>
-                `;
-            }
-            
-            div.innerHTML = `
-                <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
-                    <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
-                        <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                            <span style="word-break: break-word; line-height: 1.2;">${job.originalName}</span>
-                            <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
-                        </div>
-                        <div class="job-status" style="margin-top: 4px;">${statusText}</div>
-                    </div>
-                    ${resultHtml}
-                </div>
-                ${previewHtml}
-            `;
-            jobList.appendChild(div);
-        });
-    }
-    
-    // Update progress bars periodically based on time elapsed
-    setInterval(() => {
-        const bars = document.querySelectorAll('.progress-bar');
-        bars.forEach(bar => {
-            const jobId = bar.getAttribute('data-job-id');
-            const job = activeJobs.find(j => j.id === jobId);
-            
-            if (job && job.processingStartedAt && job.status === 'processing') {
-                const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
-                // 0 to 100% over 200 seconds, max out at 99% while processing
-                const progressProgress = Math.min((elapsedSec / 200) * 100, 99);
-                bar.style.width = progressProgress + '%';
-            }
-        });
-    }, 500);
-
-    // Register Service Worker for PWA
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js')
-                .then(registration => console.log('ServiceWorker registration successful'))
-                .catch(err => console.log('ServiceWorker registration failed: ', err));
-        });
-    }
-
-    // PWA Install Prompt Logic
-    let deferredPrompt;
-    const pwaBanner = document.getElementById('pwa-install-banner');
-    const pwaInstallBtn = document.getElementById('pwa-install-btn');
-    const pwaCloseBtn = document.getElementById('pwa-close-btn');
-
-    // Check if dismissed before
-    const isPwaDismissed = localStorage.getItem('pwaPromptDismissed') === 'true';
-    
-    // Check if app is already running in standalone mode (installed)
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-
-    window.addEventListener('beforeinstallprompt', (e) => {
-        // Prevent Chrome 67 and earlier from automatically showing the prompt
-        e.preventDefault();
-        
-        // Stash the event so it can be triggered later.
-        deferredPrompt = e;
-        
-        // Notify the user they can add to home screen if not dismissed
-        if (!isPwaDismissed && !isStandalone) {
-            pwaBanner.classList.add('show');
-        }
-    });
-
-    pwaInstallBtn.addEventListener('click', async () => {
-        // Hide the banner
-        pwaBanner.classList.remove('show');
-        localStorage.setItem('pwaPromptDismissed', 'true');
-        
-        if (deferredPrompt) {
-            // Show the install prompt
-            deferredPrompt.prompt();
-            // Wait for the user to respond to the prompt
-            const { outcome } = await deferredPrompt.userChoice;
-            console.log(`User response to the install prompt: ${outcome}`);
-            // We've used the prompt, and can't use it again, throw it away
-            deferredPrompt = null;
-        }
-    });
-
-    pwaCloseBtn.addEventListener('click', () => {
-        pwaBanner.classList.remove('show');
-        localStorage.setItem('pwaPromptDismissed', 'true');
-    });
-
-    window.addEventListener('appinstalled', () => {
-        // Hide banner if shown and clear deferred prompt
-        pwaBanner.classList.remove('show');
-        deferredPrompt = null;
-        console.log('PWA was installed');
-    });
-</script>
-
-</body>
+    <script src="/index.js"></script>
+  </body>
 </html>

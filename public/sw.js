@@ -16,6 +16,6 @@ self.addEventListener("fetch", (event) => {
     fetch(event.request).catch((err) => {
       // Can be expanded to cache offline files
       console.log("Resource fetch failed (offline mode)", err);
-    })
+    }),
   );
 });

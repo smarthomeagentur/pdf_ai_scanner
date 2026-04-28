@@ -1,0 +1,360 @@
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f8f9fa;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.main-content {
+  flex-grow: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+.container {
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  text-align: center;
+  width: 100%;
+  max-width: 600px;
+}
+#drop-area {
+  border: 2px dashed #007bff;
+  border-radius: 10px;
+  padding: 50px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+#drop-area.hover {
+  background-color: #e9f5ff;
+}
+#file-input {
+  display: none;
+}
+.action-button {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 15px;
+}
+.action-button:hover {
+  background: #0056b3;
+}
+#status {
+  margin-top: 20px;
+  font-weight: bold;
+}
+.loading {
+  color: #ff9800;
+}
+.success {
+  color: #4caf50;
+}
+.error {
+  color: #f44336;
+}
+#job-list {
+  margin-top: 20px;
+  text-align: left;
+}
+.job-item {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  border-left: 5px solid #ccc;
+  position: relative;
+}
+.job-item.pending {
+  border-left-color: #ccc;
+}
+.job-item.processing {
+  border-left-color: #ff9800;
+}
+.job-item.completed {
+  border-left-color: #4caf50;
+}
+.job-item.error {
+  border-left-color: #f44336;
+}
+
+.job-title {
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+.job-status {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 10px;
+}
+.job-result {
+  font-size: 13px;
+}
+
+.clear-btn {
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 10px;
+  font-size: 14px;
+  padding: 5px 10px;
+}
+.clear-btn:hover {
+  background: #c82333;
+}
+.progress-container {
+  width: 100%;
+  background-color: #e9ecef;
+  border-radius: 5px;
+  height: 10px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background-color: #ff9800;
+  width: 0%;
+  transition: width 0.5s linear;
+}
+
+/* Modal Styles */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 2000;
+  justify-content: center;
+  align-items: center;
+}
+.modal-content {
+  background: white;
+  padding: 25px;
+  border-radius: 10px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  text-align: left;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 10px;
+  margin-bottom: 15px;
+}
+.modal-header h3 {
+  margin: 0;
+}
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+  margin: 0;
+  padding: 0;
+  line-height: 1;
+}
+.setting-group {
+  margin-bottom: 15px;
+}
+.setting-group label {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+.setting-group select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  font-size: 14px;
+}
+.settings-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #555;
+  padding: 0;
+  cursor: pointer;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+.settings-btn:hover {
+  background: none;
+  color: #000;
+}
+#auth-status {
+  font-size: 14px;
+  margin-left: 10px;
+}
+
+.fb-item {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background-color 0.2s;
+}
+.fb-item:hover {
+  background-color: #f1f8ff;
+}
+.fb-item.active {
+  background-color: #e2f0ff;
+  font-weight: bold;
+}
+.fb-breadcrumb-item {
+  cursor: pointer;
+  text-decoration: underline;
+}
+.fb-breadcrumb-item:hover {
+  color: #0056b3;
+}
+
+/* Legacy Scanner Button */
+.live-scanner-btn {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #0d6efd;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: bold;
+  font-size: 1.1rem;
+  margin-bottom: 20px;
+  margin-top: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.live-scanner-btn:hover {
+  background: #0b5ed7;
+  color: white;
+}
+
+/* Mobile Adjustments */
+
+@media (max-width: 600px) {
+  body {
+    padding: 0;
+  }
+  .live-scanner-btn {
+    padding: 16px 20px;
+    font-size: 1.3rem; /* Make the button bigger */
+  }
+  .main-content {
+    align-items: flex-start; /* Start from top on mobile */
+    padding: 10px;
+  }
+  .container {
+    box-shadow: none;
+    border-radius: 0;
+    padding: 20px 15px;
+    min-height: 100vh; /* Fill entire screen */
+  }
+  #drop-area {
+    padding: 25px 15px; /* Make the file upload area smaller */
+  }
+  #drop-area p {
+    margin: 0;
+    font-size: 14px;
+  }
+  button#browse-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+  }
+}
+
+#pwa-install-banner {
+  display: none;
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 400px;
+  background: #0d6efd;
+  color: white;
+  padding: 12px 18px;
+  border-radius: 10px;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+#pwa-install-banner.show {
+  display: flex;
+  animation: slideUp 0.3s ease-out forwards;
+}
+@keyframes slideUp {
+  from {
+    transform: translate(-50%, 100%);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+.pwa-text {
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.pwa-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.pwa-btn {
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn-install {
+  padding: 8px 14px;
+  background: white;
+  color: #0d6efd;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+.btn-close-pwa {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 24px;
+  padding: 0;
+  line-height: 1;
+}

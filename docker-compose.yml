@@ -16,19 +16,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_123}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
     volumes:
-      # Hier werden dynamische Dateistorage-Daten, Logins, Jobs und Settings persistent abgelegt
-      - scanner-store:/app/store
-      # Geheimnis für den Google Drive Zugriff
-      - ./gdrive_secret.json:/app/gdrive_secret.json
-      # Verzeichnisse für temporäre Uploads/Downloads
-      - scanner-downloads:/app/downloads
-      # Persistente Konfigurationsdateien
-      # In Coolify werden diese automatisch ins "Persistent Storage" Panel bzw. "Configuration Files" übernommen, 
-      # wenn als Dockerfile/Nixpacks / Docker Compose deployt wird.
-      - ./gdrive_secret.json:/app/gdrive_secret.json
-      - ./token.json:/app/token.json
-      - ./settings.json:/app/settings.json
-
+      - scanner-store:/app/store # Hier werden dynamische Dateistorage-Daten, Logins, Jobs und Settings persistent abgelegt
+      - scanner-downloads:/app/downloads # Verzeichnisse für temporäre Uploads/Downloads
+      - ./gdrive_secret.json:/app/gdrive_secret.json # Geheimnis für den Google Drive Zugriff
 volumes:
   scanner-downloads:
   scanner-store:
