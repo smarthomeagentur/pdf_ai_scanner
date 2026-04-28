@@ -868,7 +868,7 @@
     function startPolling() {
         if (pollingInterval) return;
         
-        pollingInterval = setInterval(async () => {
+        const fetchStatus = async () => {
             try {
                 const res = await fetch(`/api/status?ids=all`);
                 const data = await res.json();
@@ -896,7 +896,10 @@
             } catch (err) {
                 console.error("Polling error", err);
             }
-        }, 5000); // 5 Sekunden Polling
+        };
+
+        fetchStatus();
+        pollingInterval = setInterval(fetchStatus, 5000); // 5 Sekunden Polling
     }
     
     function renderJobs() {
