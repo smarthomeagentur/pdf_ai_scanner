@@ -1286,8 +1286,9 @@ async function finishScanProcess(sendToAI) {
   // Non-blocking Toast als Feedback
   const toastId = "toast-" + Date.now();
   const toastHtml = `
-            <div id="${toastId}" class="position-fixed start-50 translate-middle-x p-3 bg-dark text-white rounded shadow text-center" style="top: 75px; z-index: 9999; font-weight: bold; width: max-content; max-width: 90vw;">
-                verarbeite ${scanPagesArray.length} Seite(n)...
+            <div id="${toastId}" class="position-fixed start-50 translate-middle-x px-3 py-2 text-center" 
+                style="top: 75px; z-index: 9999; width: max-content; max-width: 90vw; background: var(--md-sys-color-surface-container-high, #E7E0EC); color: var(--md-sys-color-on-surface, #1C1B1F); border-radius: var(--md-sys-shape-corner-extra-large, 28px); box-shadow: var(--md-sys-elevation-2); font-size: 14px; font-weight: 500; transition: all 0.3s ease;">
+                🔄 verarbeite ${scanPagesArray.length} Seite(n)...
             </div>
         `;
   document.body.insertAdjacentHTML("beforeend", toastHtml);
@@ -1331,31 +1332,45 @@ async function finishScanProcess(sendToAI) {
         try {
           const jobData = JSON.parse(autoJobHeader);
           // Backend verarbeitet den Job bereits und index.html empfängt es via Poll
-          toastEl.innerText = "✅ KI Pipeline gestartet! Siehe Startseite.";
+          toastEl.innerText = "✅ KI Pipeline gestartet!";
         } catch (e) {
-          toastEl.innerText = "❌ KI Upload Fehler beim Lesen der Server-Daten.";
-          toastEl.classList.replace("bg-dark", "bg-danger");
+          toastEl.innerText = "❌ Fehler bei Server-Daten";
+          toastEl.style.background = "#FFDAD6";
+          toastEl.style.color = "#410002";
         }
       } else {
-        toastEl.innerText = "✅ Dokument verarbeitet und lokal gesichert!";
+        toastEl.innerText = "✅ Lokal gesichert!";
       }
 
-      toastEl.classList.replace("bg-dark", "bg-success");
+      toastEl.style.background = "#C4EED0";
+      toastEl.style.color = "#003914";
       loadSavedScans();
 
-      setTimeout(() => toastEl.remove(), 4000);
+      setTimeout(() => {
+        toastEl.style.opacity = "0";
+        setTimeout(() => toastEl.remove(), 300);
+      }, 3000);
     } else {
       const errorData = await response.json();
-      toastEl.innerText = "❌ Fehler: " + (errorData.error || "Unbekannt");
-      toastEl.classList.replace("bg-dark", "bg-danger");
-      setTimeout(() => toastEl.remove(), 6000);
+      toastEl.innerText = "❌ " + (errorData.error || "Fehler");
+      toastEl.style.background = "#FFDAD6";
+      toastEl.style.color = "#410002";
+      setTimeout(() => {
+        toastEl.style.opacity = "0";
+        setTimeout(() => toastEl.remove(), 300);
+      }, 4000);
     }
   } catch (error) {
     const toastEl = document.getElementById(toastId);
+    // Nur den Fehler-Toast anzeigen, wenn er existiert (also wenn nicht schon geschlossen)
     if (toastEl) {
-      toastEl.innerText = "❌ Fehler: Netzwerkfehler / Timeout";
-      toastEl.classList.replace("bg-dark", "bg-danger");
-      setTimeout(() => toastEl.remove(), 6000);
+      toastEl.innerText = "☁️ Im Hintergrund verarbeitet"; // Netzwerkfehler ist irreführend bei schnellem Verlassen der Seite (Fetch Aborting)
+      toastEl.style.background = "#E7E0EC";
+      toastEl.style.color = "#1C1B1F";
+      setTimeout(() => {
+        toastEl.style.opacity = "0";
+        setTimeout(() => toastEl.remove(), 300);
+      }, 3000);
     }
   }
 }

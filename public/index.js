@@ -31,8 +31,7 @@ openSettingsBtn.addEventListener("click", async () => {
     const data = await res.json();
     if (data.success && data.clientId) {
       googleClientId = data.clientId;
-      document.getElementById("auth-status").innerText =
-        "Bereit zur Authentifizierung";
+      document.getElementById("auth-status").innerText = "Bereit zur Authentifizierung";
       document.getElementById("auth-btn").style.display = "inline-block";
 
       // Initialize Google Auth Implicit flow client
@@ -42,21 +41,18 @@ openSettingsBtn.addEventListener("click", async () => {
         ux_mode: "popup",
         callback: async (response) => {
           if (response.code) {
-            document.getElementById("auth-status").innerText =
-              "Speichere Code am Server...";
+            document.getElementById("auth-status").innerText = "Speichere Code am Server...";
             const authRes = await fetch("/api/auth/code", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ code: response.code }),
             });
             if (authRes.ok) {
-              document.getElementById("auth-status").innerText =
-                "Erfolgreich verbunden!";
+              document.getElementById("auth-status").innerText = "Erfolgreich verbunden!";
               document.getElementById("auth-btn").style.display = "none";
               loadFolders();
             } else {
-              document.getElementById("auth-status").innerText =
-                "Fehler bei der Verbindung.";
+              document.getElementById("auth-status").innerText = "Fehler bei der Verbindung.";
             }
           }
         },
@@ -64,12 +60,10 @@ openSettingsBtn.addEventListener("click", async () => {
 
       loadFolders(); // Try loading folders (if already authenticated)
     } else {
-      document.getElementById("auth-status").innerText =
-        "Fehler: Keine Google API Config auf dem Server gefunden.";
+      document.getElementById("auth-status").innerText = "Fehler: Keine Google API Config auf dem Server gefunden.";
     }
   } catch (err) {
-    document.getElementById("auth-status").innerText =
-      "Fehler beim Laden der Konfiguration.";
+    document.getElementById("auth-status").innerText = "Fehler beim Laden der Konfiguration.";
   }
 });
 
@@ -83,15 +77,13 @@ document.getElementById("auth-btn").addEventListener("click", () => {
 
 async function loadFolders() {
   document.getElementById("folder-settings-container").style.display = "block";
-  document.getElementById("ai-folder-settings-container").style.display =
-    "block";
+  document.getElementById("ai-folder-settings-container").style.display = "block";
 
   try {
     const res = await fetch("/api/drive/folders?parentId=root");
     const data = await res.json();
     if (data.success) {
-      document.getElementById("auth-status").innerText =
-        "Google Drive verbunden";
+      document.getElementById("auth-status").innerText = "Google Drive verbunden";
       document.getElementById("auth-btn").innerText = "Neu Verbinden";
       document.getElementById("auth-btn").style.display = "inline-block";
 
@@ -124,40 +116,27 @@ async function loadFolders() {
         }
 
         if (window.currentSettings.FOLDER_ID) {
-          fetchFolderName(
-            window.currentSettings.FOLDER_ID,
-            rawDisplay,
-            document.getElementById("raw-folder-id"),
-          );
+          fetchFolderName(window.currentSettings.FOLDER_ID, rawDisplay, document.getElementById("raw-folder-id"));
         }
         if (window.currentSettings.FOLDER_ID_SORTED) {
-          fetchFolderName(
-            window.currentSettings.FOLDER_ID_SORTED,
-            aiDisplay,
-            document.getElementById("ai-folder-id"),
-          );
+          fetchFolderName(window.currentSettings.FOLDER_ID_SORTED, aiDisplay, document.getElementById("ai-folder-id"));
         }
 
         document.getElementById("ai-categories-input").value =
           window.currentSettings.AI_CATEGORIES ||
           "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
         document.getElementById("ai-company-input").value =
-          window.currentSettings.AI_COMPANY ||
-          "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
-        document.getElementById("monitor-drive-checkbox").checked =
-          window.currentSettings.MONITOR_DRIVE || false;
+          window.currentSettings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
+        document.getElementById("monitor-drive-checkbox").checked = window.currentSettings.MONITOR_DRIVE || false;
       }
 
-      document.getElementById("ai-prompt-settings-container").style.display =
-        "block";
+      document.getElementById("ai-prompt-settings-container").style.display = "block";
       document.getElementById("saveSettingsBtn").style.display = "block";
     } else {
-      document.getElementById("auth-status").innerText =
-        "Nicht authentifiziert.";
+      document.getElementById("auth-status").innerText = "Nicht authentifiziert.";
     }
   } catch (e) {
-    document.getElementById("auth-status").innerText =
-      "Fehler beim Laden der Ordner.";
+    document.getElementById("auth-status").innerText = "Fehler beim Laden der Ordner.";
   }
 }
 
@@ -168,15 +147,9 @@ const fbBreadcrumbs = document.getElementById("fb-breadcrumbs");
 const fbSelectBtn = document.getElementById("fb-select-btn");
 const fbCurrentSelection = document.getElementById("fb-current-selection");
 
-document
-  .getElementById("raw-folder-browse")
-  .addEventListener("click", () => openFolderBrowser("raw"));
-document
-  .getElementById("ai-folder-browse")
-  .addEventListener("click", () => openFolderBrowser("ai"));
-document
-  .getElementById("closeFolderBrowserBtn")
-  .addEventListener("click", () => (fbModal.style.display = "none"));
+document.getElementById("raw-folder-browse").addEventListener("click", () => openFolderBrowser("raw"));
+document.getElementById("ai-folder-browse").addEventListener("click", () => openFolderBrowser("ai"));
+document.getElementById("closeFolderBrowserBtn").addEventListener("click", () => (fbModal.style.display = "none"));
 
 function openFolderBrowser(target) {
   currentBrowserTarget = target;
@@ -191,8 +164,7 @@ function openFolderBrowser(target) {
 }
 
 async function renderFolderBrowser() {
-  fbList.innerHTML =
-    '<div style="padding: 10px; color: #777;">Lade Ordner...</div>';
+  fbList.innerHTML = '<div style="padding: 10px; color: #777;">Lade Ordner...</div>';
   fbBreadcrumbs.innerHTML = "";
   currentBreadcrumbs.forEach((bc, idx) => {
     const span = document.createElement("span");
@@ -218,8 +190,7 @@ async function renderFolderBrowser() {
     let displayFolders = data.success && data.folders ? data.folders : [];
 
     if (displayFolders.length === 0) {
-      fbList.innerHTML =
-        '<div style="padding: 10px; color: #777;">Dieser Ordner ist leer.</div>';
+      fbList.innerHTML = '<div style="padding: 10px; color: #777;">Dieser Ordner ist leer.</div>';
     }
 
     displayFolders.forEach((folder) => {
@@ -254,9 +225,7 @@ async function renderFolderBrowser() {
 
       // Click on row to select
       leftGroup.addEventListener("click", () => {
-        document
-          .querySelectorAll(".fb-item")
-          .forEach((el) => el.classList.remove("active"));
+        document.querySelectorAll(".fb-item").forEach((el) => el.classList.remove("active"));
         div.classList.add("active");
         selectedFbId = folder.id;
         selectedFbName = folder.name;
@@ -284,8 +253,7 @@ async function renderFolderBrowser() {
       fbList.appendChild(div);
     });
   } catch (err) {
-    fbList.innerHTML =
-      '<div style="padding: 10px; color: red;">Fehler beim Laden.</div>';
+    fbList.innerHTML = '<div style="padding: 10px; color: red;">Fehler beim Laden.</div>';
   }
 }
 
@@ -302,56 +270,45 @@ fbSelectBtn.addEventListener("click", () => {
 });
 // --- Folder Browser Logic end ---
 
-document
-  .getElementById("saveSettingsBtn")
-  .addEventListener("click", async () => {
-    const rawFolderId = document.getElementById("raw-folder-id").value;
-    const aiFolderId = document.getElementById("ai-folder-id").value;
-    const aiCategories = document
-      .getElementById("ai-categories-input")
-      .value.trim();
-    const aiCompany = document.getElementById("ai-company-input").value.trim();
-    const monitorDriveState = document.getElementById(
-      "monitor-drive-checkbox",
-    ).checked;
+document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
+  const rawFolderId = document.getElementById("raw-folder-id").value;
+  const aiFolderId = document.getElementById("ai-folder-id").value;
+  const aiCategories = document.getElementById("ai-categories-input").value.trim();
+  const aiCompany = document.getElementById("ai-company-input").value.trim();
+  const monitorDriveState = document.getElementById("monitor-drive-checkbox").checked;
 
-    // Validierung für kommagetrennte Listen (keine leeren Einträge wie "A,,B" oder "A,")
-    const isValidCommaList = (str) =>
-      !str || str.split(",").every((s) => s.trim().length > 0);
+  // Validierung für kommagetrennte Listen (keine leeren Einträge wie "A,,B" oder "A,")
+  const isValidCommaList = (str) => !str || str.split(",").every((s) => s.trim().length > 0);
 
-    if (!isValidCommaList(aiCategories)) {
-      alert(
-        "Bitte prüfen Sie die Kategorien: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!",
-      );
-      return;
-    }
+  if (!isValidCommaList(aiCategories)) {
+    alert("Bitte prüfen Sie die Kategorien: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!");
+    return;
+  }
 
-    if (!isValidCommaList(aiCompany)) {
-      alert(
-        "Bitte prüfen Sie die Firmen: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!",
-      );
-      return;
-    }
+  if (!isValidCommaList(aiCompany)) {
+    alert("Bitte prüfen Sie die Firmen: Liste muss kommagetrennt sein und darf keine leeren Elemente aufweisen!");
+    return;
+  }
 
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        FOLDER_ID: rawFolderId,
-        FOLDER_ID_SORTED: aiFolderId,
-        AI_CATEGORIES: aiCategories,
-        AI_COMPANY: aiCompany,
-        MONITOR_DRIVE: monitorDriveState,
-      }),
-    });
-
-    if (res.ok) {
-      alert("Einstellungen erfolgreich gespeichert!");
-      settingsModal.style.display = "none";
-    } else {
-      alert("Fehler beim Speichern der Einstellungen.");
-    }
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      FOLDER_ID: rawFolderId,
+      FOLDER_ID_SORTED: aiFolderId,
+      AI_CATEGORIES: aiCategories,
+      AI_COMPANY: aiCompany,
+      MONITOR_DRIVE: monitorDriveState,
+    }),
   });
+
+  if (res.ok) {
+    alert("Einstellungen erfolgreich gespeichert!");
+    settingsModal.style.display = "none";
+  } else {
+    alert("Fehler beim Speichern der Einstellungen.");
+  }
+});
 
 const dropArea = document.getElementById("drop-area");
 const fileInput = document.getElementById("file-input");
@@ -379,19 +336,11 @@ function preventDefaults(e) {
 }
 
 ["dragenter", "dragover"].forEach((eventName) => {
-  dropArea.addEventListener(
-    eventName,
-    () => dropArea.classList.add("hover"),
-    false,
-  );
+  dropArea.addEventListener(eventName, () => dropArea.classList.add("hover"), false);
 });
 
 ["dragleave", "drop"].forEach((eventName) => {
-  dropArea.addEventListener(
-    eventName,
-    () => dropArea.classList.remove("hover"),
-    false,
-  );
+  dropArea.addEventListener(eventName, () => dropArea.classList.remove("hover"), false);
 });
 
 dropArea.addEventListener("drop", handleDrop, false);
@@ -492,9 +441,7 @@ function startPolling() {
         renderJobs();
 
         // Stop polling dynamically if no jobs are pending on server
-        const hasPendingServerJobs = activeJobs.some(
-          (j) => j.status === "pending" || j.status === "processing",
-        );
+        const hasPendingServerJobs = activeJobs.some((j) => j.status === "pending" || j.status === "processing");
         if (!hasPendingServerJobs && activeJobs.length === 0) {
           clearInterval(pollingInterval);
           pollingInterval = null;
@@ -512,9 +459,7 @@ function startPolling() {
 function renderJobs() {
   const countSpan = document.getElementById("active-job-count");
   if (countSpan) {
-    const activeCount = activeJobs.filter(
-      (j) => j.status === "pending" || j.status === "processing",
-    ).length;
+    const activeCount = activeJobs.filter((j) => j.status === "pending" || j.status === "processing").length;
     countSpan.innerHTML = activeCount > 0 ? `(${activeCount} in Arbeit)` : "";
   }
 
@@ -539,61 +484,53 @@ function renderJobs() {
       job.status === "pending"
         ? "In der Warteschlange..."
         : job.status === "processing"
-          ? "Wird verarbeitet (KI)..."
-          : job.status === "completed"
-            ? "Erfolgreich abgeschlossen"
-            : "Fehlergeschlagen";
+        ? "Wird verarbeitet (KI)..."
+        : job.status === "completed"
+        ? "Erfolgreich abgeschlossen"
+        : "Fehlergeschlagen";
 
-    const displayDate = job.uploadDate
-      ? new Date(job.uploadDate).toLocaleString("de-DE")
-      : "-";
+    const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
 
     let resultHtml = "";
     let previewHtml = "";
 
     if (job.status === "completed" && job.result) {
-      const tagsStr =
-        job.result.tags && Array.isArray(job.result.tags)
-          ? job.result.tags.join(", ")
-          : "-";
+      const tagsStr = job.result.tags && Array.isArray(job.result.tags) ? job.result.tags.join(", ") : "-";
       const isInvoiceStr = job.result.isInvoice ? "Ja" : "Nein";
-      const durationStr = job.result.duration
-        ? `${job.result.duration} Sekunden`
-        : "-";
+      const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : "-";
 
       if (job.result.localThumbnail || job.result.thumbnailLink) {
         const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
-        previewHtml = `<a href="${job.result.webViewLink || "#"}" target="_blank" style="position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none;">
+        previewHtml = `<a href="${
+          job.result.webViewLink || "#"
+        }" target="_blank" style="position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none;">
                         <img src="${imgSrc}" alt="PDF Vorschau" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: #fff; display: block; border: 1px solid #ddd;">
                     </a>`;
       }
 
-      let driveBtnHtml = "";
-      if (job.result.webViewLink) {
-        driveBtnHtml = `<div style="text-align: right; margin-top: 10px;">
-                        <a href="${job.result.webViewLink}" target="_blank" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; background: #0d6efd; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 87.3 78" width="18" height="18" style="background: white; border-radius: 3px; padding: 2px;">
-                                <path d="M6.6 66.5l21.8-37.3h43.6L50.2 66.5H6.6z" fill="#FFC107"/>
-                                <path d="M41.6 6.5L19.8 43.9 8.9 25 30.7 6.5h10.9z" fill="#1976D2"/>
-                                <path d="M80.7 66.5L58.9 29.2 48 48l21.8 37.4h10.9z" fill="#4CAF50"/>
-                            </svg>
-                            Google Drive Link
-                        </a>
-                    </div>`;
-      }
-
       resultHtml = `
-                    <details class="job-result" data-job-id="${job.id}" style="margin-top: 10px; width: 100%;" ${openStates[job.id] ? "open" : ""}>
-                        <summary style="cursor: pointer; color: #007bff; font-weight: bold; margin-bottom: 0px; width: fit-content; padding-right: 15px;">Details</summary>
-                        <div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; border: 1px solid #eee; margin-right: -65px;">
-                            <strong style="color: #4caf50;">Dateiname:</strong> ${job.result.full}<br>
-                            <strong>Dokumentendatum:</strong> ${job.result.documentDate || "-"}<br>
-                            <strong>Unternehmen:</strong> ${job.result.company || "-"}<br>
-                            <strong>Kategorie:</strong> ${job.result.category || "-"}<br>
-                            <strong>Tags:</strong> ${tagsStr}<br>
-                            <strong>Rechnung:</strong> ${isInvoiceStr}<br>
-                            <br><strong style="color: #007bff;">Verarbeitungszeit:</strong> ${durationStr}<br>
-                            ${driveBtnHtml}
+                    <details class="job-result" data-job-id="${
+                      job.id
+                    }" style="margin-top: 10px; width: 100%; transition: all 0.3s;" ${openStates[job.id] ? "open" : ""}>
+                        <summary style="cursor: pointer; color: var(--md-sys-color-primary, #1A1A1A); font-weight: 500; font-size: 14px; margin-bottom: 0px; width: fit-content; padding: 4px 12px; border-radius: 12px; background: var(--md-sys-color-surface-container-high, #E7E0EC); display: inline-flex; align-items: center; gap: 4px; user-select: none;">
+                          <span class="material-symbols-outlined" style="font-size: 16px;">info</span> Details
+                        </summary>
+                        <div style="margin-top: 12px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dateiname:</strong> ${
+                              job.result.full
+                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dokumentendatum:</strong> ${
+                              job.result.documentDate || "-"
+                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> ${
+                              job.result.company || "-"
+                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Kategorie:</strong> ${
+                              job.result.category || "-"
+                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${tagsStr}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
+                            <br><strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
                         </div>
                     </details>
                 `;
@@ -652,9 +589,7 @@ if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")
-      .then((registration) =>
-        console.log("ServiceWorker registration successful"),
-      )
+      .then((registration) => console.log("ServiceWorker registration successful"))
       .catch((err) => console.log("ServiceWorker registration failed: ", err));
   });
 }
@@ -669,9 +604,7 @@ const pwaCloseBtn = document.getElementById("pwa-close-btn");
 const isPwaDismissed = localStorage.getItem("pwaPromptDismissed") === "true";
 
 // Check if app is already running in standalone mode (installed)
-const isStandalone =
-  window.matchMedia("(display-mode: standalone)").matches ||
-  navigator.standalone;
+const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
 
 window.addEventListener("beforeinstallprompt", (e) => {
   // Prevent Chrome 67 and earlier from automatically showing the prompt

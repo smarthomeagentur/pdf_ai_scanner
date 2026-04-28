@@ -1,28 +1,38 @@
 body {
   font-family: Arial, sans-serif;
-  background-color: #f8f9fa;
+  background-color: #f8f9fa; /* Hintergrund der Seite */
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* Globaler Wrapper, der Header und Inhalt zusammenhält */
+.app-wrapper {
+  max-width: 800px;
+  margin: 0 auto;
+  background-color: var(--md-sys-color-surface);
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  box-shadow: var(--md-sys-elevation-1);
 }
+
 .main-content {
   flex-grow: 1;
   display: flex;
   justify-content: center;
-  align-items: center;
-  padding: 20px;
+  align-items: stretch;
+  padding: 0;
 }
 .container {
-  background: white;
-  padding: 30px;
-  border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  background: var(--md-sys-color-background) !important;
+  padding: 20px 15px; /* Wieder seitlichen Rand hinzugefügt, passend zur mobilen Ansicht */
+  border-radius: 0 !important;
+  box-shadow: none !important;
   text-align: center;
   width: 100%;
-  max-width: 600px;
+  max-width: 800px; /* Passt nun zum Scanner (800px) */
+  margin: 0 auto;
 }
 #drop-area {
   border: 2px dashed #007bff;

@@ -79,10 +79,23 @@ body {
 }
 
 /* Standard MD3 Card/Container styling */
-.container, .modal-content, .bg-white, #manual-review-section {
+.modal-content, .bg-white, #manual-review-section {
   background-color: var(--md-sys-color-surface) !important;
   border-radius: var(--md-sys-shape-corner-large) !important;
   box-shadow: var(--md-sys-elevation-1) !important;
+  border: none !important;
+}
+
+.container:not(.main-content > .container) {
+  background-color: var(--md-sys-color-surface) !important;
+  border-radius: var(--md-sys-shape-corner-large) !important;
+  box-shadow: var(--md-sys-elevation-1) !important;
+  border: none !important;
+}
+
+.sticky-top {
+  border-radius: 0 !important;
+  box-shadow: var(--md-sys-elevation-2) !important;
   border: none !important;
 }
 
