@@ -198,6 +198,7 @@
         class="bg-white p-3 mt-auto"
         style="
           display: none;
+          position: relative;
           width: 100%;
           box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.1);
           z-index: 1030;
@@ -207,6 +208,16 @@
           flex-grow: 1;
         "
       >
+        <!-- Close button (Abbrechen) oben rechts absolut positioniert im Review-Panel -->
+        <button
+          id="cancelReviewCrossBtn"
+          class="btn btn-sm btn-outline-secondary position-absolute"
+          style="top: 15px; right: 15px; padding: 4px 10px; border-radius: 50%; font-weight: bold; z-index: 1040;"
+          title="Schließen"
+        >
+          ✕
+        </button>
+
         <div
           style="
             position: relative;
@@ -310,16 +321,6 @@
             padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 60px);
           "
         >
-          <!-- Close button (Abbrechen) oben rechts absolut positioniert über der Button-Zeile -->
-          <button
-            id="cancelReviewCrossBtn"
-            class="btn btn-sm btn-outline-secondary position-absolute"
-            style="top: -45px; right: 0; padding: 4px 10px; border-radius: 50%; font-weight: bold;"
-            title="Schließen"
-          >
-            ✕
-          </button>
-
           <button
             class="btn btn-secondary py-2 shadow-sm text-white fw-bold"
             id="downloadOnlyBtn"
@@ -332,7 +333,7 @@
             style="flex: 2; font-size: 1.05em"
             id="finishScanBtn"
           >
-            Abschließen (KI)
+            Verarbeiten
           </button>
         </div>
       </div>

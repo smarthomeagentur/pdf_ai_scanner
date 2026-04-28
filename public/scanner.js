@@ -596,7 +596,8 @@ captureBtn.addEventListener("click", async () => {
     // Die bereits gespeicherten relativen frozenCorners stimmen hierbei noch, weil das Bild wie vom user gesehen exakt beschnitten wird.
   }
 
-  // Falls absolut kein Dokument gefunden
+    let hasRealCorners = !!frozenCorners;
+    // Falls absolut kein Dokument gefunden
   if (!frozenCorners) {
     frozenCorners = [
       { x: 0.1, y: 0.1 },
@@ -699,15 +700,28 @@ captureBtn.addEventListener("click", async () => {
         x: c.x / processWidth,
         y: c.y / processHeight,
       }));
-      console.log("Erfolgreicher Post-Scan!");
+      hasRealCorners = true;
+        console.log("Erfolgreicher Post-Scan!");
     }
   } catch (e) {
     console.error("Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:", e);
-    frozenCorners = null; // fallback to force blank detection
+  }
+
+  // Wenn am Ende immer noch keine gültigen Ecken vorliegen
+    // bestCntRaw is block scoped, handle it here safely
+    // hasRealCorners is already managed above
+  if (!frozenCorners) {
+    hasRealCorners = false;
+    frozenCorners = [
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+      { x: 0.1, y: 0.9 },
+    ];
   }
 
   // Zeige Editier-Ansicht ("Manual Review")
-  showManualReview(canvasHighRes, frozenCorners);
+  showManualReview(canvasHighRes, frozenCorners, hasRealCorners);
 });
 
 let scanPagesArray = []; // Speichert die Blobs, wenn "Nächste Seite scannen" gedrückt wurde
@@ -804,7 +818,7 @@ function updatePreviewFilter() {
   );
 }
 
-function showManualReview(highResCanvas, relativeCorners) {
+function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true) {
   // Pausiere Kameraanzeige
   document.getElementById("video-wrapper").style.display = "none";
   document.getElementById("captureBtn").style.display = "none";
@@ -862,9 +876,15 @@ function showManualReview(highResCanvas, relativeCorners) {
     y: c.y * highResCanvas.height - reviewState.cropY,
   }));
 
-  // Sync preview combo box with global config and apply Backend Preview Image
+  // Sync preview combo box with global config
   document.getElementById("previewAlgorithmSelect").value = document.getElementById("algorithmSelect").value;
-  updatePreviewFilter();
+
+  // Vermeide den Preview-Lader, falls ohnehin keine klaren Kanten erkannt wurden
+  if (hasRealCorners) {
+    updatePreviewFilter();
+  } else {
+    document.getElementById("previewLoadingText").style.display = "none";
+  }
 
   drawReviewOverlay();
 }
@@ -1133,17 +1153,6 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
       alert("Auf diesem Foto konnte die KI kein eindeutiges Dokument erkennen. Bitte justiere die Kanten manuell.");
     }
   }, 50);
-});
-
-// Klick auf "Abbrechen"
-document.getElementById("cancelReviewBtn").addEventListener("click", () => {
-  document.getElementById("manual-review-section").style.display = "none";
-  document.getElementById("filterMenu").style.display = "block";
-  document.getElementById("video-wrapper").style.display = "flex";
-  document.getElementById("captureBtn").style.display = "block";
-  document.getElementById("captureBtn").disabled = false;
-
-  scanPagesArray = []; // Alle gesammelten Seiten resetten
 });
 
 // Event Listener für den neuen Schließen-Button am Panel-Rand
