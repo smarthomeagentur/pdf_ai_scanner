@@ -1,8 +1,12 @@
 // Prevent pdf-lib font warnings
 const originalConsoleWarn = console.warn;
-console.warn = (...args) => { if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleWarn(...args); };
+console.warn = (...args) => {
+  if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleWarn(...args);
+};
 const originalConsoleLog = console.log;
-console.log = (...args) => { if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleLog(...args); };
+console.log = (...args) => {
+  if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleLog(...args);
+};
 
 const fs = require("fs");
 const path = require("path");
@@ -33,14 +37,14 @@ const storeFolder = path.join(process.cwd(), "store");
 if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
 
 // Move old dynamic files to store/ if they exist in root
-["settings.json", "jobs.json", "token.json"].forEach(f => {
+["settings.json", "jobs.json", "token.json"].forEach((f) => {
   const oldPath = path.join(process.cwd(), f);
   const newPath = path.join(storeFolder, f);
   if (fs.existsSync(oldPath) && !fs.existsSync(newPath)) {
-    try { 
+    try {
       fs.renameSync(oldPath, newPath);
       console.log(`Moved ${f} to store/`);
-    } catch(e) {}
+    } catch (e) {}
   }
 });
 
@@ -57,7 +61,8 @@ const appSettings = {
   FOLDER_ID_SORTED: process.env.DRIVE_FOLDER_ID_SORTED,
   MONITOR_DRIVE: false,
   AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
-  AI_CATEGORIES: "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
+  AI_CATEGORIES:
+    "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
 };
 
 if (fs.existsSync(SETTINGS_FILE)) {
@@ -127,6 +132,11 @@ app.post("/api/settings", express.json(), async (req, res) => {
   });
   await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
   res.json({ success: true });
+
+  if (appSettings.MONITOR_DRIVE) {
+    // Starte Überwachung asynchron sofort nach dem Speichern
+    checkDriveForNewFiles().catch(console.error);
+  }
 });
 
 // Drive Auth Workflow
@@ -134,7 +144,11 @@ app.post("/api/auth/code", express.json(), async (req, res) => {
   try {
     const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH));
     const key = keys.installed || keys.web;
-    const oauth2Client = new (require("googleapis").google.auth.OAuth2)(key.client_id, key.client_secret, "postmessage");
+    const oauth2Client = new (require("googleapis").google.auth.OAuth2)(
+      key.client_id,
+      key.client_secret,
+      "postmessage"
+    );
     const { tokens } = await oauth2Client.getToken(req.body.code);
 
     const payload = JSON.stringify({
@@ -162,7 +176,9 @@ app.get("/api/drive/folders", async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.list({
-      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${req.query.parentId || "root"}' in parents`,
+      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${
+        req.query.parentId || "root"
+      }' in parents`,
       fields: "files(id, name, parents)",
       orderBy: "name",
       pageSize: 1000,
@@ -199,7 +215,9 @@ function loadJobs() {
   } catch (e) {}
 }
 function saveJobs() {
-  try { fs.writeFileSync(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles })); } catch (e) {}
+  try {
+    fs.writeFileSync(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles }));
+  } catch (e) {}
 }
 loadJobs();
 
@@ -219,7 +237,9 @@ async function processQueue() {
 
     try {
       console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
-      let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID) ? appSettings.FOLDER_ID : await driveApi.findFolderId(appSettings.FOLDER_ID);
+      let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
+        ? appSettings.FOLDER_ID
+        : await driveApi.findFolderId(appSettings.FOLDER_ID);
 
       const aiStartTime = Date.now();
       const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
@@ -228,8 +248,10 @@ async function processQueue() {
       if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
 
       let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
-      let driveFile = appSettings.FOLDER_ID_SORTED ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug) : null;
-      
+      let driveFile = appSettings.FOLDER_ID_SORTED
+        ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
+        : null;
+
       if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
       driveFile = driveFile || defaultDriveFile;
 
@@ -244,7 +266,9 @@ async function processQueue() {
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
       let localThumbBase64 = null;
       if (fs.existsSync(jpgPath)) {
-        try { localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`; } catch (e) {}
+        try {
+          localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
+        } catch (e) {}
         await fs.promises.unlink(jpgPath).catch(() => {});
       }
 
@@ -275,12 +299,14 @@ async function checkDriveForNewFiles() {
 
   try {
     const drive = await driveApi.getClient();
-    let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID) ? appSettings.FOLDER_ID : await driveApi.findFolderId(appSettings.FOLDER_ID);
+    let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
+      ? appSettings.FOLDER_ID
+      : await driveApi.findFolderId(appSettings.FOLDER_ID);
     if (!folderId) return;
 
     let nextPageToken = null;
     let newFound = 0;
-    
+
     do {
       const res = await drive.files.list({
         q: `mimeType != 'application/vnd.google-apps.folder' and trashed=false and '${folderId}' in parents`,
@@ -300,7 +326,15 @@ async function checkDriveForNewFiles() {
             await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
 
             const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
-            uploadJobs[jobId] = { id: jobId, originalName: file.name, status: "pending", result: null, error: null, filePath: localPath, uploadDate: new Date().toISOString() };
+            uploadJobs[jobId] = {
+              id: jobId,
+              originalName: file.name,
+              status: "pending",
+              result: null,
+              error: null,
+              filePath: localPath,
+              uploadDate: new Date().toISOString(),
+            };
             uploadQueue.push(jobId);
             newFound++;
             saveJobs();
@@ -326,7 +360,15 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
 
   const jobs = req.files.map((file) => {
-    const job = { id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9), originalName: file.originalname, status: "pending", result: null, error: null, filePath: file.path, uploadDate: new Date().toISOString() };
+    const job = {
+      id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+      originalName: file.originalname,
+      status: "pending",
+      result: null,
+      error: null,
+      filePath: file.path,
+      uploadDate: new Date().toISOString(),
+    };
     uploadJobs[job.id] = job;
     uploadQueue.push(job.id);
     return job;
@@ -340,12 +382,22 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
 app.post("/api/upload-scan", express.json(), (req, res) => {
   if (!req.body.filenames?.length) return res.status(400).json({ error: "Keine Dateien ausgewählt." });
 
-  const jobs = req.body.filenames.filter(f => fs.existsSync(path.join(localDownloadFolder, f))).map((filename) => {
-    const job = { id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9), originalName: filename, status: "pending", result: null, error: null, filePath: path.join(localDownloadFolder, filename), uploadDate: new Date().toISOString() };
-    uploadJobs[job.id] = job;
-    uploadQueue.push(job.id);
-    return job;
-  });
+  const jobs = req.body.filenames
+    .filter((f) => fs.existsSync(path.join(localDownloadFolder, f)))
+    .map((filename) => {
+      const job = {
+        id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+        originalName: filename,
+        status: "pending",
+        result: null,
+        error: null,
+        filePath: path.join(localDownloadFolder, filename),
+        uploadDate: new Date().toISOString(),
+      };
+      uploadJobs[job.id] = job;
+      uploadQueue.push(job.id);
+      return job;
+    });
 
   saveJobs();
   processQueue();
@@ -353,9 +405,10 @@ app.post("/api/upload-scan", express.json(), (req, res) => {
 });
 
 app.get("/api/status", (req, res) => {
-  let statuses = req.query.ids === "all" 
-    ? Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
-    : (req.query.ids ? req.query.ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
+  let statuses =
+    req.query.ids === "all"
+      ? Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
+      : (req.query.ids ? req.query.ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
   res.json({ success: true, statuses });
 });
 
@@ -378,15 +431,28 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
 
   try {
     const tempPdfs = [];
-    const runScannerTask = (inputPath, tempPdfPath, coordsStr) => new Promise((resolve, reject) => {
-      exec(`./venv/bin/python ./app/scanner.py "${inputPath}" "${tempPdfPath}" "${coordsStr}" "${algorithm}"`, (error, stdout, stderr) => {
-        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-        if (error) { console.error(`[SCANNER]: ${error.message}`); reject(error); } else resolve(tempPdfPath);
+    const runScannerTask = (inputPath, tempPdfPath, coordsStr) =>
+      new Promise((resolve, reject) => {
+        exec(
+          `./venv/bin/python ./app/scanner.py "${inputPath}" "${tempPdfPath}" "${coordsStr}" "${algorithm}"`,
+          (error, stdout, stderr) => {
+            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+            if (error) {
+              console.error(`[SCANNER]: ${error.message}`);
+              reject(error);
+            } else resolve(tempPdfPath);
+          }
+        );
       });
-    });
 
     for (let i = 0; i < req.files.length; i++) {
-        tempPdfs.push(await runScannerTask(req.files[i].path, path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`), Array.isArray(coordsList) ? coordsList[i] || "" : (i === 0 ? coordsList : "")));
+      tempPdfs.push(
+        await runScannerTask(
+          req.files[i].path,
+          path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`),
+          Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : ""
+        )
+      );
     }
 
     if (tempPdfs.length === 1) {
@@ -404,14 +470,23 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
       tempPdfs.forEach((p, i) => {
         if (fs.existsSync(p)) fs.unlinkSync(p);
         const jpg = p.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpg)) i === 0 ? fs.renameSync(jpg, outputPdfPath.replace(".pdf", ".jpg")) : fs.unlinkSync(jpg);
+        if (fs.existsSync(jpg))
+          i === 0 ? fs.renameSync(jpg, outputPdfPath.replace(".pdf", ".jpg")) : fs.unlinkSync(jpg);
       });
     }
 
     let createdJob = null;
     if (autoQueue) {
       const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
-      createdJob = uploadJobs[jobId] = { id: jobId, originalName: path.basename(outputPdfPath), status: "pending", result: null, error: null, filePath: outputPdfPath, uploadDate: new Date().toISOString() };
+      createdJob = uploadJobs[jobId] = {
+        id: jobId,
+        originalName: path.basename(outputPdfPath),
+        status: "pending",
+        result: null,
+        error: null,
+        filePath: outputPdfPath,
+        uploadDate: new Date().toISOString(),
+      };
       uploadQueue.push(jobId);
       saveJobs();
       processQueue();
@@ -420,7 +495,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     res.set("X-File-Name", path.basename(outputPdfPath));
     res.set("Access-Control-Expose-Headers", "X-File-Name, X-Auto-Job");
     if (createdJob) res.set("X-Auto-Job", JSON.stringify(createdJob));
-    
+
     res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
       if (err && !["ECONNABORTED", "EPIPE"].includes(err.code)) console.error("[SCANNER] Fehler beim Senden:", err);
     });
@@ -438,17 +513,23 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
 
   try {
     await new Promise((resolve, reject) => {
-      exec(`./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "${req.body.coords || "skip"}" "${algorithm}"`, (error, stdout) => {
-        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-        if (error) return reject(error);
-        const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
-        if (match) res.setHeader("X-Detected-Algorithm", match[1]);
-        resolve(outputJpgPath);
-      });
+      exec(
+        `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "${
+          req.body.coords || "skip"
+        }" "${algorithm}"`,
+        (error, stdout) => {
+          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+          if (error) return reject(error);
+          const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
+          if (match) res.setHeader("X-Detected-Algorithm", match[1]);
+          resolve(outputJpgPath);
+        }
+      );
     });
 
     res.download(outputJpgPath, "Preview.jpg", (err) => {
-      if (fs.existsSync(outputJpgPath)) setTimeout(() => fs.existsSync(outputJpgPath) && fs.unlinkSync(outputJpgPath), 10000);
+      if (fs.existsSync(outputJpgPath))
+        setTimeout(() => fs.existsSync(outputJpgPath) && fs.unlinkSync(outputJpgPath), 10000);
     });
   } catch (error) {
     res.status(500).json({ error: "Fehler bei der Vorschaugenerierung." });
@@ -457,7 +538,8 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
 
 app.get("/api/scans", (req, res) => {
   if (!fs.existsSync(localDownloadFolder)) return res.json({ success: true, files: [] });
-  const files = fs.readdirSync(localDownloadFolder)
+  const files = fs
+    .readdirSync(localDownloadFolder)
     .filter((file) => file.startsWith("Scanned_") && file.endsWith(".pdf"))
     .map((file) => ({
       name: file,
@@ -465,13 +547,15 @@ app.get("/api/scans", (req, res) => {
       date: fs.statSync(path.join(localDownloadFolder, file)).mtime,
       size: fs.statSync(path.join(localDownloadFolder, file)).size,
       hasThumbnail: fs.existsSync(path.join(localDownloadFolder, file.replace(".pdf", ".jpg"))),
-    })).sort((a, b) => b.date - a.date);
+    }))
+    .sort((a, b) => b.date - a.date);
   res.json({ success: true, files });
 });
 
 app.delete("/api/scans/:filename", (req, res) => {
   const filename = req.params.filename;
-  if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf")) return res.status(400).json({ error: "Ungültiger Dateiname" });
+  if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf"))
+    return res.status(400).json({ error: "Ungültiger Dateiname" });
   try {
     const pdfPath = path.join(localDownloadFolder, filename);
     const jpgPath = path.join(localDownloadFolder, filename.replace(".pdf", ".jpg"));
@@ -491,7 +575,7 @@ async function init() {
     const args = process.argv.slice(2);
     if (args.includes("--debug")) debug = true;
     if (args.includes("--test")) testrun = true;
-    
+
     aiAgent.init(debug);
     setInterval(checkDriveForNewFiles, 5 * 60 * 1000);
     setTimeout(checkDriveForNewFiles, 10000);
