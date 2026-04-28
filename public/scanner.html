@@ -28,64 +28,6 @@
     <link rel="stylesheet" href="/scanner.css?v=1777396912" />
   </head>
   <body>
-    <!-- Hintergrund Dark-Overlay wenn Menü auf -->
-    <div id="overlay-bg" class="overlay-bg" onclick="toggleMenu()"></div>
-
-    <!-- Seitenmenü mit allen bisher gescannten Dateien auf dem Server -->
-    <div id="scans-menu" class="scans-menu">
-      <div
-        class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3 sticky-top bg-white"
-        style="z-index: 10"
-      >
-        <h5 class="m-0">📂 Gespeicherte Scans</h5>
-        <button class="btn-close" onclick="toggleMenu()"></button>
-      </div>
-
-      <div id="scan-list-container" class="flex-grow-1 overflow-auto">
-        <!-- Gefüllt über JS aus /api/scans -->
-        <p class="text-muted small">Lade Dateien...</p>
-      </div>
-
-      <!-- Upload Button -- Floating und Sticky am unteren Rand -->
-      <div
-        class="mt-auto position-sticky bottom-0 bg-white border-top"
-        style="
-          z-index: 10;
-          padding: 15px 15px calc(50px + env(safe-area-inset-bottom, 20px));
-          margin: 0 -20px -20px -20px;
-        "
-      >
-        <div class="d-flex gap-2">
-          <button
-            id="download-selected-btn"
-            class="btn btn-outline-primary py-3 shadow-sm"
-            style="flex: 1; font-weight: bold; border-radius: 12px"
-            disabled
-          >
-            Laden (0)
-          </button>
-          <button
-            id="upload-selected-btn"
-            class="btn btn-success py-3 shadow"
-            style="
-              flex: 2;
-              font-size: 1.1rem;
-              border-radius: 12px;
-              font-weight: bold;
-            "
-            disabled
-          >
-            KI-Sortierung (0)
-          </button>
-        </div>
-        <div
-          id="server-upload-status"
-          class="alert alert-info mt-2 p-2 text-center"
-          style="display: none"
-        ></div>
-      </div>
-    </div>
-
     <div class="scanner-container">
       <!-- Sticky Header -->
       <div
@@ -104,7 +46,7 @@
             "
             title="Auto-Capture (An/Aus)"
           >
-            🤖 Auto: An
+            AutoScan: An
           </button>
           <button
             class="btn btn-sm btn-outline-secondary"
@@ -115,13 +57,6 @@
             style="font-size: 1.1rem; padding: 2px 8px; border-radius: 6px"
           >
             ⚙️
-          </button>
-          <button
-            class="btn btn-sm btn-outline-primary"
-            style="font-weight: bold"
-            onclick="toggleMenu()"
-          >
-            📂 Auswahl & Upload
           </button>
         </div>
       </div>

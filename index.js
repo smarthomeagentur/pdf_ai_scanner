@@ -288,45 +288,42 @@ async function processQueue() {
         ? appSettings.FOLDER_ID
         : await driveApi.findFolderId(appSettings.FOLDER_ID);
 
-      const aiStartTime = Date.now();
-      const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
-      sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
+        // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
+        let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
+        if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
 
-      if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
-      try {
-        const pdfBytes = await fs.promises.readFile(job.filePath);
-        const pdfDoc = await PDFDocument.load(pdfBytes);
+        const aiStartTime = Date.now();
+        const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
+        sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
 
-        pdfDoc.setTitle(sortedName.full || "Dokument");
-        pdfDoc.setAuthor(sortedName.company || "Unbekannt");
-        pdfDoc.setSubject(sortedName.category || "");
+        if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+        try {
+          const pdfBytes = await fs.promises.readFile(job.filePath);
+          const pdfDoc = await PDFDocument.load(pdfBytes);
 
-        const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
-        if (sortedName.isInvoice) tagsArr.push("Rechnung");
-        if (sortedName.documentDate && sortedName.documentDate !== "unknown")
-          tagsArr.push(`Datum:${sortedName.documentDate}`);
+          pdfDoc.setTitle(sortedName.full || "Dokument");
+          pdfDoc.setAuthor(sortedName.company || "Unbekannt");
+          pdfDoc.setSubject(sortedName.category || "");
 
-        pdfDoc.setKeywords(tagsArr);
-        pdfDoc.setCreator("AI Document Scanner");
+          const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
+          if (sortedName.isInvoice) tagsArr.push("Rechnung");
+          if (sortedName.documentDate && sortedName.documentDate !== "unknown")
+            tagsArr.push(`Datum:${sortedName.documentDate}`);
 
-        const savedBytes = await pdfDoc.save();
-        await fs.promises.writeFile(job.filePath, savedBytes);
-        console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
-      } catch (metaErr) {
-        console.error(`[WEB] Fehler beim Speichern der PDF-Metadaten für ${jobId}:`, metaErr);
-      }
-      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
-      let driveFile = appSettings.FOLDER_ID_SORTED
-        ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
-        : null;
+          pdfDoc.setKeywords(tagsArr);
+          pdfDoc.setCreator("AI Document Scanner");
 
-      if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
-      driveFile = driveFile || defaultDriveFile;
+          const savedBytes = await pdfDoc.save();
+          await fs.promises.writeFile(job.filePath, savedBytes);
+          console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
+        } catch (metaErr) {
+          console.error(`[WEB] Fehler beim Speichern der PDF-Metadaten für ${jobId}:`, metaErr);
+        }
+        
+        let driveFile = appSettings.FOLDER_ID_SORTED
+          ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
+          : null;
 
-      if (driveFile) {
-        sortedName.webViewLink = driveFile.webViewLink;
-        sortedName.thumbnailLink = driveFile.thumbnailLink;
-        sortedName.webContentLink = driveFile.webContentLink;
       }
 
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
@@ -456,32 +453,6 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
   res.json({ success: true, jobs });
 });
 
-app.post("/api/upload-scan", express.json(), (req, res) => {
-  if (!req.body.filenames?.length) return res.status(400).json({ error: "Keine Dateien ausgewählt." });
-
-  const jobs = req.body.filenames
-    .map((f) => path.basename(f))
-    .filter((f) => fs.existsSync(path.join(localDownloadFolder, f)))
-    .map((filename) => {
-      const job = {
-        id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
-        originalName: filename,
-        status: "pending",
-        result: null,
-        error: null,
-        filePath: path.join(localDownloadFolder, filename),
-        uploadDate: new Date().toISOString(),
-      };
-      uploadJobs[job.id] = job;
-      uploadQueue.push(job.id);
-      return job;
-    });
-
-  saveJobs();
-  processQueue();
-  res.json({ success: true, jobs });
-});
-
 app.get("/api/status", (req, res) => {
   let statuses =
     req.query.ids === "all"
@@ -577,6 +548,12 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
 
     res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
       if (err && !["ECONNABORTED", "EPIPE"].includes(err.code)) console.error("[SCANNER] Fehler beim Senden:", err);
+      // Wenn NICHT der KI-Warteschlange hinzugefügt (= reiner lokaler Download), dann Datei nach dem Senden direkt löschen
+      if (!autoQueue && fs.existsSync(outputPdfPath)) {
+        fs.promises.unlink(outputPdfPath).catch(() => {});
+        const jpgPath = outputPdfPath.replace(".pdf", ".jpg");
+        if (fs.existsSync(jpgPath)) fs.promises.unlink(jpgPath).catch(() => {});
+      }
     });
   } catch (error) {
     res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
@@ -611,37 +588,6 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: "Fehler bei der Vorschaugenerierung." });
-  }
-});
-
-app.get("/api/scans", (req, res) => {
-  if (!fs.existsSync(localDownloadFolder)) return res.json({ success: true, files: [] });
-  const files = fs
-    .readdirSync(localDownloadFolder)
-    .filter((file) => file.startsWith("Scanned_") && file.endsWith(".pdf"))
-    .map((file) => ({
-      name: file,
-      path: path.join(localDownloadFolder, file),
-      date: fs.statSync(path.join(localDownloadFolder, file)).mtime,
-      size: fs.statSync(path.join(localDownloadFolder, file)).size,
-      hasThumbnail: fs.existsSync(path.join(localDownloadFolder, file.replace(".pdf", ".jpg"))),
-    }))
-    .sort((a, b) => b.date - a.date);
-  res.json({ success: true, files });
-});
-
-app.delete("/api/scans/:filename", (req, res) => {
-  const filename = path.basename(req.params.filename);
-  if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf"))
-    return res.status(400).json({ error: "Ungültiger Dateiname" });
-  try {
-    const pdfPath = path.join(localDownloadFolder, filename);
-    const jpgPath = path.join(localDownloadFolder, filename.replace(".pdf", ".jpg"));
-    if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
-    if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Fehler beim Löschen" });
   }
 });
 
