@@ -193,13 +193,13 @@ async function checkCompanyName(companyNameIn) {
 
 checkFileDate = (text) => {
   if (text) {
-    // Falls die AI ein Dokumentendatum gefunden hat, dies bevorzugen
+    // Falls die AI ein Dokumentendatum gefunden hat, dieses im Format DD.MM.YYYY zurückgeben
     const match = text.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
     if (match) {
       const day = match[1];
       const month = match[2];
-      const year = match[3].length === 4 ? match[3].slice(2) : match[3];
-      return `${year}${month}${day}`;
+      const year = match[3].length === 2 ? `20${match[3]}` : match[3];
+      return `${day}.${month}.${year}`;
     }
   }
   return false;

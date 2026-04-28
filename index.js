@@ -135,7 +135,15 @@ app.use((req, res, next) => {
   res.redirect("/login.html");
 });
 
-app.use(express.static("public", { etag: true, lastModified: true, setHeaders: (res, path) => { res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate"); } }));
+app.use(
+  express.static("public", {
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, path) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    },
+  })
+);
 app.use("/downloads", express.static(localDownloadFolder));
 
 // App Config & Settings
@@ -285,7 +293,28 @@ async function processQueue() {
       sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
 
       if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+      try {
+        const pdfBytes = await fs.promises.readFile(job.filePath);
+        const pdfDoc = await PDFDocument.load(pdfBytes);
 
+        pdfDoc.setTitle(sortedName.full || "Dokument");
+        pdfDoc.setAuthor(sortedName.company || "Unbekannt");
+        pdfDoc.setSubject(sortedName.category || "");
+
+        const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
+        if (sortedName.isInvoice) tagsArr.push("Rechnung");
+        if (sortedName.documentDate && sortedName.documentDate !== "unknown")
+          tagsArr.push(`Datum:${sortedName.documentDate}`);
+
+        pdfDoc.setKeywords(tagsArr);
+        pdfDoc.setCreator("AI Document Scanner");
+
+        const savedBytes = await pdfDoc.save();
+        await fs.promises.writeFile(job.filePath, savedBytes);
+        console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
+      } catch (metaErr) {
+        console.error(`[WEB] Fehler beim Speichern der PDF-Metadaten für ${jobId}:`, metaErr);
+      }
       let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
       let driveFile = appSettings.FOLDER_ID_SORTED
         ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
