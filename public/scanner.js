@@ -129,10 +129,10 @@ autoCaptureBtn.addEventListener("click", () => {
   autoCaptureEnabled = !autoCaptureEnabled;
   if (autoCaptureEnabled) {
     autoCaptureBtn.classList.replace("btn-outline-secondary", "btn-primary");
-    autoCaptureBtn.innerHTML = "🤖 Auto: An";
+    autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: An</span>';
   } else {
     autoCaptureBtn.classList.replace("btn-primary", "btn-outline-secondary");
-    autoCaptureBtn.innerHTML = "🤖 Auto: Aus";
+    autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: Aus</span>';
     cancelAutoCountdown();
   }
 });
@@ -194,14 +194,16 @@ async function updateTorchState() {
 
       if (torchMode === "off") {
         await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
-        torchBtn.innerHTML = '⚡<br><small style="font-size:8px">Aus</small>';
+        torchBtn.innerHTML =
+          '<span class="material-symbols-outlined pb-1">flashlight_off</span><small style="font-size:8px">Aus</small>';
         torchBtn.classList.remove("btn-warning", "btn-primary");
         torchBtn.classList.add("btn-outline-secondary");
         torchBtn.style.color = "#333";
         torchBtn.style.backgroundColor = "rgba(255,255,255,0.8)";
       } else if (torchMode === "on") {
         await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-        torchBtn.innerHTML = '⚡<br><small style="font-size:8px">An</small>';
+        torchBtn.innerHTML =
+          '<span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size:8px">An</small>';
         torchBtn.classList.remove("btn-outline-secondary", "btn-primary");
         torchBtn.classList.add("btn-warning");
         torchBtn.style.color = "#000";
@@ -210,7 +212,8 @@ async function updateTorchState() {
         // WebRTC support. Erlaube Auto-Flash falls das Gerät ihn nativ hat
         await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
         // Auto Modus wird effektiv später beim takePhoto() ausgelöst (fillLightMode: 'auto')
-        torchBtn.innerHTML = '⚡<br><small style="font-size:8px">Auto</small>';
+        torchBtn.innerHTML =
+          '<span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size:8px">Auto</small>';
         torchBtn.classList.remove("btn-outline-secondary", "btn-warning");
         torchBtn.classList.add("btn-primary");
         torchBtn.style.color = "#fff";

@@ -1,0 +1,139 @@
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0');
+
+.material-symbols-outlined {
+  vertical-align: bottom;
+  line-height: 1;
+}
+
+:root {
+  /* Material You / MD3 Color Tokens (Monochrome / Contrast) */
+  --md-sys-color-primary: #1A1A1A;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-secondary-container: #E0E0E0;
+  --md-sys-color-on-secondary-container: #111111;
+  --md-sys-color-tertiary: #555555;
+  --md-sys-color-surface: #FFFFFF;
+  --md-sys-color-on-surface: #000000;
+  --md-sys-color-surface-container: #F5F5F5;
+  --md-sys-color-surface-container-low: #F9F9F9;
+  --md-sys-color-on-surface-variant: #444444;
+  --md-sys-color-outline: #757575;
+  
+  /* Radii & Typography */
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-large: 24px;
+  --md-sys-shape-corner-medium: 16px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-full: 9999px;
+
+  /* Shadows (Organic soft transitions) */
+  --md-sys-elevation-1: 0px 1px 3px 1px rgba(0, 0, 0, 0.15), 0px 1px 2px 0px rgba(0, 0, 0, 0.30);
+  --md-sys-elevation-2: 0px 2px 6px 2px rgba(0, 0, 0, 0.15), 0px 1px 2px 0px rgba(0, 0, 0, 0.30);
+  --md-sys-elevation-3: 0px 1px 3px 0px rgba(0, 0, 0, 0.30), 0px 4px 8px 3px rgba(0, 0, 0, 0.15);
+}
+
+body {
+  font-family: 'Roboto', Arial, sans-serif !important;
+  background-color: var(--md-sys-color-surface-container) !important;
+  color: var(--md-sys-color-on-surface) !important;
+}
+
+/* Base MD3 Overrides for Bootstrap elements */
+.btn:not(.btn-outline-secondary, .btn-outline-danger), .action-button, .live-scanner-btn {
+  background-color: var(--md-sys-color-primary) !important;
+  color: var(--md-sys-color-on-primary) !important;
+  border-radius: var(--md-sys-shape-corner-full) !important;
+  border: none !important;
+  padding: 10px 24px !important;
+  font-weight: 500 !important;
+  box-shadow: var(--md-sys-elevation-1) !important;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1) !important;
+}
+
+.btn:not(.btn-outline-secondary, .btn-outline-danger):hover, .action-button:hover, .live-scanner-btn:hover {
+  background-color: rgba(28, 27, 31, 0.92) !important; /* 92% primary */
+  box-shadow: var(--md-sys-elevation-2) !important;
+  transform: translateY(-1px);
+}
+
+.btn:not(.btn-outline-secondary, .btn-outline-danger):active, .action-button:active, .live-scanner-btn:active {
+  box-shadow: var(--md-sys-elevation-1) !important;
+  transform: scale(0.96) !important; /* Tactile micro-interaction */
+}
+
+/* Secondary Container Buttons (e.g. secondary outlines in old code) */
+.btn-outline-secondary {
+  background-color: var(--md-sys-color-secondary-container) !important;
+  color: var(--md-sys-color-on-secondary-container) !important;
+  border: none !important;
+  border-radius: var(--md-sys-shape-corner-full) !important;
+  box-shadow: none !important;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1) !important;
+}
+.btn-outline-secondary:hover {
+  background-color: rgba(224, 224, 224, 0.8) !important;
+  transform: translateY(-1px);
+}
+.btn-outline-secondary:active {
+  transform: scale(0.96) !important;
+}
+
+/* Standard MD3 Card/Container styling */
+.container, .modal-content, .bg-white, #manual-review-section {
+  background-color: var(--md-sys-color-surface) !important;
+  border-radius: var(--md-sys-shape-corner-large) !important;
+  box-shadow: var(--md-sys-elevation-1) !important;
+  border: none !important;
+}
+
+/* Modals extra rounded */
+.modal-content {
+  border-radius: var(--md-sys-shape-corner-extra-large) !important;
+  box-shadow: var(--md-sys-elevation-3) !important;
+}
+
+/* Typography styles */
+h1, h2, h3, h4, h5, .fw-bold {
+  color: var(--md-sys-color-on-surface) !important;
+  font-weight: 500 !important;
+}
+.text-secondary, .text-muted, small {
+  color: var(--md-sys-color-on-surface-variant) !important;
+}
+
+/* Inputs */
+input[type="text"], input[type="password"], input[type="file"], select {
+  background-color: var(--md-sys-color-surface-container-low) !important;
+  border: 1px solid var(--md-sys-color-outline) !important;
+  border-radius: var(--md-sys-shape-corner-small) !important;
+  color: var(--md-sys-color-on-surface) !important;
+  padding: 12px 16px !important;
+  font-size: 16px !important;
+  box-sizing: border-box !important;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, select:focus {
+  border-color: var(--md-sys-color-primary) !important;
+  border-width: 2px !important;
+  padding: 11px 15px !important; /* adjust for border push */
+  box-sizing: border-box !important;
+}
+
+/* Overrides for specific sections */
+#drop-area {
+  background-color: var(--md-sys-color-surface-container) !important;
+  border: 2px dashed var(--md-sys-color-primary) !important;
+  transition: background-color 0.3s, border-width 0.3s;
+}
+#drop-area.hover {
+  background-color: var(--md-sys-color-secondary-container) !important;
+  border: 4px dashed var(--md-sys-color-primary) !important;
+  padding: 48px; /* account for border thickness */
+}
+.job-item {
+  background-color: var(--md-sys-color-surface-container-low) !important;
+  border-radius: var(--md-sys-shape-corner-medium) !important;
+  border: none !important;
+}

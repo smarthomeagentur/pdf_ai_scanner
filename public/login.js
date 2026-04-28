@@ -21,3 +21,14 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
     err.innerText = "Verbindungsfehler.";
   }
 });
+
+const togglePassword = document.getElementById("togglePassword");
+const passwordInput = document.getElementById("password");
+
+if (togglePassword && passwordInput) {
+  togglePassword.addEventListener("click", () => {
+    const type = passwordInput.getAttribute("type") === "password" ? "text" : "password";
+    passwordInput.setAttribute("type", type);
+    togglePassword.innerText = type === "password" ? "visibility" : "visibility_off";
+  });
+}
