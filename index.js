@@ -288,49 +288,49 @@ async function processQueue() {
         ? appSettings.FOLDER_ID
         : await driveApi.findFolderId(appSettings.FOLDER_ID);
 
-        // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
-        let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
-        if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
+      // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
+      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
+      if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
 
-        const aiStartTime = Date.now();
-        const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
-        sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
+      const aiStartTime = Date.now();
+      const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
+      sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
 
-        if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
-        try {
-          const pdfBytes = await fs.promises.readFile(job.filePath);
-          const pdfDoc = await PDFDocument.load(pdfBytes);
+      if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+      try {
+        const pdfBytes = await fs.promises.readFile(job.filePath);
+        const pdfDoc = await PDFDocument.load(pdfBytes);
 
-          pdfDoc.setTitle(sortedName.full || "Dokument");
-          pdfDoc.setAuthor(sortedName.company || "Unbekannt");
-          pdfDoc.setSubject(sortedName.category || "");
+        pdfDoc.setTitle(sortedName.full || "Dokument");
+        pdfDoc.setAuthor(sortedName.company || "Unbekannt");
+        pdfDoc.setSubject(sortedName.category || "");
 
-          const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
-          if (sortedName.isInvoice) tagsArr.push("Rechnung");
-          if (sortedName.documentDate && sortedName.documentDate !== "unknown")
-            tagsArr.push(`Datum:${sortedName.documentDate}`);
+        const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
+        if (sortedName.isInvoice) tagsArr.push("Rechnung");
+        if (sortedName.documentDate && sortedName.documentDate !== "unknown")
+          tagsArr.push(`Datum:${sortedName.documentDate}`);
 
-          pdfDoc.setKeywords(tagsArr);
-          pdfDoc.setCreator("AI Document Scanner");
+        pdfDoc.setKeywords(tagsArr);
+        pdfDoc.setCreator("AI Document Scanner");
 
-          const savedBytes = await pdfDoc.save();
-          await fs.promises.writeFile(job.filePath, savedBytes);
-          console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
-        } catch (metaErr) {
-          console.error(`[WEB] Fehler beim Speichern der PDF-Metadaten für ${jobId}:`, metaErr);
-        }
-        
-        let driveFile = appSettings.FOLDER_ID_SORTED
-          ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
-          : null;
+        const savedBytes = await pdfDoc.save();
+        await fs.promises.writeFile(job.filePath, savedBytes);
+        console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
+      } catch (metaErr) {
+        console.error(`[WEB] Fehler beim Speichern der PDF-Metadaten für ${jobId}:`, metaErr);
+      }
 
-        driveFile = driveFile || defaultDriveFile;
+      let driveFile = appSettings.FOLDER_ID_SORTED
+        ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
+        : null;
 
-        if (driveFile) {
-          sortedName.webViewLink = driveFile.webViewLink;
-          sortedName.thumbnailLink = driveFile.thumbnailLink;
-          sortedName.webContentLink = driveFile.webContentLink;
-        }
+      driveFile = driveFile || defaultDriveFile;
+
+      if (driveFile) {
+        sortedName.webViewLink = driveFile.webViewLink;
+        sortedName.thumbnailLink = driveFile.thumbnailLink;
+        sortedName.webContentLink = driveFile.webContentLink;
+      }
 
       const jpgPath = job.filePath.replace(".pdf", ".jpg");
       let localThumbBase64 = null;
