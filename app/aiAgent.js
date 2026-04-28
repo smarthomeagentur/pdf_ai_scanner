@@ -27,10 +27,29 @@ async function generatePdfName(filename, settings = {}) {
   var pdfFileName = "";
   var pdfDate = setFileDate();
   var pdfData = await extractTextFromPdf(filename);
-  if (debug) console.log("[AI] PDF Text text extracted: " + pdfData.length + " characters");
+  if (!pdfData) pdfData = "";
+  if (debug) console.log("[AI] Nativ extrahierter Text: " + pdfData.length + " Zeichen");
+
+  var pdfImageBuffer = false;
+  if (pdfData.length < 100) {
+    if (debug) console.log("[AI] Wenig Text. Generiere Bild und nutze OCR...");
+    if (filename.toLowerCase().endsWith(".pdf")) {
+      pdfImageBuffer = await getPdfImageBuffer(filename);
+    } else {
+      // Ist bereits ein Bild (JPG, PNG)
+      pdfImageBuffer = fs.readFileSync(filename).toString("base64");
+    }
+
+    if (pdfImageBuffer) {
+      const ocrText = await performOcr(pdfImageBuffer, filename);
+      if (ocrText) {
+        pdfData += "\n" + ocrText;
+      }
+    }
+  }
+
   var pdfContentData;
   if (pdfData.length < 100) {
-    var pdfImageBuffer = await getPdfImageBuffer(filename);
     pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
   } else {
     pdfContentData = await getFileDataJSONGemma(pdfData, false, settings);
@@ -203,15 +222,46 @@ async function getPdfImageBuffer(pdfPath) {
   }
 }
 
+async function performOcr(base64Image, originalFilePath) {
+  if (!base64Image) return "";
+  try {
+    console.log("[AI] Starte Tesseract OCR und Generierung von durchsuchbarem PDF...");
+    const Tesseract = require("tesseract.js");
+    const bufferToOcr = Buffer.from(base64Image, "base64");
+
+    // Tesseract-Worker initialisieren für PDF-Export
+    const worker = await Tesseract.createWorker("deu", 1, { logger: () => {} });
+    const {
+      data: { text, pdf },
+    } = await worker.recognize(bufferToOcr, { pdfTitle: "Scan" }, { pdf: true });
+
+    if (pdf && originalFilePath) {
+      console.log("[AI] Überschreibe lokale Datei mit dem durchsuchbaren OCR-PDF...");
+      const fs = require("fs");
+      fs.writeFileSync(originalFilePath, Buffer.from(pdf));
+    }
+
+    await worker.terminate();
+
+    console.log("[AI] OCR erfolgreich. Länge: " + (text ? text.length : 0));
+    return text && text.trim().length > 20 ? text : "";
+  } catch (ocrErr) {
+    console.error("[AI] OCR fehlgeschlagen:", ocrErr);
+    return "";
+  }
+}
+
 async function extractTextFromPdf(pdfPath) {
   try {
+    if (!pdfPath.toLowerCase().endsWith(".pdf")) return "";
     const dataBuffer = fs.readFileSync(pdfPath);
     const data = await pdf(dataBuffer);
 
-    return data.text;
+    return data.text || "";
     //console.log(data); // Full data object including metadata
   } catch (err) {
     console.error("Error parsing PDF:", err);
+    return "";
   }
 }
 
