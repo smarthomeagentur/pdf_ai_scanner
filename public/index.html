@@ -906,6 +906,13 @@
             countSpan.innerHTML = activeCount > 0 ? `(${activeCount} in Arbeit)` : '';
         }
 
+        // Offene Details-Boxen merken, damit sie beim Polling-Refresh nicht zuklappen
+        const openStates = {};
+        document.querySelectorAll('details.job-result').forEach(details => {
+            const id = details.getAttribute('data-job-id');
+            if (id && details.open) openStates[id] = true;
+        });
+
         jobList.innerHTML = '';
         if (activeJobs.length === 0) {
             jobListContainer.style.display = 'none';
@@ -952,7 +959,7 @@
                 }
 
                 resultHtml = `
-                    <details class="job-result" style="margin-top: 10px; width: 100%;">
+                    <details class="job-result" data-job-id="${job.id}" style="margin-top: 10px; width: 100%;" ${openStates[job.id] ? 'open' : ''}>
                         <summary style="cursor: pointer; color: #007bff; font-weight: bold; margin-bottom: 0px; width: fit-content; padding-right: 15px;">Details</summary>
                         <div style="margin-top: 10px; padding: 10px; background: #fff; border-radius: 5px; border: 1px solid #eee; margin-right: -65px;">
                             <strong style="color: #4caf50;">Dateiname:</strong> ${job.result.full}<br>
