@@ -13,8 +13,9 @@ const path = require("path");
 const process = require("process");
 const dotenv = require("dotenv");
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const multer = require("multer");
-const { exec } = require("child_process");
+const { execFile } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
@@ -81,17 +82,28 @@ const storage = multer.diskStorage({
     if (!fs.existsSync(localDownloadFolder)) fs.mkdirSync(localDownloadFolder, { recursive: true });
     cb(null, localDownloadFolder);
   },
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + path.basename(file.originalname)),
 });
 const upload = multer({ storage });
 
 app.use(cookieParser());
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 Minuten
+  max: 5, // Limitiere jede IP auf 5 Login-Versuche pro `window`
+  message: { success: false, error: "Zu viele Login-Versuche, bitte in 15 Minuten erneut probieren." },
+});
+
 // Auth
-app.post("/api/login", express.json(), (req, res) => {
+app.post("/api/login", express.json(), loginLimiter, (req, res) => {
   if (req.body.password === APP_PASSWORD) {
     const token = jwt.sign({ authenticated: true }, JWT_SECRET, { expiresIn: "30d" });
-    res.cookie("auth_token", token, { httpOnly: true, secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 });
+    res.cookie("auth_token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
     res.json({ success: true });
   } else {
     res.status(401).json({ success: false, error: "Falsches Passwort" });
@@ -218,7 +230,22 @@ function loadJobs() {
 }
 function saveJobs() {
   try {
-    fs.writeFileSync(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles }));
+    // 30 Tage altes Zeug säubern
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+    let isModified = false;
+    for (const jobId in uploadJobs) {
+      const jobTime = new Date(uploadJobs[jobId].uploadDate).getTime();
+      if (now - jobTime > thirtyDaysMs) {
+        delete uploadJobs[jobId];
+        isModified = true;
+      }
+    }
+
+    fs.promises.writeFile(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles })).catch((err) => {
+      console.error("[SYSTEM] Fehler beim asynchronen Speichern der Jobs:", err);
+    });
   } catch (e) {}
 }
 loadJobs();
@@ -394,6 +421,7 @@ app.post("/api/upload-scan", express.json(), (req, res) => {
   if (!req.body.filenames?.length) return res.status(400).json({ error: "Keine Dateien ausgewählt." });
 
   const jobs = req.body.filenames
+    .map((f) => path.basename(f))
     .filter((f) => fs.existsSync(path.join(localDownloadFolder, f)))
     .map((filename) => {
       const job = {
@@ -444,8 +472,9 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     const tempPdfs = [];
     const runScannerTask = (inputPath, tempPdfPath, coordsStr) =>
       new Promise((resolve, reject) => {
-        exec(
-          `./venv/bin/python ./app/scanner.py "${inputPath}" "${tempPdfPath}" "${coordsStr}" "${algorithm}"`,
+        execFile(
+          "./venv/bin/python",
+          ["./app/scanner.py", inputPath, tempPdfPath, coordsStr, algorithm],
           (error, stdout, stderr) => {
             if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
             if (error) {
@@ -524,11 +553,10 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
 
   try {
     await new Promise((resolve, reject) => {
-      exec(
-        `./venv/bin/python ./app/scanner.py "${inputPath}" "${outputJpgPath}" "${
-          req.body.coords || "skip"
-        }" "${algorithm}"`,
-        (error, stdout) => {
+      execFile(
+        "./venv/bin/python",
+        ["./app/scanner.py", inputPath, outputJpgPath, req.body.coords || "skip", algorithm],
+        (error, stdout, stderr) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
           if (error) return reject(error);
           const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
@@ -564,7 +592,7 @@ app.get("/api/scans", (req, res) => {
 });
 
 app.delete("/api/scans/:filename", (req, res) => {
-  const filename = req.params.filename;
+  const filename = path.basename(req.params.filename);
   if (!filename.startsWith("Scanned_") || !filename.endsWith(".pdf"))
     return res.status(400).json({ error: "Ungültiger Dateiname" });
   try {

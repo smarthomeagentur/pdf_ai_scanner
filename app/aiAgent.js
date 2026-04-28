@@ -7,6 +7,8 @@ dotenv.config();
 var debug = false;
 const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
 
+let globalTesseractWorker = null;
+
 // Custom fetch to retry on timeout, which happens often on slow machines or when model cold-starts
 const customFetch = async (url, options) => {
   try {
@@ -36,8 +38,7 @@ async function generatePdfName(filename, settings = {}) {
     if (filename.toLowerCase().endsWith(".pdf")) {
       pdfImageBuffer = await getPdfImageBuffer(filename);
     } else {
-      // Ist bereits ein Bild (JPG, PNG)
-      pdfImageBuffer = fs.readFileSync(filename).toString("base64");
+      pdfImageBuffer = await fs.promises.readFile(filename).then((buf) => buf.toString("base64"));
     }
 
     if (pdfImageBuffer) {
@@ -50,7 +51,23 @@ async function generatePdfName(filename, settings = {}) {
 
   pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
 
-  var firstThreeWords = pdfContentData.tags.slice(0, 3).join(" ");
+  // FALLBACK einbauen, falls die KI 'false' zurückmeldet (JSON kaputt oder Timeout)
+  if (!pdfContentData) {
+    console.error("[AI] KI Fallback aktiv. Generiere Standard-Daten, um Server-Crash zu verhindern.");
+    pdfContentData = {
+      category: "Unbekannt",
+      company: "Unbekannt",
+      tags: ["Fehler", "Scanner", "Unbekannt"],
+      documentDate: "unknown",
+      isInvoice: false,
+    };
+  }
+
+  var firstThreeWords =
+    pdfContentData.tags && Array.isArray(pdfContentData.tags)
+      ? pdfContentData.tags.slice(0, 3).join(" ")
+      : "Keine Tags";
+
   pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
 
   return {
@@ -190,10 +207,14 @@ checkFileDate = (text) => {
 
 async function getPdfImageBuffer(pdfPath) {
   try {
+    const os = require("os");
+    const path = require("path");
+    const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
+
     const options = {
       density: 150,
-      saveFilename: "pdfPic",
-      savePath: ".",
+      saveFilename: `pdfPic_${uniqueId}`,
+      savePath: os.tmpdir(), // In den temporären Ordner legen, um Hauptverzeichnis nicht vollzumüllen
       format: "png",
     };
 
@@ -202,6 +223,12 @@ async function getPdfImageBuffer(pdfPath) {
 
     // Lass dir direkt Base64 zurückgeben anstatt eines Buffers
     const result = await convert(pageToConvertAsImage, { responseType: "base64" });
+
+    // Temp-Datei asynchron löschen, falls pd2pic sie trotzdem anlegt
+    const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
+    if (fs.existsSync(tempFileCheck)) {
+      fs.promises.unlink(tempFileCheck).catch(() => {});
+    }
 
     if (!result || !result.base64) {
       console.log("[Fehler] pdf2pic hat kein valides Base64-Ergebnis geliefert.");
@@ -222,19 +249,19 @@ async function performOcr(base64Image, originalFilePath) {
     const Tesseract = require("tesseract.js");
     const bufferToOcr = Buffer.from(base64Image, "base64");
 
-    // Tesseract-Worker initialisieren für PDF-Export
-    const worker = await Tesseract.createWorker("deu", 1, { logger: () => {} });
+    if (!globalTesseractWorker) {
+      globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => {} });
+    }
+
     const {
       data: { text, pdf },
-    } = await worker.recognize(bufferToOcr, { pdfTitle: "Scan" }, { pdf: true });
+    } = await globalTesseractWorker.recognize(bufferToOcr, { pdfTitle: "Scan" }, { pdf: true });
 
     if (pdf && originalFilePath) {
       console.log("[AI] Überschreibe lokale Datei mit dem durchsuchbaren OCR-PDF...");
       const fs = require("fs");
       fs.writeFileSync(originalFilePath, Buffer.from(pdf));
     }
-
-    await worker.terminate();
 
     console.log("[AI] OCR erfolgreich. Länge: " + (text ? text.length : 0));
     return text && text.trim().length > 20 ? text : "";

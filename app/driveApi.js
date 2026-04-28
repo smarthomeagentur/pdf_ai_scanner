@@ -49,6 +49,11 @@ class DriveAPI {
 
   async uploadFile(filePath, folderId, name = undefined, debug = false) {
     try {
+      if (!fs.existsSync(filePath)) {
+        console.error(`[DRIVE] Datei existiert nicht und wird übersprungen: ${filePath}`);
+        return null;
+      }
+
       const drive = await this.getClient();
       const filename = name || path.basename(filePath);
       const file = await drive.files.create({
