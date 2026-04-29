@@ -101,8 +101,9 @@ app.post("/api/login", express.json(), loginLimiter, (req, res) => {
     res.cookie("auth_token", token, {
       httpOnly: true,
       secure: true,
-      sameSite: "Strict",
-      maxAge: 30 * 24 * 60 * 60 * 1000,
+      sameSite: "Lax", // 'Lax' erlaubt das Senden des Cookies, wenn die PWA vom Homescreen gestartet wird
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 Tage
     });
     res.json({ success: true });
   } else {
