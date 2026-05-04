@@ -314,7 +314,10 @@ async function processQueue() {
         pdfDoc.setKeywords(tagsArr);
         pdfDoc.setCreator("AI Document Scanner");
 
-        const savedBytes = await pdfDoc.save();
+        // updateMetadata: false verhindert, dass pdf-lib den XMP-Metadaten-Stream des Originals löscht/überschreibt.
+        // Das behebt Probleme bei eingescannten PDFs (Besonders von iPhones oder physischen Scannern), 
+        // deren Rotation oder Seitenverhältnis (CropBox/Rotate) dadurch in der Google Drive Vorschau kaputtging (breitgezogen).
+        const savedBytes = await pdfDoc.save({ updateMetadata: false });
         await fs.promises.writeFile(job.filePath, savedBytes);
         console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
       } catch (metaErr) {
