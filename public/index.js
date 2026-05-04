@@ -316,7 +316,11 @@ const browseBtn = document.getElementById("browse-btn");
 const statusDiv = document.getElementById("status");
 const jobListContainer = document.getElementById("job-list-container");
 const jobList = document.getElementById("job-list");
-const clearJobsBtn = document.getElementById("clear-jobs-btn");
+
+const triggerClearJobsBtn = document.getElementById("trigger-clear-jobs-btn");
+const confirmClearModal = document.getElementById("confirm-clear-modal");
+const confirmClearBtn = document.getElementById("confirm-clear-btn");
+const cancelClearBtn = document.getElementById("cancel-clear-btn");
 
 let activeJobs = [];
 let pollingInterval = null;
@@ -357,7 +361,19 @@ fileInput.addEventListener("change", function () {
   if (this.files.length > 0) uploadFiles(this.files);
 });
 
-clearJobsBtn.addEventListener("click", async () => {
+triggerClearJobsBtn.addEventListener("click", () => {
+  confirmClearModal.style.display = "flex";
+  document.getElementById("settings-modal").style.display = "none";
+});
+
+cancelClearBtn.addEventListener("click", () => {
+  confirmClearModal.style.display = "none";
+  document.getElementById("settings-modal").style.display = "flex";
+});
+
+confirmClearBtn.addEventListener("click", async () => {
+  confirmClearModal.style.display = "none";
+
   activeJobs = [];
   jobListContainer.style.display = "none";
   statusDiv.innerHTML = "";

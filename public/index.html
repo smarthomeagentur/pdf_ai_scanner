@@ -67,7 +67,6 @@
                   style="font-size: 14px; font-weight: normal; color: #666; margin-left: 10px"
                 ></span>
               </h3>
-              <button id="clear-jobs-btn" class="clear-btn">Liste leeren</button>
             </div>
             <div id="job-list"></div>
           </div>
@@ -182,9 +181,33 @@
             </div>
           </div>
 
+          <div
+            class="setting-group"
+            style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
+          >
+            <label>Warteschlange:</label>
+            <button id="trigger-clear-jobs-btn" class="action-button" style="width: 100%; margin-top: 5px; background-color: #dc3545; color: white;">
+              Liste leeren
+            </button>
+          </div>
+
           <button id="saveSettingsBtn" class="action-button" style="width: 100%; display: none; margin-top: 15px">
             Einstellungen Speichern
           </button>
+        </div>
+      </div>
+
+      <!-- Confirm Clear Jobs Modal -->
+      <div id="confirm-clear-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+          <h3 style="margin-top: 0; color: #333;">Liste wirklich leeren?</h3>
+          <p style="color: #666; font-size: 14px; margin-bottom: 20px;">
+            Möchtest du die Warteschlange und den bisherigen Upload-Verlauf wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.
+          </p>
+          <div style="display: flex; gap: 10px; justify-content: center;">
+            <button id="cancel-clear-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
+            <button id="confirm-clear-btn" class="action-button" style="background: #dc3545; color: white; flex: 1; margin: 0;">Ja, leeren</button>
+          </div>
         </div>
       </div>
 
