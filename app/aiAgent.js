@@ -245,7 +245,31 @@ async function getPdfImageBuffer(pdfPath) {
 async function performOcr(base64Image, originalFilePath) {
   if (!base64Image) return "";
   try {
-    console.log("[AI] Starte Tesseract OCR und Generierung von durchsuchbarem PDF...");
+    const fs = require("fs");
+    const { execFile } = require("child_process");
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+
+    console.log("[AI] Starte OCR Prozess...");
+
+    // VERSUCH 1: OCRmyPDF (Der Industriestandard, um unsichtbaren Text über das Original zu legen)
+    // Behält die originale Formatierung, Rotation und Seitenverhältnisse perfekt bei!
+    let ocrMyPdfSuccess = false;
+    if (originalFilePath && originalFilePath.toLowerCase().endsWith(".pdf")) {
+      try {
+        console.log("[AI] Versuche ocrmypdf auf Original-Datei anzuwenden...");
+        // ocrmypdf überschreibt die Datei sicher mit der OCR-Ebene. --force-ocr erzwingt OCR auch bei schlecht erkannten Seiten.
+        await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath]);
+        console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar, ohne Verzerrung.");
+        ocrMyPdfSuccess = true;
+      } catch (err) {
+        console.log("[AI] ocrmypdf nicht gefunden oder fehlgeschlagen. Nutze reinen Text-Fallback.");
+        // Wir ignorieren den Fehler, da wir als Fallback tesseract.js nutzen.
+      }
+    }
+
+    // VERSUCH 2: Fallback (Tesseract.js)
+    // Wir extrahieren immer den Text für die KI-Erkennung (Ollama).
     const Tesseract = require("tesseract.js");
     const bufferToOcr = Buffer.from(base64Image, "base64");
 
@@ -254,16 +278,10 @@ async function performOcr(base64Image, originalFilePath) {
     }
 
     const {
-      data: { text, pdf },
-    } = await globalTesseractWorker.recognize(bufferToOcr, { pdfTitle: "Scan" }, { pdf: true });
+      data: { text },
+    } = await globalTesseractWorker.recognize(bufferToOcr);
 
-    if (pdf && originalFilePath) {
-      console.log("[AI] Überschreibe lokale Datei mit dem durchsuchbaren OCR-PDF...");
-      const fs = require("fs");
-      fs.writeFileSync(originalFilePath, Buffer.from(pdf));
-    }
-
-    console.log("[AI] OCR erfolgreich. Länge: " + (text ? text.length : 0));
+    console.log("[AI] Text für Metadaten extrahiert. Länge: " + (text ? text.length : 0));
     return text && text.trim().length > 20 ? text : "";
   } catch (ocrErr) {
     console.error("[AI] OCR fehlgeschlagen:", ocrErr);

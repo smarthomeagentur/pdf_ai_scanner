@@ -13,3 +13,8 @@
 /save
 /samples-scanner
 /secrets
+/store/*
+store/*
+/store
+store
+store/jobs.json

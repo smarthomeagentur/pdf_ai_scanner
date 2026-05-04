@@ -12,7 +12,7 @@ Dieses Dokument dient als zentrale Wissensbasis für alle zukünftigen KI-Agente
   - Tesseract.js für Textextraktion (Implementiert als **Global Singleton Worker**, um RAM- und CPU-Spitzen zu verhindern).
   - Ollama (Lokal, z. B. Gemma Model) für automatische Kategorisierung, Tagging und Datums-Erkennung von Dokumenten.
 - **Google Drive Integration:** `googleapis` via `app/driveApi.js`.
-- **Dateiverarbeitung:** `multer` für Uploads, `pdf-lib` für PDF-Manipulationen, `pdf2pic` für Thumbnail-Generierung. Externe Python-Skripte (`scanner.py`) werden via `execFile` angesprochen.
+- **Dateiverarbeitung:** `multer` für Uploads, `exiftool-vendored` für sichere PDF-Metadaten, `pdf2pic` für Thumbnail-Generierung. Externe Python-Skripte (`scanner.py`) werden via `execFile` angesprochen. _Hinweis: `pdf-lib` wurde entfernt, da es beim Überschreiben von Datei-Metadaten die Seitenverhältnisse von Handy-Scans (Rotation/CropBox matrices) zerstört._
 
 ## 2. Projektstruktur
 
@@ -54,6 +54,11 @@ Bei Weiterentwicklungen am Code dürfen die folgenden reparierten Sicherheits- u
 ### F. Sicherheit: Temporäre Dateien
 
 - Das Konvertieren von PDFs in Bilder (`pdf2pic`) nutzt temporäre Pfade via `os.tmpdir()` und generiert einmalige Dateinamen (`uniqueId`). Dies verhindert Race-Conditions (wenn 2 User gleichzeitig hochladen) und hält das Root-Verzeichnis sauber.
+
+### G. PDF Erhaltung / Metadaten (Verzerrung-Bug)
+
+- Wenn Metadaten in ein PDF injeziert werden (z. B. Title, Author, Keywords), **darf niemals** eine Library verwendet werden, die die grundlegende PDF-Struktur (wie `pdf-lib`) neu kompiliert. Handy-Scanner-Dateien (iOS Notes etc.) werfen bei Re-Kompilierung ihre `/MediaBox` oder `/Rotate` Matrizen weg und werden danach gestretcht / verzerrt dargestellt.
+- Nutze stattdessen immer **`exiftool-vendored`**, welches die Injektion der Eigenschaften vornimmt, ohne das Byte-Layout des PDFs in Bezug auf die Geometrie anzufassen.
 
 ## 4. Frontend & UX Historie (Ältere Fixes)
 
