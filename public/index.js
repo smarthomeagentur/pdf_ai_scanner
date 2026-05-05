@@ -13,6 +13,27 @@ let selectedFbId = null;
 let selectedFbName = null;
 
 openSettingsBtn.addEventListener("click", async () => {
+  // Verify Admin Access First
+  try {
+    const adminCheckRes = await fetch("/api/admin-check");
+    if (!adminCheckRes.ok) {
+      const pw = prompt("Bitte Admin-Passwort eingeben, um die Einstellungen zu öffnen:");
+      if (!pw) return;
+      const loginRes = await fetch("/api/admin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      const loginData = await loginRes.json();
+      if (!loginData.success) {
+        alert("Falsches Admin-Passwort.");
+        return;
+      }
+    }
+  } catch (e) {
+    console.error("Admin Check Error", e);
+  }
+
   settingsModal.style.display = "flex";
 
   // Fetch current settings from backend
@@ -375,7 +396,6 @@ confirmClearBtn.addEventListener("click", async () => {
   confirmClearModal.style.display = "none";
 
   activeJobs = [];
-  jobListContainer.style.display = "none";
   statusDiv.innerHTML = "";
   try {
     await fetch("/api/jobs", { method: "DELETE" });
@@ -444,16 +464,7 @@ function startPolling() {
       const data = await res.json();
 
       if (data.success) {
-        let updated = false;
-
         activeJobs = data.statuses || [];
-
-        if (activeJobs.length > 0) {
-          jobListContainer.style.display = "block";
-        } else {
-          jobListContainer.style.display = "none";
-        }
-
         renderJobs();
 
         // Stop polling dynamically if no jobs are pending on server
@@ -488,7 +499,6 @@ function renderJobs() {
 
   jobList.innerHTML = "";
   if (activeJobs.length === 0) {
-    jobListContainer.style.display = "none";
     return;
   }
 
@@ -661,4 +671,74 @@ window.addEventListener("appinstalled", () => {
   pwaBanner.classList.remove("show");
   deferredPrompt = null;
   console.log("PWA was installed");
+});
+
+// Drive Search Logic
+const searchInput = document.getElementById("drive-search-input");
+const searchBtn = document.getElementById("drive-search-btn");
+const searchResultsContainer = document.getElementById("drive-search-results");
+const searchResultsList = document.getElementById("search-results-list");
+const closeSearchBtn = document.getElementById("close-search-btn");
+
+const performSearch = async () => {
+  const query = searchInput.value.trim();
+  if (query.length < 2) return;
+
+  searchResultsContainer.style.display = "block";
+  searchResultsList.innerHTML = "<div class='text-center mt-3 mb-3'>Suche in Google Drive läuft...</div>";
+
+  try {
+    const res = await fetch("/api/drive/search?q=" + encodeURIComponent(query));
+    const data = await res.json();
+
+    if (!data.success) {
+      searchResultsList.innerHTML = `<div class="text-danger mt-2">${data.error || "Suche fehlgeschlagen."}</div>`;
+      return;
+    }
+
+    if (data.files.length === 0) {
+      searchResultsList.innerHTML =
+        "<div class='text-muted mt-2'>Keine Dokumente für diese Suchbegriffe gefunden.</div>";
+      return;
+    }
+
+    let html = "";
+    data.files.forEach((file) => {
+      // Datum formatieren
+      const date = new Date(file.createdTime).toLocaleDateString("de-DE", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const thumb = file.thumbnailLink
+        ? `<img src="${file.thumbnailLink}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" onerror="this.style.display='none'">`
+        : `<div style="width: 40px; height: 40px; display:flex; align-items:center; justify-content:center; background:#e9ecef; border-radius:4px;"><span class="material-symbols-outlined text-secondary">description</span></div>`;
+
+      html += `
+        <div style="display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee;">
+          ${thumb}
+          <div style="flex-grow: 1; min-width: 0;">
+            <div style="font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${file.name}">${file.name}</div>
+            <div style="font-size: 12px; color: #777;">${date}</div>
+          </div>
+          <a href="${file.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary" style="white-space: nowrap;">Öffnen</a>
+        </div>
+      `;
+    });
+
+    searchResultsList.innerHTML = html;
+  } catch (e) {
+    searchResultsList.innerHTML = `<div class="text-danger">Netzwerkfehler bei der Suche.</div>`;
+  }
+};
+
+searchBtn.addEventListener("click", performSearch);
+searchInput.addEventListener("keypress", (e) => {
+  if (e.key === "Enter") performSearch();
+});
+
+closeSearchBtn.addEventListener("click", () => {
+  searchResultsContainer.style.display = "none";
 });

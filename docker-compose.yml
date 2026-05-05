@@ -13,6 +13,7 @@ services:
       - PORT=${PORT:-3000}
       - LOCAL_AI_HOST=${LOCAL_AI_HOST}
       - APP_PASSWORD=${APP_PASSWORD:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-superadmin}
       - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_123}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
     volumes:

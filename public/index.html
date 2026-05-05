@@ -58,8 +58,8 @@
 
           <div id="status"></div>
 
-          <div id="job-list-container" style="display: none">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px">
+          <div id="job-list-container" style="display: block;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; flex-wrap: wrap; gap: 10px;">
               <h3 style="margin: 0">
                 Upload Status
                 <span
@@ -67,8 +67,28 @@
                   style="font-size: 14px; font-weight: normal; color: #666; margin-left: 10px"
                 ></span>
               </h3>
+              
+              <!-- Suchzeile für Google Drive -->
+              <div style="display: flex; gap: 5px; align-items: center;">
+                <input type="text" id="drive-search-input" placeholder="In Dokumenten suchen..." style="padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; width: 220px;" />
+                <button id="drive-search-btn" class="action-button d-flex align-items-center justify-content-center" style="margin: 0; padding: 6px 10px;" title="Suchen">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">search</span>
+                </button>
+              </div>
             </div>
-            <div id="job-list"></div>
+
+            <!-- Suchergebnisse Container -->
+            <div id="drive-search-results" style="display: none; margin-top: 15px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h5 style="margin: 0; color: #333;">Suchergebnisse im AI-Ordner</h5>
+                <button id="close-search-btn" class="action-button" style="margin: 0; padding: 4px 8px; background: #e0e0e0; color: #333;">Schließen</button>
+              </div>
+              <div id="search-results-list" style="max-height: 300px; overflow-y: auto;">
+                <!-- Resultate werden hier geladen -->
+              </div>
+            </div>
+
+            <div id="job-list" style="margin-top: 15px;"></div>
           </div>
         </div>
       </div>

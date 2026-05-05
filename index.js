@@ -32,6 +32,7 @@ let firststart = true;
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === "true" || "true";
 const APP_PASSWORD = process.env.APP_PASSWORD || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "superadmin";
 const JWT_SECRET = process.env.JWT_SECRET || "default_super_secret_key_123";
 
 // Store paths
@@ -96,6 +97,34 @@ const loginLimiter = rateLimit({
 });
 
 // Auth
+const requireAdmin = (req, res, next) => {
+  try {
+    const token = req.cookies.admin_token;
+    if (token && jwt.verify(token, JWT_SECRET).admin) return next();
+  } catch (err) {}
+  return res.status(403).json({ error: "Admin-Rechte erforderlich" });
+};
+
+app.post("/api/admin-login", express.json(), loginLimiter, (req, res) => {
+  if (req.body.password === ADMIN_PASSWORD) {
+    const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "30d" });
+    res.cookie("admin_token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 Tage
+    });
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false, error: "Falsches Admin-Passwort" });
+  }
+});
+
+app.get("/api/admin-check", requireAdmin, (req, res) => {
+  res.json({ success: true });
+});
+
 app.post("/api/login", express.json(), loginLimiter, (req, res) => {
   if (req.body.password === APP_PASSWORD) {
     const token = jwt.sign({ authenticated: true }, JWT_SECRET, { expiresIn: "30d" });
@@ -160,7 +189,7 @@ app.get("/api/config", async (req, res) => {
 
 app.get("/api/settings", (req, res) => res.json({ success: true, settings: appSettings }));
 
-app.post("/api/settings", express.json(), async (req, res) => {
+app.post("/api/settings", requireAdmin, express.json(), async (req, res) => {
   ["FOLDER_ID", "FOLDER_ID_SORTED", "AI_COMPANY", "AI_CATEGORIES", "MONITOR_DRIVE"].forEach((key) => {
     if (req.body[key] !== undefined) appSettings[key] = req.body[key];
   });
@@ -174,7 +203,7 @@ app.post("/api/settings", express.json(), async (req, res) => {
 });
 
 // Drive Auth Workflow
-app.post("/api/auth/code", express.json(), async (req, res) => {
+app.post("/api/auth/code", requireAdmin, express.json(), async (req, res) => {
   try {
     const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH));
     const key = keys.installed || keys.web;
@@ -229,6 +258,40 @@ app.get("/api/drive/folder/:id", async (req, res) => {
     const result = await drive.files.get({ fileId: req.params.id, fields: "id, name" });
     res.json({ success: true, folder: result.data });
   } catch (e) {
+    res.status(500).json({ error: e.toString() });
+  }
+});
+
+app.get("/api/drive/search", async (req, res) => {
+  try {
+    const q = req.query.q;
+    if (!q) return res.json({ success: true, files: [] });
+
+    // Wir suchen nur im AI-sortierten Ordner
+    const folderId = appSettings.FOLDER_ID_SORTED;
+    if (!folderId)
+      return res
+        .status(400)
+        .json({ error: "Es wurde noch kein AI-Zielordner in den Google Drive Einstellungen verbunden." });
+
+    const drive = await driveApi.getClient();
+    let driveFolderId = driveApi.isValidGoogleDriveId(folderId) ? folderId : await driveApi.findFolderId(folderId);
+
+    if (!driveFolderId) return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
+
+    const safeQ = q.replace(/'/g, "\\'");
+    // Suche nach Dateinamen oder im Text ("Description" bzw. Volltext)
+    const query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
+
+    const result = await drive.files.list({
+      q: query,
+      fields: "files(id, name, webViewLink, thumbnailLink, createdTime)",
+      pageSize: 30, // Max 30 Ergebnisse, Google sortiert bei fullText automatisch nach Relevanz
+    });
+
+    res.json({ success: true, files: result.data.files });
+  } catch (e) {
+    console.error("[SEARCH] Fehler bei Google Drive Suche:", e);
     res.status(500).json({ error: e.toString() });
   }
 });
@@ -486,7 +549,7 @@ app.get("/api/status", (req, res) => {
   res.json({ success: true, statuses });
 });
 
-app.delete("/api/jobs", (req, res) => {
+app.delete("/api/jobs", requireAdmin, (req, res) => {
   uploadJobs = {};
   uploadQueue = [];
   saveJobs();
