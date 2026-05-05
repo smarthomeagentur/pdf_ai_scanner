@@ -128,9 +128,9 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {})
     "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den untenstehenden Text und extrahiere die angeforderten Informationen.\n" +
     "Gib das Ergebnis AUSSCHLIESSLICH als valides JSON aus.Füge keinen Text vor oder nach dem JSON hinzu.Verwende keine Markdown-Formatierung (kein ```json).\n" +
     "Regeln für die Datengewinnung:\n" +
-    `1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind: ${allowedCompanies}. Wenn keine der vorherigen Optionen passt, fülle das Feld mit "Unbekannt".\n` +
-    `2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments. Nutze folgende Kategorien: ${allowedCategories}. Wenn keine dieser passt, vergib die Kategorie "Sonstige".\n` +
-    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein und sich dadurch widerholen. Gib diese als Array von Strings zurück.\n' +
+    `1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind: ${allowedCompanies}. Nimm eine dieser Optionen, wenn sie im Dokument genannt werden oder auch wenn du einen starken Verdacht hast. Wenn keine der vorherigen Optionen passt, fülle das Feld mit "Unbekannt".\n` +
+    `2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments. Nutze folgende Kategorien: ${allowedCategories}. Wenn keine dieser passt, vergib die Kategorie "unknown".\n` +
+    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein und sich dadurch wiederholen. Gib diese als Array von Strings zurück.\n' +
     'WICHTIG: Wenn es keinen passenden Inhalt für Kategorie und Tags gibt, setze "category" auf "unknown" und "tags" auf ["none"].\n' +
     '4. "isInvoice": Boolean. Setze den Wert auf true, wenn es sich bei dem Dokument um eine Rechnung handelt, wenn eine Zahlung vorgenommen werden muss oder das Dokument irgend einen buchhalterischen Bezug hat. Andernfalls false.\n' +
     '5. "documentDate": String. Suche nach dem Datum auf dem Dokument (z.B. Rechnungsdatum oder Erstellungsdatum) und gib es im Format "DD.MM.YYYY" aus. Wenn keines abgedruckt ist, setze "unknown".\n' +
@@ -245,7 +245,31 @@ async function getPdfImageBuffer(pdfPath) {
 async function performOcr(base64Image, originalFilePath) {
   if (!base64Image) return "";
   try {
-    console.log("[AI] Starte Tesseract OCR und Generierung von durchsuchbarem PDF...");
+    const fs = require("fs");
+    const { execFile } = require("child_process");
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+
+    console.log("[AI] Starte OCR Prozess...");
+
+    // VERSUCH 1: OCRmyPDF (Der Industriestandard, um unsichtbaren Text über das Original zu legen)
+    // Behält die originale Formatierung, Rotation und Seitenverhältnisse perfekt bei!
+    let ocrMyPdfSuccess = false;
+    if (originalFilePath && originalFilePath.toLowerCase().endsWith(".pdf")) {
+      try {
+        console.log("[AI] Versuche ocrmypdf auf Original-Datei anzuwenden...");
+        // ocrmypdf überschreibt die Datei sicher mit der OCR-Ebene. --force-ocr erzwingt OCR auch bei schlecht erkannten Seiten.
+        await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath]);
+        console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar, ohne Verzerrung.");
+        ocrMyPdfSuccess = true;
+      } catch (err) {
+        console.log("[AI] ocrmypdf nicht gefunden oder fehlgeschlagen. Nutze reinen Text-Fallback.");
+        // Wir ignorieren den Fehler, da wir als Fallback tesseract.js nutzen.
+      }
+    }
+
+    // VERSUCH 2: Fallback (Tesseract.js)
+    // Wir extrahieren immer den Text für die KI-Erkennung (Ollama).
     const Tesseract = require("tesseract.js");
     const bufferToOcr = Buffer.from(base64Image, "base64");
 
@@ -254,16 +278,10 @@ async function performOcr(base64Image, originalFilePath) {
     }
 
     const {
-      data: { text, pdf },
-    } = await globalTesseractWorker.recognize(bufferToOcr, { pdfTitle: "Scan" }, { pdf: true });
+      data: { text },
+    } = await globalTesseractWorker.recognize(bufferToOcr);
 
-    if (pdf && originalFilePath) {
-      console.log("[AI] Überschreibe lokale Datei mit dem durchsuchbaren OCR-PDF...");
-      const fs = require("fs");
-      fs.writeFileSync(originalFilePath, Buffer.from(pdf));
-    }
-
-    console.log("[AI] OCR erfolgreich. Länge: " + (text ? text.length : 0));
+    console.log("[AI] Text für Metadaten extrahiert. Länge: " + (text ? text.length : 0));
     return text && text.trim().length > 20 ? text : "";
   } catch (ocrErr) {
     console.error("[AI] OCR fehlgeschlagen:", ocrErr);

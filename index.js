@@ -17,6 +17,7 @@ const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const { execFile } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
+const { exiftool } = require("exiftool-vendored");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 
@@ -298,31 +299,48 @@ async function processQueue() {
       sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
 
       if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+
+      const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
+      if (sortedName.isInvoice) tagsArr.push("Rechnung");
+      if (sortedName.documentDate && sortedName.documentDate !== "unknown")
+        tagsArr.push(`Datum:${sortedName.documentDate}`);
+
       try {
-        const pdfBytes = await fs.promises.readFile(job.filePath);
-        const pdfDoc = await PDFDocument.load(pdfBytes);
+        await exiftool.write(job.filePath, {
+          Title: sortedName.full || "Dokument",
+          Author: sortedName.company || "Unbekannt",
+          Subject: sortedName.category || "",
+          Creator: "AI Document Scanner",
+          Keywords: tagsArr,
+        });
 
-        pdfDoc.setTitle(sortedName.full || "Dokument");
-        pdfDoc.setAuthor(sortedName.company || "Unbekannt");
-        pdfDoc.setSubject(sortedName.category || "");
-
-        const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
-        if (sortedName.isInvoice) tagsArr.push("Rechnung");
-        if (sortedName.documentDate && sortedName.documentDate !== "unknown")
-          tagsArr.push(`Datum:${sortedName.documentDate}`);
-
-        pdfDoc.setKeywords(tagsArr);
-        pdfDoc.setCreator("AI Document Scanner");
-
-        const savedBytes = await pdfDoc.save();
-        await fs.promises.writeFile(job.filePath, savedBytes);
-        console.log(`[WEB] PDF-Tags erfolgreich für ${jobId} gespeichert.`);
+        // Exiftool creates an _original backup file. We ensure to remove it.
+        if (fs.existsSync(job.filePath + "_original")) {
+          await fs.promises.unlink(job.filePath + "_original");
+        }
+        if (debug) console.log(`[WEB] ExifTool Metadaten geschrieben für ${jobId}`);
       } catch (metaErr) {
-        console.error(`[WEB] Fehler beim Speichern der PDF-Metadaten für ${jobId}:`, metaErr);
+        console.error(`[WEB] Fehler beim Schreiben der Metadaten mit ExifTool für ${jobId}:`, metaErr);
       }
 
+      const searchDescription = [
+        sortedName.company ? `Firma: ${sortedName.company}` : "",
+        sortedName.category ? `Kategorie: ${sortedName.category}` : "",
+        tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ");
+
       let driveFile = appSettings.FOLDER_ID_SORTED
-        ? await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedName.full, debug)
+        ? await driveApi.uploadFile(
+            job.filePath,
+            appSettings.FOLDER_ID_SORTED,
+            {
+              name: sortedName.full,
+              description: searchDescription,
+            },
+            debug
+          )
         : null;
 
       driveFile = driveFile || defaultDriveFile;

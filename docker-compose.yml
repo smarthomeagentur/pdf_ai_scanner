@@ -17,7 +17,7 @@ services:
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
     volumes:
       - scanner-store:/app/store # Hier werden dynamische Dateistorage-Daten, Logins, Jobs und Settings persistent abgelegt
-      - scanner-downloads:/app/downloads # Verzeichnisse für temporäre Uploads/Downloads
+      - scanner-downloads:/app/downloads # Verzeichnisse für temporäre Uploads/Downloads t
       - ./gdrive_secret.json:/app/gdrive_secret.json # Geheimnis für den Google Drive Zugriff
 volumes:
   scanner-downloads:

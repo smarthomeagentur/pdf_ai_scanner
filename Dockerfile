@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     tesseract-ocr-deu \
     tesseract-ocr-eng \
+    ocrmypdf \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

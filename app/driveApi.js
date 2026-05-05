@@ -47,7 +47,7 @@ class DriveAPI {
     return google.drive({ version: "v3", auth: authClient });
   }
 
-  async uploadFile(filePath, folderId, name = undefined, debug = false) {
+  async uploadFile(filePath, folderId, fileOptions = {}, debug = false) {
     try {
       if (!fs.existsSync(filePath)) {
         console.error(`[DRIVE] Datei existiert nicht und wird übersprungen: ${filePath}`);
@@ -55,13 +55,21 @@ class DriveAPI {
       }
 
       const drive = await this.getClient();
-      const filename = name || path.basename(filePath);
+
+      let resource = { parents: [folderId] };
+      if (typeof fileOptions === "string") {
+        resource.name = fileOptions || path.basename(filePath);
+      } else {
+        resource.name = fileOptions.name || path.basename(filePath);
+        if (fileOptions.description) resource.description = fileOptions.description;
+      }
+
       const file = await drive.files.create({
-        resource: { name: filename, parents: [folderId] },
+        resource: resource,
         media: { mimeType: null, body: fs.createReadStream(filePath) },
         fields: "id, webViewLink, thumbnailLink, webContentLink",
       });
-      if (debug) console.log(`[DRIVE] Uploaded ${filename} (ID: ${file.data.id})`);
+      if (debug) console.log(`[DRIVE] Uploaded ${resource.name} (ID: ${file.data.id})`);
       return file.data;
     } catch (error) {
       console.error(`Error uploading file ${filePath}:`, error);
