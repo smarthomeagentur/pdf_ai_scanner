@@ -521,9 +521,19 @@ function renderJobs() {
     let previewHtml = "";
 
     if (job.status === "completed" && job.result) {
-      const tagsStr = job.result.tags && Array.isArray(job.result.tags) ? job.result.tags.join(", ") : "-";
+      const tagsStr = job.result.tags && Array.isArray(job.result.tags) ? job.result.tags.slice(0, 3).join(", ") : "-";
       const isInvoiceStr = job.result.isInvoice ? "Ja" : "Nein";
       const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : "-";
+
+      let invoiceHtml = "";
+      if (job.result.isInvoice || job.isInvoice) {
+        const invNum = (job.invoiceNumber || job.result.invoiceNumber) && (job.invoiceNumber || job.result.invoiceNumber) !== "none" ? (job.invoiceNumber || job.result.invoiceNumber) : "-";
+        const invAmtRaw = (job.invoiceAmmount !== undefined ? job.invoiceAmmount : job.result.invoiceAmmount) || 0;
+        const invAmtFormatted = (invAmtRaw / 100).toFixed(2).replace('.', ',');
+        invoiceHtml = `
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsnummer:</strong> ${invNum}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsbetrag:</strong> ${invAmtFormatted} €<br>`;
+      }
 
       if (job.result.localThumbnail || job.result.thumbnailLink) {
         const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
@@ -556,7 +566,7 @@ function renderJobs() {
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${tagsStr}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
-                            <br><strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
+${invoiceHtml}                            <br><strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
                         </div>
                     </details>
                 `;
