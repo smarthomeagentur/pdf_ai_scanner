@@ -79,6 +79,8 @@ async function generatePdfName(filename, settings = {}) {
     tags: pdfContentData.tags,
     company: pdfContentData.company,
     isInvoice: pdfContentData.isInvoice,
+    invoiceNumber: pdfContentData.invoiceNumber,
+    invoiceAmmount: pdfContentData.invoiceAmmount,
   };
 }
 
@@ -134,7 +136,11 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {})
     'WICHTIG: Wenn es keinen passenden Inhalt für Kategorie und Tags gibt, setze "category" auf "unknown" und "tags" auf ["none"].\n' +
     '4. "isInvoice": Boolean. Setze den Wert auf true, wenn es sich bei dem Dokument um eine Rechnung handelt, wenn eine Zahlung vorgenommen werden muss oder das Dokument irgend einen buchhalterischen Bezug hat. Andernfalls false.\n' +
     '5. "documentDate": String. Suche nach dem Datum auf dem Dokument (z.B. Rechnungsdatum oder Erstellungsdatum) und gib es im Format "DD.MM.YYYY" aus. Wenn keines abgedruckt ist, setze "unknown".\n' +
-    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String"}\n';
+    '6. "invoiceNumber": String. Gibt die Rechnungsnummer oder Belegnummer oder etwas dieser Art aus dem Dokument zurück. Ansonsten gib die "none" zurück, wenn du nichts findest.\n' +
+    '7. "invoiceAmmount": Integer. Wenn es eine Rechnung ist, gibt den Rechnungsbetrag zurück. Entferne das Komma. z.B. 3,45 gibst du als 345 aus. Ansonsten gib 0 zurück\n' +
+    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String", "invoiceNumber": "String", "invoiceAmmount": "Integer"}\n';
+
+
 
   var aiSettings = {
     model: "gemma4:e2b",
@@ -227,7 +233,7 @@ async function getPdfImageBuffer(pdfPath) {
     // Temp-Datei asynchron löschen, falls pd2pic sie trotzdem anlegt
     const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
     if (fs.existsSync(tempFileCheck)) {
-      fs.promises.unlink(tempFileCheck).catch(() => {});
+      fs.promises.unlink(tempFileCheck).catch(() => { });
     }
 
     if (!result || !result.base64) {
@@ -274,7 +280,7 @@ async function performOcr(base64Image, originalFilePath) {
     const bufferToOcr = Buffer.from(base64Image, "base64");
 
     if (!globalTesseractWorker) {
-      globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => {} });
+      globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => { } });
     }
 
     const {

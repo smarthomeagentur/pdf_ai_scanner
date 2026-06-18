@@ -47,7 +47,7 @@ if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
     try {
       fs.renameSync(oldPath, newPath);
       console.log(`Moved ${f} to store/`);
-    } catch (e) {}
+    } catch (e) { }
   }
 });
 
@@ -73,7 +73,7 @@ const appSettings = {
 if (fs.existsSync(SETTINGS_FILE)) {
   try {
     Object.assign(appSettings, JSON.parse(fs.readFileSync(SETTINGS_FILE)));
-  } catch (e) {}
+  } catch (e) { }
 }
 
 const app = express();
@@ -102,7 +102,7 @@ const requireAdmin = (req, res, next) => {
   try {
     const token = req.cookies.admin_token;
     if (token && jwt.verify(token, JWT_SECRET).admin) return next();
-  } catch (err) {}
+  } catch (err) { }
   return res.status(403).json({ error: "Admin-Rechte erforderlich" });
 };
 
@@ -161,7 +161,7 @@ app.use((req, res, next) => {
     try {
       jwt.verify(token, JWT_SECRET);
       return next();
-    } catch (err) {}
+    } catch (err) { }
   }
   if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Unauthorized" });
   res.redirect("/login.html");
@@ -174,7 +174,7 @@ app.use(
     setHeaders: (res, path) => {
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     },
-  })
+  }),
 );
 app.use("/downloads", express.static(localDownloadFolder));
 
@@ -211,7 +211,7 @@ app.post("/api/auth/code", requireAdmin, express.json(), async (req, res) => {
     const oauth2Client = new (require("googleapis").google.auth.OAuth2)(
       key.client_id,
       key.client_secret,
-      "postmessage"
+      "postmessage",
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
 
@@ -240,9 +240,8 @@ app.get("/api/drive/folders", async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.list({
-      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${
-        req.query.parentId || "root"
-      }' in parents`,
+      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${req.query.parentId || "root"
+        }' in parents`,
       fields: "files(id, name, parents)",
       orderBy: "name",
       pageSize: 1000,
@@ -310,7 +309,7 @@ function loadJobs() {
     if (data.uploadJobs) uploadJobs = data.uploadJobs;
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
-  } catch (e) {}
+  } catch (e) { }
 }
 function saveJobs() {
   try {
@@ -330,7 +329,7 @@ function saveJobs() {
     fs.promises.writeFile(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles })).catch((err) => {
       console.error("[SYSTEM] Fehler beim asynchronen Speichern der Jobs:", err);
     });
-  } catch (e) {}
+  } catch (e) { }
 }
 loadJobs();
 
@@ -368,6 +367,9 @@ async function processQueue() {
       if (sortedName.isInvoice) tagsArr.push("Rechnung");
       if (sortedName.documentDate && sortedName.documentDate !== "unknown")
         tagsArr.push(`Datum:${sortedName.documentDate}`);
+      if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
+      if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none") tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
+      if (sortedName.invoiceAmmount !== undefined) tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
 
       try {
         await exiftool.write(job.filePath, {
@@ -397,14 +399,14 @@ async function processQueue() {
 
       let driveFile = appSettings.FOLDER_ID_SORTED
         ? await driveApi.uploadFile(
-            job.filePath,
-            appSettings.FOLDER_ID_SORTED,
-            {
-              name: sortedName.full,
-              description: searchDescription,
-            },
-            debug
-          )
+          job.filePath,
+          appSettings.FOLDER_ID_SORTED,
+          {
+            name: sortedName.full,
+            description: searchDescription,
+          },
+          debug,
+        )
         : null;
 
       driveFile = driveFile || defaultDriveFile;
@@ -420,8 +422,8 @@ async function processQueue() {
       if (fs.existsSync(jpgPath)) {
         try {
           localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
-        } catch (e) {}
-        await fs.promises.unlink(jpgPath).catch(() => {});
+        } catch (e) { }
+        await fs.promises.unlink(jpgPath).catch(() => { });
       }
 
       // Fallback: Falls kein Thumbnail existiert (z.B. reiner Google Drive Upload)
@@ -433,11 +435,13 @@ async function processQueue() {
         }
       }
 
-      await fs.promises.unlink(job.filePath).catch(() => {});
+      await fs.promises.unlink(job.filePath).catch(() => { });
 
       job.status = "completed";
       sortedName.localThumbnail = localThumbBase64;
       job.result = sortedName;
+      job.invoiceNumber = sortedName.invoiceNumber;
+      job.invoiceAmmount = sortedName.invoiceAmmount;
       saveJobs();
       console.log(`[WEB] Job ${jobId} finished.`);
     } catch (error) {
@@ -446,10 +450,10 @@ async function processQueue() {
       job.error = error.message;
       saveJobs();
       try {
-        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
+        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
         const jpgPath = job.filePath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => {});
-      } catch (e) {}
+        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => { });
+      } catch (e) { }
     }
   }
 
@@ -580,7 +584,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
               console.error(`[SCANNER]: ${error.message}`);
               reject(error);
             } else resolve(tempPdfPath);
-          }
+          },
         );
       });
 
@@ -589,8 +593,8 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
         await runScannerTask(
           req.files[i].path,
           path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`),
-          Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : ""
-        )
+          Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : "",
+        ),
       );
     }
 
@@ -639,9 +643,9 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
       if (err && !["ECONNABORTED", "EPIPE"].includes(err.code)) console.error("[SCANNER] Fehler beim Senden:", err);
       // Wenn NICHT der KI-Warteschlange hinzugefügt (= reiner lokaler Download), dann Datei nach dem Senden direkt löschen
       if (!autoQueue && fs.existsSync(outputPdfPath)) {
-        fs.promises.unlink(outputPdfPath).catch(() => {});
+        fs.promises.unlink(outputPdfPath).catch(() => { });
         const jpgPath = outputPdfPath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) fs.promises.unlink(jpgPath).catch(() => {});
+        if (fs.existsSync(jpgPath)) fs.promises.unlink(jpgPath).catch(() => { });
       }
     });
   } catch (error) {
@@ -667,7 +671,7 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
           const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
           if (match) res.setHeader("X-Detected-Algorithm", match[1]);
           resolve(outputJpgPath);
-        }
+        },
       );
     });
 
@@ -694,7 +698,8 @@ async function init() {
     setTimeout(checkDriveForNewFiles, 10000);
   }
   if (testrun) {
-    for (var i = 1; i <= 10; i++) console.log(await aiAgent.getPdfName(i + ".pdf", appSettings));
+    await aiAgent.getPdfName("./samples-scanner/1.pdf", appSettings);
+    //for (var i = 1; i <= 10; i++) console.log(await aiAgent.getPdfName("./samples-scanner/" + i + ".pdf", appSettings));
   }
 }
 
