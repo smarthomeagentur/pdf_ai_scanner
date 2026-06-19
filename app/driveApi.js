@@ -62,6 +62,7 @@ class DriveAPI {
       } else {
         resource.name = fileOptions.name || path.basename(filePath);
         if (fileOptions.description) resource.description = fileOptions.description;
+        if (fileOptions.appProperties) resource.appProperties = fileOptions.appProperties;
       }
 
       const file = await drive.files.create({
@@ -74,6 +75,20 @@ class DriveAPI {
     } catch (error) {
       console.error(`Error uploading file ${filePath}:`, error);
       return null;
+    }
+  }
+
+  async updateFileProperties(fileId, appProperties) {
+    try {
+      const drive = await this.getClient();
+      await drive.files.update({
+        fileId: fileId,
+        resource: { appProperties }
+      });
+      return true;
+    } catch (error) {
+      console.error(`Error updating properties for file ${fileId}:`, error);
+      return false;
     }
   }
 

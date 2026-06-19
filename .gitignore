@@ -18,3 +18,5 @@ store/*
 /store
 store
 store/jobs.json
+jobs.json
+/store

@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node index.js --debug --test",
+    "testlocal": "node testLocalAi.js --debug",
     "start": "node index.js",
     "debug": "nodemon --watch . --ext js index.js --debug"
   },

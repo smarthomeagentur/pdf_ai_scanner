@@ -7,7 +7,9 @@ Eine leistungsstarke, webbasierte PWA-Scanner-Anwendung, die es Benutzern ermög
 - **Live-Kantenerkennung & Auto-Capture:** Nutzt OpenCV.js im Browser, um A4-Dokumente in Echtzeit zu erkennen, automatisch zu fokussieren und bei Stabilität selbstständig Aufnahmen zu triggern.
 - **Progressive Web App (PWA):** Kann als native App auf Smartphones (iOS/Android) installiert werden und bietet Full-Screen-Bedienung.
 - **KI-gestützte Weiterverarbeitung:** (Z.B. via Ollama) für automatische Benennungen, OCR oder inhaltliche Beschlagwortung direkt auf dem Host-System.
-- **Sicherer Zugriff (JWT):** Die App lässt sich mit einem Master-Passwort absichern. Login-Sessions werden über JSON Web Tokens verwaltet.
+- **Erweiterte Rechnungsanalyse:** Erkennt automatisch Rechnungsnummern und Beträge und fügt diese sowohl in der UI als auch tief in den PDF-Metadaten (Exif) ein.
+- **Privat-Modus für sensible Dokumente:** Administratoren können Dateien als "Privat" markieren. Diese werden sicher mit Google Drive synchronisiert (`appProperties`) und für normale Nutzer in der Oberfläche und Suche unsichtbar gemacht.
+- **Sicherer Zugriff (JWT):** Die App lässt sich mit einem Master-Passwort und separatem Admin-Passwort absichern. Login-Sessions werden über JSON Web Tokens verwaltet.
 - **Google Drive Integration:** Gescannte und verarbeitete Dokumente / PDFs werden direkt im verknüpften Google Drive-Konto hochgeladen.
 
 ## 🛠 Verwendete Technologien
@@ -28,7 +30,8 @@ Vor dem Start muss eine `.env`-Datei im Root-Verzeichnis erstellt werden. Folgen
 | Variable | Beschreibung |
 | :--- | :--- |
 | `AUTH_ENABLED` | Schaltet den Passwortschutz ein (`true`) oder aus (`false`). Standardmäßig empfohlen: `true`. |
-| `APP_PASSWORD` | Das Master-Passwort, mit dem sich Nutzer auf der Webseite einloggen müssen. |
+| `APP_PASSWORD` | Das Master-Passwort, mit dem sich Standard-Nutzer auf der Webseite einloggen müssen. |
+| `ADMIN_PASSWORD` | Das Administrator-Passwort. Admins können u.A. Einstellungen ändern, Kategorien verwalten und Dateien als Privat markieren. |
 | `JWT_SECRET` | Ein sicherer, zufälliger String (z.B. ein langer Hash), der genutzt wird, um die Login-Tokens digital zu signieren. Verhindert Manipulation der Sessions. |
 | `LOCAL_AI_HOST` | Die URL zur lokalen KI-Instanz (z. B. Ollama-Server). Beispiel: `http://localhost:11434`. Hierüber kommuniziert das Backend zur KI-Auswertung der Scans. |
 

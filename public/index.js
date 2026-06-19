@@ -484,6 +484,12 @@ function startPolling() {
 }
 
 function renderJobs() {
+  if (document.querySelector('.category-picker-box')) {
+    // Ein Picker ist offen, wir überspringen das Neu-Zeichnen,
+    // damit das Menü nicht durch den 5-Sekunden-Refresh geschlossen wird.
+    return;
+  }
+
   const countSpan = document.getElementById("active-job-count");
   if (countSpan) {
     const activeCount = activeJobs.filter((j) => j.status === "pending" || j.status === "processing").length;
@@ -505,6 +511,23 @@ function renderJobs() {
   activeJobs.forEach((job) => {
     const div = document.createElement("div");
     div.className = `job-item ${job.status}`;
+    if (job.isPrivate) {
+      div.style.borderLeft = "4px solid #f44336";
+      div.style.backgroundColor = "#fff8f8";
+    }
+
+    let privateBadgeHtml = '';
+    if (window.isAdmin) {
+        const bg = job.isPrivate ? '#f44336' : '#e0e0e0';
+        const color = job.isPrivate ? 'white' : '#666';
+        const icon = job.isPrivate ? 'lock' : 'lock_open';
+        const text = job.isPrivate ? 'PRIVAT' : 'ÖFFENTLICH';
+        privateBadgeHtml = `<span class="toggle-private-pill" data-job-id="${job.id}" style="cursor: pointer; background: ${bg}; color: ${color}; padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-left: 8px; vertical-align: middle; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; user-select: none;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+            <span class="material-symbols-outlined" style="font-size: 12px;">${icon}</span> ${text}
+        </span>`;
+    } else if (job.isPrivate) {
+        privateBadgeHtml = '<span style="background: #f44336; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;">🔒 PRIVAT</span>';
+    }
 
     let statusText =
       job.status === "pending"
@@ -521,9 +544,19 @@ function renderJobs() {
     let previewHtml = "";
 
     if (job.status === "completed" && job.result) {
-      const tagsStr = job.result.tags && Array.isArray(job.result.tags) ? job.result.tags.join(", ") : "-";
+      const tagsStr = job.result.tags && Array.isArray(job.result.tags) ? job.result.tags.slice(0, 3).join(", ") : "-";
       const isInvoiceStr = job.result.isInvoice ? "Ja" : "Nein";
       const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : "-";
+
+      let invoiceHtml = "";
+      if (job.result.isInvoice || job.isInvoice) {
+        const invNum = (job.invoiceNumber || job.result.invoiceNumber) && (job.invoiceNumber || job.result.invoiceNumber) !== "none" ? (job.invoiceNumber || job.result.invoiceNumber) : "-";
+        const invAmtRaw = (job.invoiceAmmount !== undefined ? job.invoiceAmmount : job.result.invoiceAmmount) || 0;
+        const invAmtFormatted = (invAmtRaw / 100).toFixed(2).replace('.', ',');
+        invoiceHtml = `
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsnummer:</strong> ${invNum}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsbetrag:</strong> ${invAmtFormatted} €<br>`;
+      }
 
       if (job.result.localThumbnail || job.result.thumbnailLink) {
         const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
@@ -551,12 +584,15 @@ function renderJobs() {
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> ${
                               job.result.company || "-"
                             }<br>
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Kategorie:</strong> ${
-                              job.result.category || "-"
-                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Kategorie:</strong> 
+                            <div style="position: relative; display: inline-block;">
+                                <span class="category-editable" data-job-id="${job.id}" data-current-cat="${job.result.category || '-'}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: var(--md-sys-color-primary-container, #eaddff); color: var(--md-sys-color-on-primary-container, #21005d); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+                                    ${job.result.category || "-"} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                                </span>
+                            </div><br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${tagsStr}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
-                            <br><strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
+${invoiceHtml}                            <br><strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
                         </div>
                     </details>
                 `;
@@ -581,7 +617,10 @@ function renderJobs() {
                 <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
                     <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
                         <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                            <span style="word-break: break-word; line-height: 1.2;">${job.originalName}</span>
+                            <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center;">
+                                ${job.originalName}
+                                ${privateBadgeHtml}
+                            </span>
                             <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
                         </div>
                         <div class="job-status" style="margin-top: 4px;">${statusText}</div>
@@ -741,4 +780,145 @@ searchInput.addEventListener("keypress", (e) => {
 
 closeSearchBtn.addEventListener("click", () => {
   searchResultsContainer.style.display = "none";
+});
+
+// Fetch settings globally on load so category options are available
+async function loadGlobalSettings() {
+  window.isAdmin = false;
+  try {
+    const adminRes = await fetch("/api/admin-check");
+    window.isAdmin = adminRes.ok;
+    renderJobs();
+  } catch(e) {}
+
+  try {
+    const res = await fetch("/api/settings");
+    const json = await res.json();
+    if (json.success) {
+      window.currentSettings = json.settings;
+    }
+  } catch(e) {}
+}
+loadGlobalSettings();
+
+// Category click to edit (modern pill design)
+jobList.addEventListener('click', async (e) => {
+  // Handle click on toggle private pill
+  const togglePill = e.target.closest('.toggle-private-pill');
+  if (togglePill) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = togglePill.getAttribute('data-job-id');
+    const job = activeJobs.find(j => j.id === jobId);
+    if (!job) return;
+    
+    const newIsPrivate = !job.isPrivate;
+    job.isPrivate = newIsPrivate;
+    renderJobs(); // optimistic update
+    
+    try {
+        const res = await fetch(`/api/jobs/${jobId}/private`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isPrivate: newIsPrivate })
+        });
+        if (!res.ok) {
+            alert("Fehler beim Speichern des Privat-Status.");
+            job.isPrivate = !newIsPrivate;
+            renderJobs();
+        }
+    } catch(err) {
+        console.error("Failed to toggle private status", err);
+        job.isPrivate = !newIsPrivate;
+        renderJobs();
+    }
+    return;
+  }
+
+  // Handle click on a category option pill
+  const optionPill = e.target.closest('.cat-option-pill');
+  if (optionPill) {
+    e.stopPropagation();
+    e.preventDefault();
+    const newCategory = optionPill.getAttribute('data-value');
+    const pickerBox = optionPill.closest('.category-picker-box');
+    const editableSpan = pickerBox.parentElement.querySelector('.category-editable');
+    const jobId = editableSpan.getAttribute('data-job-id');
+
+    // Remove picker
+    pickerBox.remove();
+    
+    // Optimistic UI update
+    editableSpan.innerHTML = `${newCategory} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>`;
+    editableSpan.setAttribute('data-current-cat', newCategory);
+
+    // Call API
+    try {
+        const res = await fetch(`/api/jobs/${jobId}/category`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: newCategory })
+        });
+        if (res.ok) {
+          const job = activeJobs.find(j => j.id === jobId);
+          if (job && job.result) {
+            job.result.category = newCategory;
+          }
+        }
+    } catch(err) {
+        console.error("Fehler beim Ändern der Kategorie", err);
+    }
+    return;
+  }
+
+  // Handle click on the main editable pill
+  const target = e.target.closest('.category-editable');
+  if (target) {
+    // Check if we already have a picker box open here
+    if (target.parentElement.querySelector('.category-picker-box')) return;
+    
+    e.stopPropagation();
+    e.preventDefault();
+    
+    // Close other pickers
+    document.querySelectorAll('.category-picker-box').forEach(box => box.remove());
+
+    const currentCat = target.getAttribute('data-current-cat');
+    const jobId = target.getAttribute('data-job-id');
+    
+    const categoriesStr = window.currentSettings?.AI_CATEGORIES || "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
+    const categories = categoriesStr.split(',').map(c => c.trim()).filter(c => c);
+    
+    if (!categories.includes(currentCat) && currentCat !== "-") {
+      categories.push(currentCat);
+    }
+
+    let pillsHtml = categories.map(c => {
+        const isSelected = c === currentCat;
+        const bg = isSelected ? 'var(--md-sys-color-primary, #6750a4)' : 'var(--md-sys-color-surface-variant, #e7e0ec)';
+        const color = isSelected ? '#ffffff' : 'var(--md-sys-color-on-surface-variant, #49454f)';
+        return `<span class="cat-option-pill" data-value="${c}" style="cursor: pointer; padding: 6px 12px; border-radius: 16px; background: ${bg}; color: ${color}; font-size: 13px; font-weight: 500; white-space: nowrap; transition: filter 0.2s;" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">${c}</span>`;
+    }).join('');
+
+    const pickerBoxHtml = `
+      <div class="category-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); border: 1px solid #e0e0e0; z-index: 1000; width: 320px; display: flex; flex-wrap: wrap; gap: 8px; cursor: default;">
+        <div style="width: 100%; font-size: 12px; color: #777; margin-bottom: 4px; font-weight: 600;">Kategorie auswählen:</div>
+        ${pillsHtml}
+      </div>
+    `;
+    
+    target.parentElement.insertAdjacentHTML('beforeend', pickerBoxHtml);
+  }
+});
+
+
+// Close picker when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.category-picker-box') && !e.target.closest('.category-editable')) {
+        const boxes = document.querySelectorAll('.category-picker-box');
+        if (boxes.length > 0) {
+            boxes.forEach(box => box.remove());
+            renderJobs();
+        }
+    }
 });

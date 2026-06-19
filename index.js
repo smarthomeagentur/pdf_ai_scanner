@@ -47,7 +47,7 @@ if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
     try {
       fs.renameSync(oldPath, newPath);
       console.log(`Moved ${f} to store/`);
-    } catch (e) {}
+    } catch (e) { }
   }
 });
 
@@ -73,7 +73,7 @@ const appSettings = {
 if (fs.existsSync(SETTINGS_FILE)) {
   try {
     Object.assign(appSettings, JSON.parse(fs.readFileSync(SETTINGS_FILE)));
-  } catch (e) {}
+  } catch (e) { }
 }
 
 const app = express();
@@ -97,12 +97,16 @@ const loginLimiter = rateLimit({
   message: { success: false, error: "Zu viele Login-Versuche, bitte in 15 Minuten erneut probieren." },
 });
 
-// Auth
-const requireAdmin = (req, res, next) => {
+const checkIsAdmin = (req) => {
   try {
     const token = req.cookies.admin_token;
-    if (token && jwt.verify(token, JWT_SECRET).admin) return next();
-  } catch (err) {}
+    if (token && jwt.verify(token, JWT_SECRET).admin) return true;
+  } catch (err) { }
+  return false;
+};
+
+const requireAdmin = (req, res, next) => {
+  if (checkIsAdmin(req)) return next();
   return res.status(403).json({ error: "Admin-Rechte erforderlich" });
 };
 
@@ -161,7 +165,7 @@ app.use((req, res, next) => {
     try {
       jwt.verify(token, JWT_SECRET);
       return next();
-    } catch (err) {}
+    } catch (err) { }
   }
   if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Unauthorized" });
   res.redirect("/login.html");
@@ -174,7 +178,7 @@ app.use(
     setHeaders: (res, path) => {
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     },
-  })
+  }),
 );
 app.use("/downloads", express.static(localDownloadFolder));
 
@@ -211,7 +215,7 @@ app.post("/api/auth/code", requireAdmin, express.json(), async (req, res) => {
     const oauth2Client = new (require("googleapis").google.auth.OAuth2)(
       key.client_id,
       key.client_secret,
-      "postmessage"
+      "postmessage",
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
 
@@ -240,9 +244,8 @@ app.get("/api/drive/folders", async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.list({
-      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${
-        req.query.parentId || "root"
-      }' in parents`,
+      q: `mimeType='application/vnd.google-apps.folder' and trashed=false and '${req.query.parentId || "root"
+        }' in parents`,
       fields: "files(id, name, parents)",
       orderBy: "name",
       pageSize: 1000,
@@ -268,21 +271,21 @@ app.get("/api/drive/search", async (req, res) => {
     const q = req.query.q;
     if (!q) return res.json({ success: true, files: [] });
 
-    // Wir suchen nur im AI-sortierten Ordner
-    const folderId = appSettings.FOLDER_ID_SORTED;
-    if (!folderId)
-      return res
-        .status(400)
-        .json({ error: "Es wurde noch kein AI-Zielordner in den Google Drive Einstellungen verbunden." });
+    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
+      ? appSettings.FOLDER_ID_SORTED
+      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
+
+    if (!driveFolderId) {
+      return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
+    }
 
     const drive = await driveApi.getClient();
-    let driveFolderId = driveApi.isValidGoogleDriveId(folderId) ? folderId : await driveApi.findFolderId(folderId);
-
-    if (!driveFolderId) return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
-
     const safeQ = q.replace(/'/g, "\\'");
-    // Suche nach Dateinamen oder im Text ("Description" bzw. Volltext)
-    const query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
+    let query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
+
+    if (!checkIsAdmin(req)) {
+      query += ` and not appProperties has { key='isPrivate' and value='true' }`;
+    }
 
     const result = await drive.files.list({
       q: query,
@@ -290,7 +293,7 @@ app.get("/api/drive/search", async (req, res) => {
       pageSize: 30, // Max 30 Ergebnisse, Google sortiert bei fullText automatisch nach Relevanz
     });
 
-    res.json({ success: true, files: result.data.files });
+    res.json({ success: true, files: result.data.files || [] });
   } catch (e) {
     console.error("[SEARCH] Fehler bei Google Drive Suche:", e);
     res.status(500).json({ error: e.toString() });
@@ -310,7 +313,7 @@ function loadJobs() {
     if (data.uploadJobs) uploadJobs = data.uploadJobs;
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
-  } catch (e) {}
+  } catch (e) { }
 }
 function saveJobs() {
   try {
@@ -330,7 +333,7 @@ function saveJobs() {
     fs.promises.writeFile(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles })).catch((err) => {
       console.error("[SYSTEM] Fehler beim asynchronen Speichern der Jobs:", err);
     });
-  } catch (e) {}
+  } catch (e) { }
 }
 loadJobs();
 
@@ -355,8 +358,12 @@ async function processQueue() {
         : await driveApi.findFolderId(appSettings.FOLDER_ID);
 
       // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
-      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
-      if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
+      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: 'true' } } : undefined;
+      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions, debug);
+      if (defaultDriveFile) {
+        processedDriveFiles.push(defaultDriveFile.id);
+        job.rawDriveId = defaultDriveFile.id;
+      }
 
       const aiStartTime = Date.now();
       const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
@@ -368,6 +375,9 @@ async function processQueue() {
       if (sortedName.isInvoice) tagsArr.push("Rechnung");
       if (sortedName.documentDate && sortedName.documentDate !== "unknown")
         tagsArr.push(`Datum:${sortedName.documentDate}`);
+      if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
+      if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none") tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
+      if (sortedName.invoiceAmmount !== undefined) tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
 
       try {
         await exiftool.write(job.filePath, {
@@ -397,14 +407,15 @@ async function processQueue() {
 
       let driveFile = appSettings.FOLDER_ID_SORTED
         ? await driveApi.uploadFile(
-            job.filePath,
-            appSettings.FOLDER_ID_SORTED,
-            {
-              name: sortedName.full,
-              description: searchDescription,
-            },
-            debug
-          )
+          job.filePath,
+          appSettings.FOLDER_ID_SORTED,
+          {
+            name: sortedName.full,
+            description: searchDescription,
+            appProperties: job.isPrivate ? { isPrivate: 'true' } : undefined,
+          },
+          debug,
+        )
         : null;
 
       driveFile = driveFile || defaultDriveFile;
@@ -420,8 +431,8 @@ async function processQueue() {
       if (fs.existsSync(jpgPath)) {
         try {
           localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
-        } catch (e) {}
-        await fs.promises.unlink(jpgPath).catch(() => {});
+        } catch (e) { }
+        await fs.promises.unlink(jpgPath).catch(() => { });
       }
 
       // Fallback: Falls kein Thumbnail existiert (z.B. reiner Google Drive Upload)
@@ -433,11 +444,13 @@ async function processQueue() {
         }
       }
 
-      await fs.promises.unlink(job.filePath).catch(() => {});
+      await fs.promises.unlink(job.filePath).catch(() => { });
 
       job.status = "completed";
       sortedName.localThumbnail = localThumbBase64;
       job.result = sortedName;
+      job.invoiceNumber = sortedName.invoiceNumber;
+      job.invoiceAmmount = sortedName.invoiceAmmount;
       saveJobs();
       console.log(`[WEB] Job ${jobId} finished.`);
     } catch (error) {
@@ -446,10 +459,10 @@ async function processQueue() {
       job.error = error.message;
       saveJobs();
       try {
-        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
+        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
         const jpgPath = job.filePath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => {});
-      } catch (e) {}
+        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => { });
+      } catch (e) { }
     }
   }
 
@@ -543,10 +556,16 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
 });
 
 app.get("/api/status", (req, res) => {
+  const isAdmin = checkIsAdmin(req);
   let statuses =
     req.query.ids === "all"
       ? Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
       : (req.query.ids ? req.query.ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
+      
+  if (!isAdmin) {
+    statuses = statuses.filter(job => !job.isPrivate);
+  }
+  
   res.json({ success: true, statuses });
 });
 
@@ -555,6 +574,52 @@ app.delete("/api/jobs", requireAdmin, (req, res) => {
   uploadQueue = [];
   saveJobs();
   res.json({ success: true });
+});
+
+app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res) => {
+  const jobId = req.params.id;
+  const isPrivate = req.body.isPrivate;
+  const job = uploadJobs[jobId];
+  if (job) {
+    job.isPrivate = isPrivate;
+    saveJobs();
+
+    const appProps = isPrivate ? { isPrivate: 'true' } : { isPrivate: null };
+    const promises = [];
+
+    // Extract sorted file ID from webViewLink
+    if (job.result && job.result.webViewLink) {
+        const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (match) promises.push(driveApi.updateFileProperties(match[1], appProps));
+    }
+    
+    // Also update raw backup file if it exists
+    if (job.rawDriveId) {
+        promises.push(driveApi.updateFileProperties(job.rawDriveId, appProps));
+    }
+
+    try {
+        await Promise.all(promises);
+    } catch(e) {
+        console.error("Error updating drive file properties:", e);
+    }
+
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
+});
+
+app.post("/api/jobs/:id/category", express.json(), (req, res) => {
+  const jobId = req.params.id;
+  const newCategory = req.body.category;
+  if (uploadJobs[jobId] && uploadJobs[jobId].result) {
+    uploadJobs[jobId].result.category = newCategory;
+    saveJobs();
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
 });
 
 app.post("/api/scan", upload.array("images", 50), async (req, res) => {
@@ -580,7 +645,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
               console.error(`[SCANNER]: ${error.message}`);
               reject(error);
             } else resolve(tempPdfPath);
-          }
+          },
         );
       });
 
@@ -589,8 +654,8 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
         await runScannerTask(
           req.files[i].path,
           path.join(localDownloadFolder, `temp_${Date.now()}_${i}.pdf`),
-          Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : ""
-        )
+          Array.isArray(coordsList) ? coordsList[i] || "" : i === 0 ? coordsList : "",
+        ),
       );
     }
 
@@ -639,9 +704,9 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
       if (err && !["ECONNABORTED", "EPIPE"].includes(err.code)) console.error("[SCANNER] Fehler beim Senden:", err);
       // Wenn NICHT der KI-Warteschlange hinzugefügt (= reiner lokaler Download), dann Datei nach dem Senden direkt löschen
       if (!autoQueue && fs.existsSync(outputPdfPath)) {
-        fs.promises.unlink(outputPdfPath).catch(() => {});
+        fs.promises.unlink(outputPdfPath).catch(() => { });
         const jpgPath = outputPdfPath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) fs.promises.unlink(jpgPath).catch(() => {});
+        if (fs.existsSync(jpgPath)) fs.promises.unlink(jpgPath).catch(() => { });
       }
     });
   } catch (error) {
@@ -667,7 +732,7 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
           const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
           if (match) res.setHeader("X-Detected-Algorithm", match[1]);
           resolve(outputJpgPath);
-        }
+        },
       );
     });
 
@@ -694,7 +759,8 @@ async function init() {
     setTimeout(checkDriveForNewFiles, 10000);
   }
   if (testrun) {
-    for (var i = 1; i <= 10; i++) console.log(await aiAgent.getPdfName(i + ".pdf", appSettings));
+    await aiAgent.getPdfName("./samples-scanner/1.pdf", appSettings);
+    //for (var i = 1; i <= 10; i++) console.log(await aiAgent.getPdfName("./samples-scanner/" + i + ".pdf", appSettings));
   }
 }
 
