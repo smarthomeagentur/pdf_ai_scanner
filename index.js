@@ -561,6 +561,18 @@ app.delete("/api/jobs", requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
+app.post("/api/jobs/:id/category", express.json(), (req, res) => {
+  const jobId = req.params.id;
+  const newCategory = req.body.category;
+  if (uploadJobs[jobId] && uploadJobs[jobId].result) {
+    uploadJobs[jobId].result.category = newCategory;
+    saveJobs();
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
+});
+
 app.post("/api/scan", upload.array("images", 50), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Bilder hochgeladen." });
 
