@@ -97,12 +97,16 @@ const loginLimiter = rateLimit({
   message: { success: false, error: "Zu viele Login-Versuche, bitte in 15 Minuten erneut probieren." },
 });
 
-// Auth
-const requireAdmin = (req, res, next) => {
+const checkIsAdmin = (req) => {
   try {
     const token = req.cookies.admin_token;
-    if (token && jwt.verify(token, JWT_SECRET).admin) return next();
+    if (token && jwt.verify(token, JWT_SECRET).admin) return true;
   } catch (err) { }
+  return false;
+};
+
+const requireAdmin = (req, res, next) => {
+  if (checkIsAdmin(req)) return next();
   return res.status(403).json({ error: "Admin-Rechte erforderlich" });
 };
 
@@ -267,21 +271,21 @@ app.get("/api/drive/search", async (req, res) => {
     const q = req.query.q;
     if (!q) return res.json({ success: true, files: [] });
 
-    // Wir suchen nur im AI-sortierten Ordner
-    const folderId = appSettings.FOLDER_ID_SORTED;
-    if (!folderId)
-      return res
-        .status(400)
-        .json({ error: "Es wurde noch kein AI-Zielordner in den Google Drive Einstellungen verbunden." });
+    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
+      ? appSettings.FOLDER_ID_SORTED
+      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
+
+    if (!driveFolderId) {
+      return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
+    }
 
     const drive = await driveApi.getClient();
-    let driveFolderId = driveApi.isValidGoogleDriveId(folderId) ? folderId : await driveApi.findFolderId(folderId);
-
-    if (!driveFolderId) return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
-
     const safeQ = q.replace(/'/g, "\\'");
-    // Suche nach Dateinamen oder im Text ("Description" bzw. Volltext)
-    const query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
+    let query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
+
+    if (!checkIsAdmin(req)) {
+      query += ` and not appProperties has { key='isPrivate' and value='true' }`;
+    }
 
     const result = await drive.files.list({
       q: query,
@@ -289,7 +293,7 @@ app.get("/api/drive/search", async (req, res) => {
       pageSize: 30, // Max 30 Ergebnisse, Google sortiert bei fullText automatisch nach Relevanz
     });
 
-    res.json({ success: true, files: result.data.files });
+    res.json({ success: true, files: result.data.files || [] });
   } catch (e) {
     console.error("[SEARCH] Fehler bei Google Drive Suche:", e);
     res.status(500).json({ error: e.toString() });
@@ -354,8 +358,12 @@ async function processQueue() {
         : await driveApi.findFolderId(appSettings.FOLDER_ID);
 
       // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
-      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, undefined, debug);
-      if (defaultDriveFile) processedDriveFiles.push(defaultDriveFile.id);
+      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: 'true' } } : undefined;
+      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions, debug);
+      if (defaultDriveFile) {
+        processedDriveFiles.push(defaultDriveFile.id);
+        job.rawDriveId = defaultDriveFile.id;
+      }
 
       const aiStartTime = Date.now();
       const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
@@ -404,6 +412,7 @@ async function processQueue() {
           {
             name: sortedName.full,
             description: searchDescription,
+            appProperties: job.isPrivate ? { isPrivate: 'true' } : undefined,
           },
           debug,
         )
@@ -547,10 +556,16 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
 });
 
 app.get("/api/status", (req, res) => {
+  const isAdmin = checkIsAdmin(req);
   let statuses =
     req.query.ids === "all"
       ? Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
       : (req.query.ids ? req.query.ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
+      
+  if (!isAdmin) {
+    statuses = statuses.filter(job => !job.isPrivate);
+  }
+  
   res.json({ success: true, statuses });
 });
 
@@ -559,6 +574,40 @@ app.delete("/api/jobs", requireAdmin, (req, res) => {
   uploadQueue = [];
   saveJobs();
   res.json({ success: true });
+});
+
+app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res) => {
+  const jobId = req.params.id;
+  const isPrivate = req.body.isPrivate;
+  const job = uploadJobs[jobId];
+  if (job) {
+    job.isPrivate = isPrivate;
+    saveJobs();
+
+    const appProps = isPrivate ? { isPrivate: 'true' } : { isPrivate: null };
+    const promises = [];
+
+    // Extract sorted file ID from webViewLink
+    if (job.result && job.result.webViewLink) {
+        const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (match) promises.push(driveApi.updateFileProperties(match[1], appProps));
+    }
+    
+    // Also update raw backup file if it exists
+    if (job.rawDriveId) {
+        promises.push(driveApi.updateFileProperties(job.rawDriveId, appProps));
+    }
+
+    try {
+        await Promise.all(promises);
+    } catch(e) {
+        console.error("Error updating drive file properties:", e);
+    }
+
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
 });
 
 app.post("/api/jobs/:id/category", express.json(), (req, res) => {

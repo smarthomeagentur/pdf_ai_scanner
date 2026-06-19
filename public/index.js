@@ -511,6 +511,23 @@ function renderJobs() {
   activeJobs.forEach((job) => {
     const div = document.createElement("div");
     div.className = `job-item ${job.status}`;
+    if (job.isPrivate) {
+      div.style.borderLeft = "4px solid #f44336";
+      div.style.backgroundColor = "#fff8f8";
+    }
+
+    let privateBadgeHtml = '';
+    if (window.isAdmin) {
+        const bg = job.isPrivate ? '#f44336' : '#e0e0e0';
+        const color = job.isPrivate ? 'white' : '#666';
+        const icon = job.isPrivate ? 'lock' : 'lock_open';
+        const text = job.isPrivate ? 'PRIVAT' : 'ÖFFENTLICH';
+        privateBadgeHtml = `<span class="toggle-private-pill" data-job-id="${job.id}" style="cursor: pointer; background: ${bg}; color: ${color}; padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-left: 8px; vertical-align: middle; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; user-select: none;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+            <span class="material-symbols-outlined" style="font-size: 12px;">${icon}</span> ${text}
+        </span>`;
+    } else if (job.isPrivate) {
+        privateBadgeHtml = '<span style="background: #f44336; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;">🔒 PRIVAT</span>';
+    }
 
     let statusText =
       job.status === "pending"
@@ -600,7 +617,10 @@ ${invoiceHtml}                            <br><strong style="color: var(--md-sys
                 <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
                     <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
                         <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                            <span style="word-break: break-word; line-height: 1.2;">${job.originalName}</span>
+                            <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center;">
+                                ${job.originalName}
+                                ${privateBadgeHtml}
+                            </span>
                             <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
                         </div>
                         <div class="job-status" style="margin-top: 4px;">${statusText}</div>
@@ -764,6 +784,13 @@ closeSearchBtn.addEventListener("click", () => {
 
 // Fetch settings globally on load so category options are available
 async function loadGlobalSettings() {
+  window.isAdmin = false;
+  try {
+    const adminRes = await fetch("/api/admin-check");
+    window.isAdmin = adminRes.ok;
+    renderJobs();
+  } catch(e) {}
+
   try {
     const res = await fetch("/api/settings");
     const json = await res.json();
@@ -776,6 +803,38 @@ loadGlobalSettings();
 
 // Category click to edit (modern pill design)
 jobList.addEventListener('click', async (e) => {
+  // Handle click on toggle private pill
+  const togglePill = e.target.closest('.toggle-private-pill');
+  if (togglePill) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = togglePill.getAttribute('data-job-id');
+    const job = activeJobs.find(j => j.id === jobId);
+    if (!job) return;
+    
+    const newIsPrivate = !job.isPrivate;
+    job.isPrivate = newIsPrivate;
+    renderJobs(); // optimistic update
+    
+    try {
+        const res = await fetch(`/api/jobs/${jobId}/private`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isPrivate: newIsPrivate })
+        });
+        if (!res.ok) {
+            alert("Fehler beim Speichern des Privat-Status.");
+            job.isPrivate = !newIsPrivate;
+            renderJobs();
+        }
+    } catch(err) {
+        console.error("Failed to toggle private status", err);
+        job.isPrivate = !newIsPrivate;
+        renderJobs();
+    }
+    return;
+  }
+
   // Handle click on a category option pill
   const optionPill = e.target.closest('.cat-option-pill');
   if (optionPill) {
@@ -851,6 +910,7 @@ jobList.addEventListener('click', async (e) => {
     target.parentElement.insertAdjacentHTML('beforeend', pickerBoxHtml);
   }
 });
+
 
 // Close picker when clicking outside
 document.addEventListener('click', (e) => {
