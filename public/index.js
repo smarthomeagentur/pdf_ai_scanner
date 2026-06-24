@@ -403,10 +403,98 @@ confirmClearBtn.addEventListener("click", async () => {
   renderJobs();
 });
 
+function showDuplicateDialog(filename, simJob) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("duplicate-check-modal");
+    const text = document.getElementById("duplicate-check-text");
+    
+    let detailsHtml = "";
+    if (simJob) {
+      const displayDate = simJob.uploadDate ? new Date(simJob.uploadDate).toLocaleString("de-DE") : "-";
+      let statusText = simJob.status === "completed" ? "Abgeschlossen" : (simJob.status === "processing" ? "In Verarbeitung" : "Warteschlange");
+      let companyHtml = "";
+      let categoryHtml = "";
+      let tagsHtml = "";
+      let previewHtml = "";
+      if (simJob.result) {
+        if (simJob.result.company) companyHtml = `<br>Unternehmen: ${simJob.result.company}`;
+        if (simJob.result.category) categoryHtml = `<br>Kategorie: ${simJob.result.category}`;
+        if (simJob.result.tags && Array.isArray(simJob.result.tags)) tagsHtml = `<br>Tags: ${simJob.result.tags.slice(0, 3).join(", ")}`;
+        
+        if (simJob.result.localThumbnail || simJob.result.thumbnailLink) {
+          const imgSrc = simJob.result.localThumbnail || simJob.result.thumbnailLink;
+          previewHtml = `
+            <div style="margin-top: 10px; text-align: center;">
+              <img src="${imgSrc}" style="height: 250px; aspect-ratio: 1 / 1.414; object-fit: fill; border-radius: 4px; border: 1px solid #ccc; background: #fff;" title="Vorschau" alt="Vorschau">
+            </div>
+          `;
+        }
+      }
+      
+      detailsHtml = `
+        <div style="text-align: left; background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 13px; border: 1px solid #ddd; line-height: 1.5; overflow: hidden;">
+          <strong style="color: #333;">Ähnliches Dokument gefunden:</strong><br>
+          Original Name: ${simJob.originalName}<br>
+          Datum: ${displayDate}<br>
+          Status: ${statusText}${companyHtml}${categoryHtml}${tagsHtml}
+          ${previewHtml}
+        </div>
+      `;
+    }
+    
+    text.innerHTML = `Die Datei "<strong>${filename}</strong>" existiert bereits oder eine ähnliche Datei wurde bereits hochgeladen. Möchtest du die Verarbeitung fortsetzen oder abbrechen?${detailsHtml}`;
+    modal.style.display = "flex";
+    
+    const skipBtn = document.getElementById("btn-skip-duplicate");
+    const uploadBtn = document.getElementById("btn-upload-duplicate");
+    
+    const cleanup = () => {
+      skipBtn.removeEventListener("click", onSkip);
+      uploadBtn.removeEventListener("click", onUpload);
+      modal.style.display = "none";
+    };
+    
+    const onSkip = () => { cleanup(); resolve(false); };
+    const onUpload = () => { cleanup(); resolve(true); };
+    
+    skipBtn.addEventListener("click", onSkip);
+    uploadBtn.addEventListener("click", onUpload);
+  });
+}
+
 async function uploadFiles(files) {
+  let filesToUpload = Array.from(files);
+
+  for (let i = 0; i < filesToUpload.length; i++) {
+    const file = filesToUpload[i];
+    const fileBase = file.name.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+    let foundSimJob = null;
+    activeJobs.some(j => {
+      const jBase = j.originalName.replace(/\.[^/.]+$/, "").toLowerCase().trim();
+      if (jBase === fileBase) { foundSimJob = j; return true; }
+      const jClean = jBase.replace(/[0-9\-_()\s]/g, "");
+      const fClean = fileBase.replace(/[0-9\-_()\s]/g, "");
+      if (jClean.length > 5 && fClean.length > 5 && (jClean === fClean || jClean.includes(fClean) || fClean.includes(jClean))) { foundSimJob = j; return true; }
+      return false;
+    });
+
+    if (foundSimJob) {
+      const shouldUpload = await showDuplicateDialog(file.name, foundSimJob);
+      if (!shouldUpload) {
+        filesToUpload[i] = null;
+      }
+    }
+  }
+
+  filesToUpload = filesToUpload.filter(f => f !== null);
+  if (filesToUpload.length === 0) {
+    fileInput.value = "";
+    return;
+  }
+
   let formData = new FormData();
-  for (let i = 0; i < files.length; i++) {
-    formData.append("files", files[i]);
+  for (let i = 0; i < filesToUpload.length; i++) {
+    formData.append("files", filesToUpload[i]);
   }
 
   statusDiv.innerHTML = "Lade Dateien hoch... Bitte warten.";
@@ -529,6 +617,11 @@ function renderJobs() {
         privateBadgeHtml = '<span style="background: #f44336; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;">🔒 PRIVAT</span>';
     }
 
+    let duplicateBadgeHtml = '';
+    if (job.suspectedDuplicate) {
+        duplicateBadgeHtml = '<span style="background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Verdacht auf Duplikat">⚠️ DUPLIKAT VERDACHT</span>';
+    }
+
     let statusText =
       job.status === "pending"
         ? "In der Warteschlange..."
@@ -562,8 +655,8 @@ function renderJobs() {
         const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
         previewHtml = `<a href="${
           job.result.webViewLink || "#"
-        }" target="_blank" style="position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none;">
-                        <img src="${imgSrc}" alt="PDF Vorschau" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: #fff; display: block; border: 1px solid #ddd;">
+        }" target="_blank" class="pdf-preview-container">
+                        <img src="${imgSrc}" alt="PDF Vorschau" class="pdf-preview-img">
                     </a>`;
       }
 
@@ -620,6 +713,7 @@ ${invoiceHtml}                            <br><strong style="color: var(--md-sys
                             <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center;">
                                 ${job.originalName}
                                 ${privateBadgeHtml}
+                                ${duplicateBadgeHtml}
                             </span>
                             <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
                         </div>
