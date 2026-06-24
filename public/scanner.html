@@ -1,142 +1,96 @@
 <!doctype html>
 <html lang="de">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>Live Dokumentenscanner</title>
 
-    <!-- PWA Meta Tags -->
-    <link rel="manifest" href="/manifest.json?v=2" />
-    <meta name="theme-color" content="#ffffff" />
-    <link rel="icon" href="/icon.svg?v=2" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon.svg?v=2" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta
-      name="apple-mobile-web-app-status-bar-style"
-      content="black-translucent"
-    />
-    <meta name="apple-mobile-web-app-title" content="Scanner" />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Live Dokumentenscanner</title>
 
-    <!-- Roboto Google Font for Material You -->
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <!-- PWA Meta Tags -->
+  <link rel="manifest" href="/manifest.json?v=2" />
+  <meta name="theme-color" content="#ffffff" />
+  <link rel="icon" href="/icon.svg?v=2" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon.svg?v=2" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Scanner" />
 
-    <link
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="/scanner.css?v=1777396912" />
-    <link rel="stylesheet" href="/md3-theme.css" />
-  </head>
-  <body>
-    <div class="scanner-container">
-      <!-- Sticky Header -->
-      <div
-        class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3"
-      >
-        <a href="/" class="back-link m-0 d-flex align-items-center gap-1"><span class="material-symbols-outlined">arrow_back</span> Home</a>
-        <div class="d-flex gap-2">
-          <button
-            id="autoCaptureBtn"
-            class="btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-2"
-            style="
+  <!-- Roboto Google Font for Material You -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="/scanner.css?v=1777396912" />
+  <link rel="stylesheet" href="/md3-theme.css" />
+</head>
+
+<body>
+  <div class="scanner-container">
+    <!-- Sticky Header -->
+    <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
+      <a href="/" class="back-link m-0 d-flex align-items-center gap-1"><span
+          class="material-symbols-outlined">arrow_back</span> Home</a>
+      <div class="d-flex gap-2">
+        <button id="autoCaptureBtn"
+          class="btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-2" style="
               font-weight: 500;
               font-size: 1rem;
               padding: 8px 16px !important;
               min-width: 130px; /* Fixed width prevents resize when text changes */
               height: 40px; /* Fixed height against padding jumps */
-            "
-            title="Auto-Capture (An/Aus)"
-          >
-            <span class="material-symbols-outlined">document_scanner</span> <span>Auto: An</span>
-          </button>
-          <button
-            class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center"
-            onclick="
+            " title="Auto-Capture (An/Aus)">
+          <span class="material-symbols-outlined">document_scanner</span> <span>Auto: An</span>
+        </button>
+        <button class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center" onclick="
               document.getElementById('filterMenu').open =
                 !document.getElementById('filterMenu').open
-            "
-            style="padding: 6px; border-radius: 50%;"
-          >
-            <span class="material-symbols-outlined">tune</span>
-          </button>
-        </div>
+            " style="padding: 6px; border-radius: 50%;">
+          <span class="material-symbols-outlined">tune</span>
+        </button>
       </div>
+    </div>
 
-      <!-- Dropdown Einstellungen (Sticky directly below header) -->
-      <details
-        id="filterMenu"
-        class="bg-light text-start shadow-sm position-sticky"
-        style="top: 60px; z-index: 1020; border-bottom: 2px solid #ddd"
-      >
-        <summary
-          class="text-secondary fw-bold p-3 m-0"
-          style="cursor: pointer; background: #f8f9fa; display: none"
-        >
-          <span class="material-symbols-outlined" style="vertical-align: middle;">tune</span> Filtereinstellungen anzeigen
-        </summary>
-        <div class="px-3 pb-3 border-top pt-2">
-          <!-- Bild-Filter ist jetzt exklusiv im Preview-Screen. Intern halten wir den State fest: -->
-          <input type="hidden" id="algorithmSelect" value="auto" />
+    <!-- Dropdown Einstellungen (Sticky directly below header) -->
+    <details id="filterMenu" class="bg-light text-start shadow-sm position-sticky"
+      style="top: 60px; z-index: 1020; border-bottom: 2px solid #ddd">
+      <summary class="text-secondary fw-bold p-3 m-0" style="cursor: pointer; background: #f8f9fa; display: none">
+        <span class="material-symbols-outlined" style="vertical-align: middle;">tune</span> Filtereinstellungen anzeigen
+      </summary>
+      <div class="px-3 pb-3 border-top pt-2">
+        <!-- Bild-Filter ist jetzt exklusiv im Preview-Screen. Intern halten wir den State fest: -->
+        <input type="hidden" id="algorithmSelect" value="auto" />
 
-          <h6 class="text-secondary mt-3 mb-2 small fw-bold">
-            Scanner Einstellung
-          </h6>
+        <h6 class="text-secondary mt-3 mb-2 small fw-bold">
+          Scanner Einstellung
+        </h6>
 
-          <label class="form-label mb-0 mt-1 small"
-            >Dokumentenerkennung: <span id="sensitivityVal">50%</span></label
-          >
-          <input
-            type="range"
-            class="modern-slider"
-            id="sensitivitySlider"
-            min="0"
-            max="100"
-            value="50"
-          />
+        <label class="form-label mb-0 mt-1 small">Dokumentenerkennung: <span id="sensitivityVal">85%</span></label>
+        <input type="range" class="modern-slider" id="sensitivitySlider" min="0" max="100" value="85" />
 
-          <label class="form-label mb-0 mt-1 small"
-            >Rahmen-Trägheit (Anti-Flicker):
-            <span id="smoothingVal">20%</span></label
-          >
-          <input
-            type="range"
-            class="modern-slider"
-            id="smoothingSlider"
-            min="1"
-            max="100"
-            value="20"
-          />
+        <label class="form-label mb-0 mt-1 small">Rahmen-Trägheit (Anti-Flicker):
+          <span id="smoothingVal">50%</span></label>
+        <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="50" />
 
-          <hr class="my-3" />
-          <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
-          <!-- Die Optionen wurden gemäß Audit entfernt. AutoQueue (KI Pipeline) ist nun via Button geregelt -->
-        </div>
-      </details>
-
-      <div id="opencv-loading">
-        <div
-          class="spinner-border spinner-border-sm text-primary mb-2"
-          role="status"
-        ></div>
-        <br />
-        Kamera & Optik werden geladen...
+        <hr class="my-3" />
+        <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
+        <!-- Die Optionen wurden gemäß Audit entfernt. AutoQueue (KI Pipeline) ist nun via Button geregelt -->
       </div>
+    </details>
 
-      <!-- Video füllt den restlichen Bildschirm -->
-      <div class="video-wrapper" id="video-wrapper">
-        <video id="video" autoplay playsinline></video>
-        <canvas id="overlay"></canvas>
-      </div>
+    <div id="opencv-loading">
+      <div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div>
+      <br />
+      Kamera & Optik werden geladen...
+    </div>
 
-      <!-- Review Section für manuelles Croppen -->
-      <div
-        id="manual-review-section"
-        class="bg-white p-3 mt-auto"
-        style="
+    <!-- Video füllt den restlichen Bildschirm -->
+    <div class="video-wrapper" id="video-wrapper">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- Review Section für manuelles Croppen -->
+    <div id="manual-review-section" class="bg-white p-3 mt-auto" style="
           display: none;
           position: relative;
           width: 100%;
@@ -146,20 +100,15 @@
           align-items: center;
           justify-content: center;
           flex-grow: 1;
-        "
-      >
-        <!-- Close button (Abbrechen) oben rechts absolut positioniert im Review-Panel -->
-        <button
-          id="cancelReviewCrossBtn"
-          class="btn btn-sm btn-outline-secondary position-absolute d-flex align-items-center justify-content-center"
-          style="top: 15px; right: 15px; padding: 6px; border-radius: 50%; z-index: 1040;"
-          title="Schließen"
-        >
-          <span class="material-symbols-outlined">close</span>
-        </button>
+        ">
+      <!-- Close button (Abbrechen) oben rechts absolut positioniert im Review-Panel -->
+      <button id="cancelReviewCrossBtn"
+        class="btn btn-sm btn-outline-secondary position-absolute d-flex align-items-center justify-content-center"
+        style="top: 15px; right: 15px; padding: 6px; border-radius: 50%; z-index: 1040;" title="Schließen">
+        <span class="material-symbols-outlined">close</span>
+      </button>
 
-        <div
-          style="
+      <div style="
             position: relative;
             max-width: 100%;
             height: auto;
@@ -168,20 +117,14 @@
             overflow: hidden;
             background: #eee;
             display: inline-block;
-          "
-        >
-          <canvas
-            id="reviewCanvas"
-            style="
+          ">
+        <canvas id="reviewCanvas" style="
               max-width: 100%;
               max-height: 65vh;
               display: block;
               object-fit: contain;
-            "
-          ></canvas>
-          <canvas
-            id="reviewOverlay"
-            style="
+            "></canvas>
+        <canvas id="reviewOverlay" style="
               position: absolute;
               top: 0;
               left: 0;
@@ -189,111 +132,67 @@
               height: 100%;
               z-index: 20;
               touch-action: none;
-            "
-          ></canvas>
-        </div>
+            "></canvas>
+      </div>
 
-        <div
-          id="previewLoadingText"
-          class="text-primary mt-2 fw-bold"
-          style="display: none; font-size: 0.9em"
-        >
-          <span
-            class="spinner-border spinner-border-sm me-1"
-            role="status"
-            aria-hidden="true"
-          ></span>
-          Warten auf Vorschau...
-        </div>
+      <div id="previewLoadingText" class="text-primary mt-2 fw-bold" style="display: none; font-size: 0.9em">
+        <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+        Warten auf Vorschau...
+      </div>
 
-        <div
-          class="mt-3 w-100 d-flex justify-content-center flex-column gap-2"
-          style="max-width: 500px"
-        >
-          <div class="input-group mb-2 shadow-sm">
-            <span
-              class="input-group-text bg-light fw-bold"
-              style="font-size: 0.9em"
-              >🎨 Filter</span
-            >
-            <select
-              id="previewAlgorithmSelect"
-              class="form-select text-primary fw-bold"
-              style="font-size: 0.9em"
-              onchange="
+      <div class="mt-3 w-100 d-flex justify-content-center flex-column gap-2" style="max-width: 500px">
+        <div class="input-group mb-2 shadow-sm">
+          <span class="input-group-text bg-light fw-bold" style="font-size: 0.9em">🎨 Filter</span>
+          <select id="previewAlgorithmSelect" class="form-select text-primary fw-bold" style="font-size: 0.9em"
+            onchange="
                 document.getElementById('algorithmSelect').value = this.value;
                 updatePreviewFilter();
-              "
-            >
-              <option value="auto">✨ Auto-Erkennung (Empfohlen)</option>
-              <option value="color_enhanced">Optimiert Farbe</option>
-              <option value="white_paper">Optimiert SW</option>
-              <option value="bw_adaptive">
-                SW Hart (Quittungen / Kassenzettel)
-              </option>
-              <option value="grayscale">Original Graustufen</option>
-              <option value="color">Original Farbe</option>
-            </select>
-          </div>
-
-          <div class="d-flex gap-2 w-100">
-            <button
-              class="btn btn-secondary w-50 py-2 fw-bold text-white shadow-sm"
-              id="rescanBtn"
-              style="font-size: 0.95em"
-            >
-              Kantenerkennung
-            </button>
-            <button
-              class="btn btn-primary w-50 py-2 fw-bold shadow-sm"
-              id="addPageBtn"
-              style="font-size: 0.95em"
-            >
-              Nächste Seite
-            </button>
-          </div>
+              ">
+            <option value="auto">✨ Auto-Erkennung (Empfohlen)</option>
+            <option value="color_enhanced">Optimiert Farbe</option>
+            <option value="white_paper">Optimiert SW</option>
+            <option value="bw_adaptive">
+              SW Hart (Quittungen / Kassenzettel)
+            </option>
+            <option value="grayscale">Original Graustufen</option>
+            <option value="color">Original Farbe</option>
+          </select>
         </div>
 
-        <div
-          class="d-flex w-100 gap-2 mb-3 mt-3 position-relative"
-          style="
+        <div class="d-flex gap-2 w-100">
+          <button class="btn btn-secondary w-50 py-2 fw-bold text-white shadow-sm" id="rescanBtn"
+            style="font-size: 0.95em">
+            Kantenerkennung
+          </button>
+          <button class="btn btn-primary w-50 py-2 fw-bold shadow-sm" id="addPageBtn" style="font-size: 0.95em">
+            Nächste Seite
+          </button>
+        </div>
+      </div>
+
+      <div class="d-flex w-100 gap-2 mb-3 mt-3 position-relative" style="
             max-width: 500px;
             padding-bottom: env(safe-area-inset-bottom, 20px);
-          "
-        >
-          <button
-            class="btn btn-secondary py-2 shadow-sm text-white fw-bold"
-            id="downloadOnlyBtn"
-            style="flex: 1;"
-          >
-            Download
-          </button>
-          <button
-            class="btn btn-success py-2 shadow-sm fw-bold"
-            style="flex: 2; font-size: 1.05em"
-            id="finishScanBtn"
-          >
-            Verarbeiten
-          </button>
-        </div>
+          ">
+        <button class="btn btn-secondary py-2 shadow-sm text-white fw-bold" id="downloadOnlyBtn" style="flex: 1;">
+          Download
+        </button>
+        <button class="btn btn-success py-2 shadow-sm fw-bold" style="flex: 2; font-size: 1.05em" id="finishScanBtn">
+          Verarbeiten
+        </button>
       </div>
+    </div>
 
-      <!-- Scanner Info / Loader -->
-      <div
-        id="loader"
-        class="mt-auto mb-5 p-4 bg-white"
-        style="display: none; width: 100%; text-align: center"
-      >
-        <div class="spinner-border text-primary" role="status"></div>
-        <p class="mt-2 text-muted" id="loader-status">
-          Dokument wird beschnitten und OCR-verarbeitet...
-        </p>
-      </div>
+    <!-- Scanner Info / Loader -->
+    <div id="loader" class="mt-auto mb-5 p-4 bg-white" style="display: none; width: 100%; text-align: center">
+      <div class="spinner-border text-primary" role="status"></div>
+      <p class="mt-2 text-muted" id="loader-status">
+        Dokument wird beschnitten und OCR-verarbeitet...
+      </p>
+    </div>
 
-      <!-- Großer Auto-Countdown Indikator -->
-      <div
-        id="auto-countdown"
-        style="
+    <!-- Großer Auto-Countdown Indikator -->
+    <div id="auto-countdown" style="
           display: none;
           position: fixed;
           top: 40%;
@@ -305,16 +204,12 @@
           font-weight: bold;
           text-shadow: 0px 4px 15px rgba(0, 0, 0, 0.8);
           pointer-events: none;
-        "
-      >
-        2
-      </div>
+        ">
+      2
+    </div>
 
-      <!-- Floating Button für besseres Mobile-Bedienen -->
-      <button
-        id="captureBtn"
-        class="btn btn-primary"
-        style="
+    <!-- Floating Button für besseres Mobile-Bedienen -->
+    <button id="captureBtn" class="btn btn-primary" style="
           display: none;
           position: fixed;
           bottom: 40px;
@@ -326,17 +221,12 @@
           box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
           font-size: 1.1rem;
           padding: 14px;
-        "
-        disabled
-      >
-        <span class="material-symbols-outlined pe-2">photo_camera</span> Dokument scannen
-      </button>
+        " disabled>
+      <span class="material-symbols-outlined pe-2">photo_camera</span> Dokument scannen
+    </button>
 
-      <!-- Floating Taschenlampe -->
-      <button
-        id="torchBtn"
-        class="btn d-flex align-items-center justify-content-center flex-column"
-        style="
+    <!-- Floating Taschenlampe -->
+    <button id="torchBtn" class="btn d-flex align-items-center justify-content-center flex-column" style="
           display: none;
           position: fixed;
           bottom: 110px;
@@ -359,22 +249,16 @@
           flex-direction: column;
           text-align: center;
           line-height: 1.2;
-        "
-        title="Taschenlampe (Aus/An/Auto)"
-      >
-        <span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size: 8px">Auto</small>
-      </button>
-    </div>
+        " title="Taschenlampe (Aus/An/Auto)">
+      <span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size: 8px">Auto</small>
+    </button>
+  </div>
 
-    <!-- Zuerst die Scanner-Logik definieren, damit onOpenCvReady bekannt ist -->
-    <script src="/scanner.js?v=1777396912"></script>
+  <!-- Zuerst die Scanner-Logik definieren, damit onOpenCvReady bekannt ist -->
+  <script src="/scanner.js?v=1777396912"></script>
 
-    <!-- OpenCV.js erst im Hintergrund (defer) laden! -->
-    <script
-      defer
-      src="https://docs.opencv.org/4.8.0/opencv.js"
-      onload="onOpenCvReady()"
-      type="text/javascript"
-    ></script>
-  </body>
+  <!-- OpenCV.js erst im Hintergrund (defer) laden! -->
+  <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()" type="text/javascript"></script>
+</body>
+
 </html>

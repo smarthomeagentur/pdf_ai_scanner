@@ -8,9 +8,9 @@ const loaderStatus = document.getElementById("loader-status");
 const loadingText = document.getElementById("opencv-loading");
 
 // UI-Slider Handler
-let optBlur = 5;
-let optCanny1 = 75;
-let optCanny2 = 200;
+let optBlur = 3;
+let optCanny1 = 40;
+let optCanny2 = 125;
 
 document.getElementById("sensitivitySlider").oninput = function () {
   let s = parseInt(this.value);
@@ -44,7 +44,7 @@ let currentRelativeDocumentCorners = null; // Speichert Live die Ecken des Dokum
 let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
 const MAX_FRAMES_LOSE_TRACK = 12; // Halbe Sekunde Toleranz
-let SMOOTHING_FACTOR = 0.2; // 8% Default, einstellbar über Slider
+let SMOOTHING_FACTOR = 0.5; // 8% Default, einstellbar über Slider
 
 // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
 function sortAndOrderCorners(ptsData32S) {
