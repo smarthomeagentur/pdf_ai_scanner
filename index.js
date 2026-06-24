@@ -446,6 +446,13 @@ async function processQueue() {
 
       await fs.promises.unlink(job.filePath).catch(() => { });
 
+      const isDuplicate = Object.values(uploadJobs).some(j => 
+        j.id !== jobId && 
+        j.status === 'completed' &&
+        (j.originalName === job.originalName || (j.result && j.result.full === sortedName.full))
+      );
+      job.suspectedDuplicate = isDuplicate;
+
       job.status = "completed";
       sortedName.localThumbnail = localThumbBase64;
       job.result = sortedName;
@@ -561,11 +568,11 @@ app.get("/api/status", (req, res) => {
     req.query.ids === "all"
       ? Object.values(uploadJobs).sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate))
       : (req.query.ids ? req.query.ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
-      
+
   if (!isAdmin) {
     statuses = statuses.filter(job => !job.isPrivate);
   }
-  
+
   res.json({ success: true, statuses });
 });
 
@@ -589,19 +596,19 @@ app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res)
 
     // Extract sorted file ID from webViewLink
     if (job.result && job.result.webViewLink) {
-        const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-        if (match) promises.push(driveApi.updateFileProperties(match[1], appProps));
+      const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match) promises.push(driveApi.updateFileProperties(match[1], appProps));
     }
-    
+
     // Also update raw backup file if it exists
     if (job.rawDriveId) {
-        promises.push(driveApi.updateFileProperties(job.rawDriveId, appProps));
+      promises.push(driveApi.updateFileProperties(job.rawDriveId, appProps));
     }
 
     try {
-        await Promise.all(promises);
-    } catch(e) {
-        console.error("Error updating drive file properties:", e);
+      await Promise.all(promises);
+    } catch (e) {
+      console.error("Error updating drive file properties:", e);
     }
 
     res.json({ success: true });

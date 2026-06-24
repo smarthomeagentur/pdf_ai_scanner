@@ -23,6 +23,26 @@
 
     <link rel="stylesheet" href="/index.css" />
     <link rel="stylesheet" href="/md3-theme.css" />
+    <style>
+      .pdf-preview-container {
+        position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none; z-index: 1;
+        transition: z-index 0.2s;
+      }
+      .pdf-preview-container:hover {
+        z-index: 100;
+      }
+      .pdf-preview-img {
+        width: 100%; height: 100%; object-fit: fill; border-radius: 4px; 
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: #fff; display: block; 
+        border: 1px solid #ddd; 
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        transform-origin: top right;
+      }
+      .pdf-preview-container:hover .pdf-preview-img {
+        transform: scale(6);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      }
+    </style>
   </head>
   <body>
     <div class="app-wrapper">
@@ -227,6 +247,20 @@
           <div style="display: flex; gap: 10px; justify-content: center;">
             <button id="cancel-clear-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
             <button id="confirm-clear-btn" class="action-button" style="background: #dc3545; color: white; flex: 1; margin: 0;">Ja, leeren</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Duplicate Check Modal -->
+      <div id="duplicate-check-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+          <h3 style="margin-top: 0; color: #333;">Mögliches Duplikat</h3>
+          <p id="duplicate-check-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
+            Die Datei existiert bereits. Möchtest du sie trotzdem hochladen?
+          </p>
+          <div style="display: flex; gap: 10px; justify-content: center;">
+            <button id="btn-skip-duplicate" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
+            <button id="btn-upload-duplicate" class="action-button" style="background: #dc3545; color: white; flex: 1; margin: 0;">Fortsetzen</button>
           </div>
         </div>
       </div>
