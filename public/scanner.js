@@ -506,9 +506,9 @@ captureBtn.addEventListener("click", async () => {
       const capabilities = videoTrack.getCapabilities();
       const advancedConstraints = [];
 
-      // Autofokus triggern (single-shot)
-      if (capabilities.focusMode && capabilities.focusMode.includes("single-shot")) {
-        advancedConstraints.push({ focusMode: "single-shot" });
+      // Autofokus einfrieren (auf "manual" setzen), um den scharfen Fokuspunkt der Vorschau beizubehalten
+      if (capabilities.focusMode && capabilities.focusMode.includes("manual")) {
+        advancedConstraints.push({ focusMode: "manual" });
         focusWasTriggered = true;
       }
 
@@ -521,9 +521,12 @@ captureBtn.addEventListener("click", async () => {
 
       if (advancedConstraints.length > 0) {
         await videoTrack.applyConstraints({ advanced: advancedConstraints });
-        // Wenn Fokus oder Blitz getriggert wurde, warten wir, damit Kamera fokussieren & belichten kann
-        const waitTime = focusWasTriggered ? 750 : 400;
-        await new Promise((r) => setTimeout(r, waitTime));
+        // Wenn Blitz getriggert wurde, warten wir, damit Kamera belichten kann.
+        // Bei reinem manuellen Fokus (Lock) ist keine Wartezeit für einen Fokus-Sweep nötig.
+        const waitTime = flashWasTriggered ? 400 : 0;
+        if (waitTime > 0) {
+          await new Promise((r) => setTimeout(r, waitTime));
+        }
       }
 
       const blob = await imageCapture.takePhoto();
