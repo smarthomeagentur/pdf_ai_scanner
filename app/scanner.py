@@ -198,11 +198,18 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         b = np.clip(b_f, 0, 255).astype(np.uint8)
         
         # 4. Radikaler Anti-Fleck für reines Papier (ohne Bildbereiche zu verwaschen)
-        # Nachdem wir `l` am Whitepoint massiv gepusht haben, ist fast alles Papier ohnehin schon nah an 255
-        paper_mask_final = l > 230
-        a[paper_mask_final] = 128 # Neutral / Keine Farbe (beseitigt rosa/grünes Rauschen im weißen Papier)
-        b[paper_mask_final] = 128 # Neutral / Keine Farbe
-        l[paper_mask_final] = 255 # Maximales LED-Weiß
+        # Sättigung im LAB-Raum berechnen: Abstand vom neutralen Grau/Weiß (128, 128)
+        chroma = np.sqrt((a.astype(np.float32) - 128) ** 2 + (b.astype(np.float32) - 128) ** 2)
+        is_color = chroma > 18  # Pixel mit nennenswerter Sättigung sind bunt
+
+
+        # Nachdem wir `l` am Whitepoint massiv gepusht haben, ist fast alles Papier ohnehin schon nah an 255.
+        # Wir bleichen nur Pixel aus, die eine geringe Sättigung haben (reines Papier).
+        paper_mask_final = (l > 230) & (~is_color)
+        a[paper_mask_final] = 128  # Neutral / Keine Farbe (beseitigt rosa/grünes Rauschen im weißen Papier)
+        b[paper_mask_final] = 128  # Neutral / Keine Farbe
+        l[paper_mask_final] = 255  # Maximales LED-Weiß
+
         
         lab = cv2.merge([l, a, b])
         processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
