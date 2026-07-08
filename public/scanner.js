@@ -339,50 +339,53 @@ function processVideo() {
       // Ignoriere kleine Boxen unter 15% Screen-Größe (blockt Rauschen, Tassen oder Tastaturen extrem gut ab)
       if (area > processWidth * processHeight * 0.05) {
         let peri = cv.arcLength(cnt, true);
-        let approx = new cv.Mat();
-        // Toleranz erhöhen auf 0.08 für grobere Vierecke (damit runde Blattecken als gerade interpretiert werden)
-        cv.approxPolyDP(cnt, approx, 0.08 * peri, true);
+        let foundValid = false;
+        for (let eps of [0.05, 0.08, 0.12]) {
+          if (foundValid) break;
+          let approx = new cv.Mat();
+          cv.approxPolyDP(cnt, approx, eps * peri, true);
 
-        if (approx.rows === 4 && area > maxArea && cv.isContourConvex(approx)) {
-          // Berechne die Winkel zwischen allen 4 Kanten
-          // Wenn der maximale Cosinus zwischen zwei Vektoren sehr hoch ist (nahe 1), ist die Ecke enorm Spitz! Ein Dokument ist das sicher nicht.
-          let maxCosine = 0;
-          for (let j = 2; j < 6; j++) {
-            let pt1Source = (j % 4) * 2;
-            let pt2Source = ((j - 2) % 4) * 2;
-            let pt0Source = ((j - 1) % 4) * 2;
-            let pt1 = {
-              x: approx.data32S[pt1Source],
-              y: approx.data32S[pt1Source + 1],
-            };
-            let pt2 = {
-              x: approx.data32S[pt2Source],
-              y: approx.data32S[pt2Source + 1],
-            };
-            let pt0 = {
-              x: approx.data32S[pt0Source],
-              y: approx.data32S[pt0Source + 1],
-            };
+          if (approx.rows === 4 && area > maxArea && cv.isContourConvex(approx)) {
+            // Berechne die Winkel zwischen allen 4 Kanten
+            let maxCosine = 0;
+            for (let j = 2; j < 6; j++) {
+              let pt1Source = (j % 4) * 2;
+              let pt2Source = ((j - 2) % 4) * 2;
+              let pt0Source = ((j - 1) % 4) * 2;
+              let pt1 = {
+                x: approx.data32S[pt1Source],
+                y: approx.data32S[pt1Source + 1],
+              };
+              let pt2 = {
+                x: approx.data32S[pt2Source],
+                y: approx.data32S[pt2Source + 1],
+              };
+              let pt0 = {
+                x: approx.data32S[pt0Source],
+                y: approx.data32S[pt0Source + 1],
+              };
 
-            let dx1 = pt1.x - pt0.x;
-            let dy1 = pt1.y - pt0.y;
-            let dx2 = pt2.x - pt0.x;
-            let dy2 = pt2.y - pt0.y;
-            // Skalarprodukt für Cosinus des Winkels
-            let cosine = Math.abs(
-              (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
-            );
-            maxCosine = Math.max(maxCosine, cosine);
+              let dx1 = pt1.x - pt0.x;
+              let dy1 = pt1.y - pt0.y;
+              let dx2 = pt2.x - pt0.x;
+              let dy2 = pt2.y - pt0.y;
+              // Skalarprodukt für Cosinus des Winkels
+              let cosine = Math.abs(
+                (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
+              );
+              maxCosine = Math.max(maxCosine, cosine);
+            }
+
+            // Filter: Cosinus muss unter einem Schwellwert (z.B. <0.8, entspricht ~35-145 Grad Ecken beim Papier) bleiben
+            if (maxCosine < 0.82) {
+              maxArea = area;
+              if (bestCnt) bestCnt.delete();
+              bestCnt = approx.clone();
+              foundValid = true;
+            }
           }
-
-          // Filter: Cosinus muss unter einem Schwellwert (z.B. <0.8, entspricht ~35-145 Grad Ecken beim Papier) bleiben
-          if (maxCosine < 0.82) {
-            maxArea = area;
-            if (bestCnt) bestCnt.delete();
-            bestCnt = approx.clone();
-          }
+          approx.delete();
         }
-        approx.delete();
       }
     }
 
@@ -683,63 +686,122 @@ captureBtn.addEventListener("click", async () => {
     cv.erode(edges, edges, kernel);
     kernel.delete();
 
-    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
     let bestCntRaw = null;
     let maxAreaRaw = 0;
 
-    for (let i = 0; i < contours.size(); ++i) {
-      let cnt = contours.get(i);
-      let area = cv.contourArea(cnt);
-      // Such-Toleranz auf 3% gesenkt, falls das Rohfoto mehr Rand hat
-      if (area > processWidth * processHeight * 0.03) {
-        let peri = cv.arcLength(cnt, true);
+    function searchContours(contoursToCheck) {
+      for (let i = 0; i < contoursToCheck.size(); ++i) {
+        let cnt = contoursToCheck.get(i);
+        let area = cv.contourArea(cnt);
+        // Such-Toleranz auf 3% gesenkt, falls das Rohfoto mehr Rand hat
+        if (area > processWidth * processHeight * 0.03) {
+          let peri = cv.arcLength(cnt, true);
 
-        // Mehrere Ecken-Glättungen probieren, falls das 12MP Foto leicht gebogene Ränder hat
-        let foundValid = false;
-        for (let eps of [0.03, 0.05, 0.08, 0.1, 0.12]) {
-          if (foundValid) break;
-          let approx = new cv.Mat();
-          cv.approxPolyDP(cnt, approx, eps * peri, true);
+          // Mehrere Ecken-Glättungen probieren, falls das 12MP Foto leicht gebogene Ränder hat
+          let foundValid = false;
+          for (let eps of [0.015, 0.02, 0.03, 0.05, 0.08, 0.1, 0.12, 0.15]) {
+            if (foundValid) break;
+            let approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, eps * peri, true);
 
-          if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
-            let maxCosine = 0;
-            for (let j = 2; j < 6; j++) {
-              let pt1Source = (j % 4) * 2;
-              let pt2Source = ((j - 2) % 4) * 2;
-              let pt0Source = ((j - 1) % 4) * 2;
-              let pt1 = {
-                x: approx.data32S[pt1Source],
-                y: approx.data32S[pt1Source + 1],
-              };
-              let pt2 = {
-                x: approx.data32S[pt2Source],
-                y: approx.data32S[pt2Source + 1],
-              };
-              let pt0 = {
-                x: approx.data32S[pt0Source],
-                y: approx.data32S[pt0Source + 1],
-              };
-              let dx1 = pt1.x - pt0.x;
-              let dy1 = pt1.y - pt0.y;
-              let dx2 = pt2.x - pt0.x;
-              let dy2 = pt2.y - pt0.y;
-              let cosine = Math.abs(
-                (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
-              );
-              maxCosine = Math.max(maxCosine, cosine);
+            if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
+              let maxCosine = 0;
+              for (let j = 2; j < 6; j++) {
+                let pt1Source = (j % 4) * 2;
+                let pt2Source = ((j - 2) % 4) * 2;
+                let pt0Source = ((j - 1) % 4) * 2;
+                let pt1 = {
+                  x: approx.data32S[pt1Source],
+                  y: approx.data32S[pt1Source + 1],
+                };
+                let pt2 = {
+                  x: approx.data32S[pt2Source],
+                  y: approx.data32S[pt2Source + 1],
+                };
+                let pt0 = {
+                  x: approx.data32S[pt0Source],
+                  y: approx.data32S[pt0Source + 1],
+                };
+                let dx1 = pt1.x - pt0.x;
+                let dy1 = pt1.y - pt0.y;
+                let dx2 = pt2.x - pt0.x;
+                let dy2 = pt2.y - pt0.y;
+                let cosine = Math.abs(
+                  (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
+                );
+                maxCosine = Math.max(maxCosine, cosine);
+              }
+              // Toleranz erhöht auf 0.9 (ca. 25-155 Grad) für perspektivisch sehr schräge Zettel
+              if (maxCosine < 0.9) {
+                maxAreaRaw = area;
+                if (bestCntRaw) bestCntRaw.delete();
+                bestCntRaw = approx.clone();
+                foundValid = true;
+              }
             }
-            // Toleranz erhöht auf 0.9 (ca. 25-155 Grad) für perspektivisch sehr schräge Zettel
-            if (maxCosine < 0.9) {
-              maxAreaRaw = area;
-              if (bestCntRaw) bestCntRaw.delete();
-              bestCntRaw = approx.clone();
-              foundValid = true;
-            }
+            approx.delete();
           }
-          approx.delete();
         }
       }
+    }
+
+    // Phase 1: Standard Canny
+    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    searchContours(contours);
+
+    // Fallback 1: Direct Otsu (no Canny) -> Perfect for cropped or high-contrast docs
+    if (!bestCntRaw) {
+      let hFb = new cv.Mat();
+      cv.threshold(gray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+      cv.morphologyEx(hFb, hFb, cv.MORPH_CLOSE, dKernel);
+      dKernel.delete();
+
+      let fbC = new cv.MatVector();
+      let fbH = new cv.Mat();
+      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+      searchContours(fbC);
+      fbC.delete();
+      fbH.delete();
+      hFb.delete();
+    }
+
+    // Fallback 2: Otsu with Canny
+    if (!bestCntRaw) {
+      let hFb = new cv.Mat();
+      cv.threshold(gray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+      cv.Canny(hFb, hFb, 50, 150);
+      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+      cv.dilate(hFb, hFb, dKernel);
+      cv.erode(hFb, hFb, dKernel);
+      dKernel.delete();
+
+      let fbC = new cv.MatVector();
+      let fbH = new cv.Mat();
+      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+      searchContours(fbC);
+      fbC.delete();
+      fbH.delete();
+      hFb.delete();
+    }
+
+    // Fallback 3: Adaptive threshold with Canny
+    if (!bestCntRaw) {
+      let hFb = new cv.Mat();
+      cv.adaptiveThreshold(gray, hFb, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, 15);
+      cv.Canny(hFb, hFb, 50, 150);
+      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+      cv.dilate(hFb, hFb, dKernel);
+      cv.erode(hFb, hFb, dKernel);
+      dKernel.delete();
+
+      let fbC = new cv.MatVector();
+      let fbH = new cv.Mat();
+      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+      searchContours(fbC);
+      fbC.delete();
+      fbH.delete();
+      hFb.delete();
     }
 
     if (bestCntRaw) {
@@ -1156,10 +1218,46 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
 
       searchContours(hContours);
 
-      // Fallback: Otsu
+      // Fallback 1: Direct Otsu (no Canny) -> Perfect for cropped or high-contrast docs
       if (!bestCntRaw) {
         let hFb = new cv.Mat();
         cv.threshold(hGray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+        let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+        cv.morphologyEx(hFb, hFb, cv.MORPH_CLOSE, dKernel);
+        dKernel.delete();
+
+        let fbC = new cv.MatVector();
+        let fbH = new cv.Mat();
+        cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+        searchContours(fbC);
+        fbC.delete();
+        fbH.delete();
+        hFb.delete();
+      }
+
+      // Fallback 2: Otsu with Canny
+      if (!bestCntRaw) {
+        let hFb = new cv.Mat();
+        cv.threshold(hGray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+        cv.Canny(hFb, hFb, 50, 150);
+        let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+        cv.dilate(hFb, hFb, dKernel);
+        cv.erode(hFb, hFb, dKernel);
+        dKernel.delete();
+
+        let fbC = new cv.MatVector();
+        let fbH = new cv.Mat();
+        cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+        searchContours(fbC);
+        fbC.delete();
+        fbH.delete();
+        hFb.delete();
+      }
+
+      // Fallback 3: Adaptive threshold with Canny
+      if (!bestCntRaw) {
+        let hFb = new cv.Mat();
+        cv.adaptiveThreshold(hGray, hFb, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, 15);
         cv.Canny(hFb, hFb, 50, 150);
         let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
         cv.dilate(hFb, hFb, dKernel);
