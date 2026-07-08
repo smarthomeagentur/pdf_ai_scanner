@@ -8,9 +8,9 @@ const loaderStatus = document.getElementById("loader-status");
 const loadingText = document.getElementById("opencv-loading");
 
 // UI-Slider Handler
-let optBlur = 5;
-let optCanny1 = 75;
-let optCanny2 = 200;
+let optBlur = 3;
+let optCanny1 = 40;
+let optCanny2 = 125;
 
 document.getElementById("sensitivitySlider").oninput = function () {
   let s = parseInt(this.value);
@@ -44,7 +44,7 @@ let currentRelativeDocumentCorners = null; // Speichert Live die Ecken des Dokum
 let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
 const MAX_FRAMES_LOSE_TRACK = 12; // Halbe Sekunde Toleranz
-let SMOOTHING_FACTOR = 0.2; // 8% Default, einstellbar über Slider
+let SMOOTHING_FACTOR = 0.5; // 8% Default, einstellbar über Slider
 
 // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
 function sortAndOrderCorners(ptsData32S) {
@@ -80,6 +80,19 @@ function onOpenCvReady() {
 
 let videoTrack = null;
 
+async function initAutofocus() {
+  if (!videoTrack) return;
+  try {
+    const capabilities = videoTrack.getCapabilities();
+    if (capabilities.focusMode && capabilities.focusMode.includes("continuous")) {
+      await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+      console.log("Kontinuierlicher Autofokus initialisiert");
+    }
+  } catch (e) {
+    console.warn("Autofokus konnte nicht initialisiert werden:", e);
+  }
+}
+
 async function startCamera() {
   try {
     // Wir fragen das Device ideal nach HD für die flüssige Echtzeitvorschau
@@ -96,6 +109,7 @@ async function startCamera() {
     videoTrack = stream.getVideoTracks()[0];
     video.play();
     updateTorchState();
+    await initAutofocus();
   } catch (err) {
     // Fallback auf 720p, wenn 1080p fehlschlägt
     try {
@@ -111,11 +125,13 @@ async function startCamera() {
       videoTrack = stream.getVideoTracks()[0];
       video.play();
       updateTorchState();
+      await initAutofocus();
     } catch (fallbackErr) {
       alert("Kamera konnte nicht gestartet werden: " + fallbackErr);
     }
   }
 }
+
 
 // --- Auto Capture Support ---
 const autoCaptureBtn = document.getElementById("autoCaptureBtn");
@@ -484,16 +500,30 @@ captureBtn.addEventListener("click", async () => {
   // Versuche über aktuelle ImageCapture API die echte volle Foto-Sensor-Auflösung abzurufen
   if (window.ImageCapture && videoTrack) {
     let flashWasTriggered = false;
+    let focusWasTriggered = false;
     try {
       const imageCapture = new ImageCapture(videoTrack);
+      const capabilities = videoTrack.getCapabilities();
+      const advancedConstraints = [];
+
+      // Autofokus triggern (single-shot)
+      if (capabilities.focusMode && capabilities.focusMode.includes("single-shot")) {
+        advancedConstraints.push({ focusMode: "single-shot" });
+        focusWasTriggered = true;
+      }
 
       // Workaround für kaputten "Auto"-Flash in vielen Browsern:
       // Wir schalten die Taschenlampe *manuell* kurz vor dem Foto ein!
       if (torchSupported && torchMode === "auto") {
-        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+        advancedConstraints.push({ torch: true });
         flashWasTriggered = true;
-        // Kurz warten, damit die Kamera den Weißabgleich/Belichtung anpassen kann
-        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      if (advancedConstraints.length > 0) {
+        await videoTrack.applyConstraints({ advanced: advancedConstraints });
+        // Wenn Fokus oder Blitz getriggert wurde, warten wir, damit Kamera fokussieren & belichten kann
+        const waitTime = focusWasTriggered ? 750 : 400;
+        await new Promise((r) => setTimeout(r, waitTime));
       }
 
       const blob = await imageCapture.takePhoto();
@@ -508,9 +538,22 @@ captureBtn.addEventListener("click", async () => {
     } catch (e) {
       console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
     } finally {
-      // GANZ WICHTIG: Licht sofort wieder aus - EGAL ob das Foto erfolgreich war oder die API abgestürzt ist!
-      if (flashWasTriggered && videoTrack) {
-        videoTrack.applyConstraints({ advanced: [{ torch: false }] }).catch((e) => console.warn(e));
+      // GANZ WICHTIG: Licht sofort wieder aus und Autofokus zurück auf kontinuierlich stellen!
+      if (videoTrack) {
+        try {
+          const restoreConstraints = [];
+          if (flashWasTriggered) {
+            restoreConstraints.push({ torch: false });
+          }
+          if (focusWasTriggered) {
+            restoreConstraints.push({ focusMode: "continuous" });
+          }
+          if (restoreConstraints.length > 0) {
+            await videoTrack.applyConstraints({ advanced: restoreConstraints });
+          }
+        } catch (restoreErr) {
+          console.warn("Fehler beim Zurücksetzen der Kamera-Constraints:", restoreErr);
+        }
       }
     }
   }
