@@ -529,14 +529,17 @@ captureBtn.addEventListener("click", async () => {
         }
       }
 
-      const blob = await imageCapture.takePhoto();
-
-      highResBitmap = await createImageBitmap(blob);
-      originalWidth = highResBitmap.width;
-      originalHeight = highResBitmap.height;
+      // Nutzen von grabFrame() statt takePhoto():
+      // grabFrame() macht einen direkten Frame-Grab aus dem Video-Stream, wodurch der scharfe Fokus
+      // und die Belichtung der Live-Vorschau 1:1 übernommen werden, ohne den fehlerhaften/langsamen
+      // Hardware-Fokus-Sweep von takePhoto() zu triggern.
+      const imageBitmap = await imageCapture.grabFrame();
+      highResBitmap = imageBitmap;
+      originalWidth = imageBitmap.width;
+      originalHeight = imageBitmap.height;
       photoWasUsed = true;
       console.log(
-        `Echte Fotosensor-Auflösung genutzt: ${originalWidth}x${originalHeight} gegenüber Video: ${video.videoWidth}x${video.videoHeight}`
+        `Echte Video-Stream-Auflösung via grabFrame genutzt: ${originalWidth}x${originalHeight}`
       );
     } catch (e) {
       console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
