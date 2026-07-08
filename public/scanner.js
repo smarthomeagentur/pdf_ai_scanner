@@ -95,13 +95,13 @@ async function initAutofocus() {
 
 async function startCamera() {
   try {
-    // Wir fragen das Device ideal nach HD für die flüssige Echtzeitvorschau
-    // Das hochauflösende Foto wird ja sowieso über ImageCapture in voller Sensorauflösung gemacht
+    // Wir fragen das Device ideal nach 4K für maximale Auflösung von Vorschau & Scan.
+    // Der Browser wählt automatisch die nächstgelegene unterstützte Auflösung, falls 4K nicht verfügbar ist.
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: "environment",
-        width: { ideal: 1920 }, // Nur noch HD für Vorschau
-        height: { ideal: 1080 },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
       },
       audio: false,
     });
@@ -111,13 +111,13 @@ async function startCamera() {
     updateTorchState();
     await initAutofocus();
   } catch (err) {
-    // Fallback auf 720p, wenn 1080p fehlschlägt
+    // Fallback auf 1080p, wenn 4K-Initialisierung fehlschlägt
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
         },
         audio: false,
       });
