@@ -48,7 +48,19 @@
     <div class="app-wrapper">
       <!-- Sticky Header matching scanner.html -->
       <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
-        <h5 class="m-0 fw-bold text-dark">AI Scanner</h5>
+        <div class="d-flex align-items-center gap-3">
+          <h5 class="m-0 fw-bold text-dark">AI Scanner</h5>
+          <div class="nav nav-pills" id="nav-tab" role="tablist">
+            <button class="nav-link active d-flex align-items-center gap-1 py-1 px-3" id="nav-upload-tab" type="button" title="Upload & Status">
+              <span class="material-symbols-outlined" style="font-size: 20px;">cloud_upload</span>
+              <span class="d-none d-sm-inline">Upload</span>
+            </button>
+            <button class="nav-link d-flex align-items-center gap-1 py-1 px-3" id="nav-rechnungen-tab" type="button" title="Rechnungsverarbeitung & Lexoffice" style="display: none;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">receipt_long</span>
+              <span class="d-none d-sm-inline">Rechnungen</span>
+            </button>
+          </div>
+        </div>
         <div class="d-flex gap-2">
           <button
             class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center"
@@ -62,8 +74,9 @@
       </div>
 
       <div class="main-content">
-        <div class="container" style="position: relative">
-          <!-- Legacy large Scannen button (removed because we have it in the top bar, or we can keep it as a main call to action) -->
+        <!-- View 1: Upload & Scanner -->
+        <div id="view-upload" class="container" style="position: relative">
+          <!-- Legacy large Scannen button -->
           <a href="/scanner.html" class="live-scanner-btn d-flex align-items-center justify-content-center gap-2"
             ><span class="material-symbols-outlined">document_scanner</span> Live Scanner öffnen</a
           >
@@ -110,6 +123,84 @@
 
             <div id="job-list" style="margin-top: 15px;"></div>
           </div>
+        </div>
+
+        <!-- View 2: Rechnungsverarbeitung & Lexoffice Transfer -->
+        <div id="view-rechnungen" class="container" style="position: relative; display: none;">
+          <div class="d-flex justify-content-between align-items-center mt-3 mb-3 flex-wrap gap-2">
+            <h2 class="m-0">Rechnungsverarbeitung</h2>
+            <div class="text-muted fw-medium" id="rechnungen-count-badge" style="font-size: 14px;"></div>
+          </div>
+
+          <!-- Filter Card -->
+          <div class="card p-3 mb-4 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
+            <!-- Search Bar -->
+            <div class="mb-3">
+              <div class="input-group">
+                <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
+                  <span class="material-symbols-outlined text-muted" style="font-size: 20px;">search</span>
+                </span>
+                <input
+                  type="text"
+                  id="filter-rechnungen-search"
+                  class="form-control border-start-0"
+                  placeholder="Dokumente durchsuchen (Titel, Firma, Rechnungs-Nr, Betrag, Tags...)"
+                  style="border-radius: 0 8px 8px 0; font-size: 14px;"
+                />
+              </div>
+            </div>
+
+            <div class="row g-2 align-items-center">
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Dokumententyp</label>
+                <div class="form-check form-switch pt-1">
+                  <input class="form-check-input" type="checkbox" id="filter-only-invoices" checked style="cursor: pointer;" />
+                  <label class="form-check-label fw-medium ms-1" for="filter-only-invoices" style="cursor: pointer; font-size: 13px;">Nur Rechnungen</label>
+                </div>
+              </div>
+
+              <div class="col-6 col-sm-6 col-md-3">
+                <label for="filter-company" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Unternehmen</label>
+                <select id="filter-company" class="form-select form-select-sm" style="border-radius: 8px;">
+                  <option value="alle">Alle Unternehmen</option>
+                  <option value="wirewire">wirewire</option>
+                  <option value="thewire">thewire</option>
+                  <option value="polyxo">polyxo</option>
+                  <option value="andere">Andere (sonstige)</option>
+                </select>
+              </div>
+
+              <div class="col-6 col-sm-4 col-md-2">
+                <label for="filter-status" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Lexoffice Status</label>
+                <select id="filter-status" class="form-select form-select-sm" style="border-radius: 8px;">
+                  <option value="alle">Alle Status</option>
+                  <option value="nicht_uebertragen">Offen (nicht übertragen)</option>
+                  <option value="uebertragen">Bereits übertragen</option>
+                </select>
+              </div>
+
+              <div class="col-6 col-sm-4 col-md-2">
+                <label for="filter-year" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Jahr</label>
+                <select id="filter-year" class="form-select form-select-sm" style="border-radius: 8px;">
+                  <option value="alle">Alle Jahre</option>
+                </select>
+              </div>
+
+              <div class="col-6 col-sm-4 col-md-2">
+                <label for="filter-quarter" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Quartal</label>
+                <select id="filter-quarter" class="form-select form-select-sm" style="border-radius: 8px;">
+                  <option value="alle">Alle Quartale</option>
+                  <option value="Q1">Q1 (Jan - Mär)</option>
+                  <option value="Q2">Q2 (Apr - Jun)</option>
+                  <option value="Q3">Q3 (Jul - Sep)</option>
+                  <option value="Q4">Q4 (Okt - Dez)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Document List Container -->
+          <div id="rechnungen-list" class="d-flex flex-column gap-3"></div>
         </div>
       </div>
 
@@ -223,10 +314,65 @@
 
           <div
             class="setting-group"
+            id="lexoffice-settings-container"
+            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
+          >
+            <label><strong>Lexoffice API Keys (nur Admin):</strong></label>
+            <div style="margin-top: 10px">
+              <label style="font-size: 0.9em; color: #555">API-Key für wirewire:</label>
+              <input
+                type="password"
+                id="lexoffice-key-wirewire"
+                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                placeholder="Lexoffice API Key..."
+              />
+            </div>
+            <div style="margin-top: 10px">
+              <label style="font-size: 0.9em; color: #555">API-Key für thewire:</label>
+              <input
+                type="password"
+                id="lexoffice-key-thewire"
+                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                placeholder="Lexoffice API Key..."
+              />
+            </div>
+            <div style="margin-top: 10px">
+              <label style="font-size: 0.9em; color: #555">API-Key für polyxo:</label>
+              <input
+                type="password"
+                id="lexoffice-key-polyxo"
+                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                placeholder="Lexoffice API Key..."
+              />
+            </div>
+          </div>
+
+          <div
+            class="setting-group"
+            id="admin-backup-container"
+            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;"
+          >
+            <label><strong>Backup & Wiederherstellung (nur Admin):</strong></label>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+              <button id="download-backup-btn" type="button" class="action-button" style="background-color: #198754; color: white; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">download</span> Backup herunterladen (.json)
+              </button>
+              <input type="file" id="restore-file-input" accept=".json" style="display: none;" />
+              <button id="trigger-restore-btn" type="button" class="action-button" style="background-color: #0dcaf0; color: #000; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">upload</span> Backup wiederherstellen
+              </button>
+            </div>
+          </div>
+
+          <div
+            class="setting-group"
             style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
           >
-            <label>Warteschlange:</label>
-            <button id="trigger-clear-jobs-btn" class="action-button" style="width: 100%; margin-top: 5px; background-color: #dc3545; color: white;">
+            <label>Warteschlange & Synchronisation:</label>
+            <button id="trigger-sync-drive-btn" class="action-button" style="width: 100%; margin-top: 5px; background-color: #0d6efd; color: white;">
+              Dokumente aus Google Drive wiederherstellen
+            </button>
+            <button id="trigger-clear-jobs-btn" class="action-button" style="width: 100%; margin-top: 10px; background-color: #dc3545; color: white;">
               Liste leeren
             </button>
           </div>
@@ -311,6 +457,20 @@
             <button id="fb-select-btn" class="action-button" style="margin: 0; padding: 8px 15px; background: #28a745">
               Auswählen
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confirm Lexoffice Re-Transfer Modal -->
+      <div id="confirm-lexoffice-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 420px; text-align: center;">
+          <h3 style="margin-top: 0; color: #333;">Bereits übertragen</h3>
+          <p id="confirm-lexoffice-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
+            Dieses Dokument wurde bereits an Lexoffice übertragen. Möchtest du es wirklich noch einmal übertragen?
+          </p>
+          <div style="display: flex; gap: 10px; justify-content: center;">
+            <button id="cancel-lexoffice-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
+            <button id="confirm-lexoffice-btn" class="action-button" style="background: #0d6efd; color: white; flex: 1; margin: 0;">Erneut übertragen</button>
           </div>
         </div>
       </div>

@@ -35,6 +35,14 @@ const APP_PASSWORD = process.env.APP_PASSWORD || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "superadmin";
 const JWT_SECRET = process.env.JWT_SECRET || "default_super_secret_key_123";
 
+function getPythonPath() {
+  const venvWin = path.join(__dirname, "venv", "Scripts", "python.exe");
+  const venvUnix = path.join(__dirname, "venv", "bin", "python");
+  if (fs.existsSync(venvWin)) return venvWin;
+  if (fs.existsSync(venvUnix)) return venvUnix;
+  return "python";
+}
+
 // Store paths
 const storeFolder = path.join(process.cwd(), "store");
 if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
@@ -58,6 +66,8 @@ const SETTINGS_FILE = path.join(storeFolder, "settings.json");
 const TOKEN_PATH = path.join(storeFolder, "token.json");
 const JOBS_FILE = path.join(storeFolder, "jobs.json");
 const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json"); // Secret usually stays in root or via env
+const thumbsFolder = path.join(storeFolder, "thumbs");
+if (!fs.existsSync(thumbsFolder)) fs.mkdirSync(thumbsFolder, { recursive: true });
 
 const driveApi = new DriveAPI(TOKEN_PATH, CREDENTIALS_PATH);
 
@@ -68,6 +78,9 @@ const appSettings = {
   AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
   AI_CATEGORIES:
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
+  LEXOFFICE_KEY_WIREWIRE: process.env.LEXOFFICE_KEY_WIREWIRE || "",
+  LEXOFFICE_KEY_THEWIRE: process.env.LEXOFFICE_KEY_THEWIRE || "",
+  LEXOFFICE_KEY_POLYXO: process.env.LEXOFFICE_KEY_POLYXO || "",
 };
 
 if (fs.existsSync(SETTINGS_FILE)) {
@@ -128,6 +141,91 @@ app.post("/api/admin-login", express.json(), loginLimiter, (req, res) => {
 
 app.get("/api/admin-check", requireAdmin, (req, res) => {
   res.json({ success: true });
+});
+
+// Admin Backup & Restore Endpoints
+app.get("/api/admin/backup", requireAdmin, (req, res) => {
+  try {
+    let settingsData = null;
+    let jobsData = null;
+    let tokenData = null;
+
+    if (fs.existsSync(SETTINGS_FILE)) {
+      try { settingsData = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch (e) {}
+    }
+    if (fs.existsSync(JOBS_FILE)) {
+      try { jobsData = JSON.parse(fs.readFileSync(JOBS_FILE, "utf8")); } catch (e) {}
+    }
+    if (fs.existsSync(TOKEN_PATH)) {
+      try { tokenData = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8")); } catch (e) {}
+    }
+
+    const backupPayload = {
+      version: "1.0",
+      createdAt: new Date().toISOString(),
+      settings: settingsData || appSettings,
+      jobs: jobsData || { uploadJobs, uploadQueue, processedDriveFiles },
+      token: tokenData || null,
+    };
+
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}_${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+    const filename = `backup-adobe-downloader-${dateStr}.json`;
+
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(backupPayload, null, 2));
+  } catch (err) {
+    console.error("[BACKUP] Fehler beim Erstellen des Backups:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Erstellen des Backups" });
+  }
+});
+
+app.post("/api/admin/restore", requireAdmin, express.json({ limit: "50mb" }), async (req, res) => {
+  try {
+    const backup = req.body;
+    if (!backup || typeof backup !== "object") {
+      return res.status(400).json({ success: false, error: "Ungültiges Backup-Format." });
+    }
+
+    if (!backup.settings && !backup.jobs) {
+      return res.status(400).json({ success: false, error: "Das angegebene Backup enthält weder Einstellungen noch Dokumente." });
+    }
+
+    let restoredItems = [];
+
+    // Restore Settings
+    if (backup.settings) {
+      appSettings = { ...appSettings, ...backup.settings };
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
+      restoredItems.push("Einstellungen");
+    }
+
+    // Restore Jobs
+    if (backup.jobs) {
+      if (backup.jobs.uploadJobs) uploadJobs = backup.jobs.uploadJobs;
+      if (backup.jobs.uploadQueue) uploadQueue = backup.jobs.uploadQueue;
+      if (backup.jobs.processedDriveFiles) processedDriveFiles = backup.jobs.processedDriveFiles;
+
+      fs.writeFileSync(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles }, null, 2));
+      restoredItems.push(`${Object.keys(uploadJobs).length} Dokumente`);
+    }
+
+    // Restore Token
+    if (backup.token) {
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(backup.token, null, 2));
+      restoredItems.push("Google Drive Tokens");
+    }
+
+    console.log(`[RESTORE] Backup erfolgreich wiederhergestellt: ${restoredItems.join(", ")}`);
+    res.json({
+      success: true,
+      message: `Backup erfolgreich wiederhergestellt! Wiederhergestellt: ${restoredItems.join(", ")}`,
+    });
+  } catch (err) {
+    console.error("[RESTORE] Fehler bei der Wiederherstellung:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der Wiederherstellung" });
+  }
 });
 
 app.post("/api/login", express.json(), loginLimiter, (req, res) => {
@@ -195,7 +293,16 @@ app.get("/api/config", async (req, res) => {
 app.get("/api/settings", (req, res) => res.json({ success: true, settings: appSettings }));
 
 app.post("/api/settings", requireAdmin, express.json(), async (req, res) => {
-  ["FOLDER_ID", "FOLDER_ID_SORTED", "AI_COMPANY", "AI_CATEGORIES", "MONITOR_DRIVE"].forEach((key) => {
+  [
+    "FOLDER_ID",
+    "FOLDER_ID_SORTED",
+    "AI_COMPANY",
+    "AI_CATEGORIES",
+    "MONITOR_DRIVE",
+    "LEXOFFICE_KEY_WIREWIRE",
+    "LEXOFFICE_KEY_THEWIRE",
+    "LEXOFFICE_KEY_POLYXO",
+  ].forEach((key) => {
     if (req.body[key] !== undefined) appSettings[key] = req.body[key];
   });
   await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
@@ -298,6 +405,175 @@ app.get("/api/drive/search", async (req, res) => {
     console.error("[SEARCH] Fehler bei Google Drive Suche:", e);
     res.status(500).json({ error: e.toString() });
   }
+});
+
+app.get("/api/thumbnail/:fileId", async (req, res) => {
+  const fileId = req.params.fileId;
+  const thumbPath = path.join(thumbsFolder, `${fileId}.jpg`);
+
+  if (fs.existsSync(thumbPath)) {
+    return res.sendFile(thumbPath);
+  }
+
+  try {
+    if (!fs.existsSync(TOKEN_PATH)) {
+      return res.status(404).send("Not authenticated with Drive");
+    }
+
+    const drive = await driveApi.getClient();
+    let imageBuffer = null;
+
+    // 1. Try fetching thumbnailLink via backend
+    try {
+      const fileInfo = await drive.files.get({ fileId: fileId, fields: "thumbnailLink" });
+      if (fileInfo.data && fileInfo.data.thumbnailLink) {
+        const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s220");
+        const imgRes = await fetch(link);
+        if (imgRes.ok) {
+          imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+        }
+      }
+    } catch (e) {}
+
+    // 2. Fallback: Render page 1 as JPEG using PyMuPDF if needed
+    if (!imageBuffer) {
+      const pdfTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.pdf`);
+      try {
+        const dest = fs.createWriteStream(pdfTemp);
+        const downloadRes = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "stream" });
+        await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+
+        const jpgTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.jpg`);
+        await new Promise((resolve, reject) => {
+          execFile(
+            getPythonPath(),
+            [
+              "-c",
+              `import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=100); pix.save(sys.argv[2]); doc.close()`,
+              pdfTemp,
+              jpgTemp,
+            ],
+            (error) => (error ? reject(error) : resolve())
+          );
+        });
+
+        if (fs.existsSync(jpgTemp)) {
+          imageBuffer = await fs.promises.readFile(jpgTemp);
+          await fs.promises.unlink(jpgTemp).catch(() => {});
+        }
+      } catch (e) {
+      } finally {
+        if (fs.existsSync(pdfTemp)) await fs.promises.unlink(pdfTemp).catch(() => {});
+      }
+    }
+
+    if (imageBuffer) {
+      await fs.promises.writeFile(thumbPath, imageBuffer);
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=864000");
+      return res.send(imageBuffer);
+    }
+
+    res.status(404).send("Thumbnail not found");
+  } catch (err) {
+    console.error("[THUMBNAIL] Error serving thumbnail:", err);
+    res.status(500).send("Error generating thumbnail");
+  }
+});
+
+async function syncJobsFromDrive() {
+  if (!fs.existsSync(TOKEN_PATH) || !appSettings.FOLDER_ID_SORTED) return 0;
+  try {
+    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
+      ? appSettings.FOLDER_ID_SORTED
+      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
+
+    if (!driveFolderId) return 0;
+
+    const drive = await driveApi.getClient();
+    const result = await drive.files.list({
+      q: `'${driveFolderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
+      fields: "files(id, name, description, webViewLink, thumbnailLink, createdTime, appProperties)",
+      pageSize: 200,
+    });
+
+    const files = result.data.files || [];
+    let restoredCount = 0;
+
+    for (const file of files) {
+      let existingJob = Object.values(uploadJobs).find(
+        (j) => j.id === file.id || j.rawDriveId === file.id || (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id))
+      );
+
+      if (!existingJob) {
+        const title = file.name || "Dokument.pdf";
+        const desc = file.description || "";
+
+        let company = "Unbekannt";
+        let category = "Unbekannt";
+        let tags = [];
+        let isInvoice = title.toLowerCase().includes("rechnung") || desc.toLowerCase().includes("rechnung");
+
+        const compMatch = desc.match(/Firma:\s*([^|]+)/i) || title.match(/\(([^)]+)\)$/);
+        if (compMatch) company = compMatch[1].trim();
+
+        const catMatch = desc.match(/Kategorie:\s*([^|]+)/i) || title.match(/-(.*?)-/);
+        if (catMatch) category = catMatch[1].trim();
+
+        const tagsMatch = desc.match(/Tags:\s*([^|]+)/i);
+        if (tagsMatch) tags = tagsMatch[1].split(",").map((t) => t.trim());
+
+        const dateMatch = title.match(/^(\d{2})(\d{2})(\d{2})/);
+        let docDate = "unknown";
+        if (dateMatch) {
+          docDate = `${dateMatch[3]}.${dateMatch[2]}.20${dateMatch[1]}`;
+        }
+
+        const jobId = file.id;
+        uploadJobs[jobId] = {
+          id: jobId,
+          originalName: title,
+          status: "completed",
+          rawDriveId: file.id,
+          uploadDate: file.createdTime || new Date().toISOString(),
+          isPrivate: file.appProperties && file.appProperties.isPrivate === "true",
+          result: {
+            success: true,
+            full: title,
+            date: dateMatch ? dateMatch[0] : "",
+            documentDate: docDate,
+            category: category,
+            tags: tags,
+            company: company,
+            isInvoice: isInvoice,
+            invoiceNumber: "none",
+            invoiceAmmount: 0,
+            webViewLink: file.webViewLink,
+            thumbnailLink: file.thumbnailLink,
+          },
+        };
+
+        if (!processedDriveFiles.includes(file.id)) {
+          processedDriveFiles.push(file.id);
+        }
+        restoredCount++;
+      }
+    }
+
+    if (restoredCount > 0) {
+      saveJobs();
+      console.log(`[DRIVE SYNC] ${restoredCount} Dokumente erfolgreich aus Google Drive wiederhergestellt.`);
+    }
+    return restoredCount;
+  } catch (err) {
+    console.error("[DRIVE SYNC] Fehler beim Wiederherstellen:", err);
+    return 0;
+  }
+}
+
+app.post("/api/drive/sync", async (req, res) => {
+  const restoredCount = await syncJobsFromDrive();
+  res.json({ success: true, restoredCount, totalJobs: Object.keys(uploadJobs).length });
 });
 
 // Job Queue
@@ -562,7 +838,13 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
   res.json({ success: true, jobs });
 });
 
-app.get("/api/status", (req, res) => {
+app.get("/api/status", async (req, res) => {
+  if (Object.keys(uploadJobs).length === 0) {
+    try {
+      await syncJobsFromDrive();
+    } catch (e) {}
+  }
+
   const isAdmin = checkIsAdmin(req);
   let statuses =
     req.query.ids === "all"
@@ -626,6 +908,159 @@ app.post("/api/jobs/:id/category", express.json(), (req, res) => {
     res.json({ success: true });
   } else {
     res.status(404).json({ success: false, error: "Job not found" });
+  }
+});
+
+app.post("/api/jobs/:id/target-company", requireAdmin, express.json(), (req, res) => {
+  const jobId = req.params.id;
+  const targetCompany = req.body.targetCompany;
+  if (uploadJobs[jobId]) {
+    uploadJobs[jobId].targetCompany = targetCompany;
+    saveJobs();
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
+});
+
+// Lexoffice Endpoints (Admin only)
+app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) => {
+  const { jobId, companyKey } = req.body;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
+
+  const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[companyKey]);
+  const transferredInfo = alreadyTransferred ? job.lexofficeTransfers[companyKey] : null;
+
+  res.json({
+    success: true,
+    alreadyTransferred,
+    transferredInfo,
+  });
+});
+
+app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, res) => {
+  const { jobId, companyKey, force } = req.body;
+  const validCompanies = ["wirewire", "thewire", "polyxo"];
+  if (!validCompanies.includes(companyKey)) {
+    return res.status(400).json({ success: false, error: "Ungültige Firma für Lexoffice." });
+  }
+
+  const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+  const apiKey = appSettings[apiKeySettingName];
+  if (!apiKey || !apiKey.trim()) {
+    return res.status(400).json({
+      success: false,
+      error: `Kein API-Key für Lexoffice (${companyKey}) in den Einstellungen hinterlegt.`,
+    });
+  }
+
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
+
+  if (job.lexofficeTransfers && job.lexofficeTransfers[companyKey] && !force) {
+    return res.json({
+      success: false,
+      alreadyTransferred: true,
+      transferredInfo: job.lexofficeTransfers[companyKey],
+      error: `Dokument wurde bereits am ${new Date(job.lexofficeTransfers[companyKey].transferredAt).toLocaleString("de-DE")} zu Lexoffice (${companyKey}) übertragen.`,
+    });
+  }
+
+  try {
+    let fileBuffer = null;
+    let fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
+    if (!fileName.toLowerCase().endsWith(".pdf")) fileName += ".pdf";
+
+    if (job.filePath && fs.existsSync(job.filePath)) {
+      fileBuffer = await fs.promises.readFile(job.filePath);
+    } else {
+      // Find Drive File ID
+      let driveFileId = job.rawDriveId;
+      if (!driveFileId && job.result && job.result.webViewLink) {
+        const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (match) driveFileId = match[1];
+      }
+
+      if (!driveFileId) {
+        return res.status(400).json({ success: false, error: "Datei ist nicht mehr auf dem Server oder Drive vorhanden." });
+      }
+
+      const drive = await driveApi.getClient();
+      const driveRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
+      fileBuffer = Buffer.from(driveRes.data);
+    }
+
+    // Auto-compress if file size exceeds Lexoffice threshold (3.5 MB)
+    const MAX_LEXOFFICE_BYTES = 3.5 * 1024 * 1024;
+    if (fileBuffer && fileBuffer.length > MAX_LEXOFFICE_BYTES) {
+      console.log(`[LEXOFFICE] Datei-Größe (${(fileBuffer.length / (1024*1024)).toFixed(2)} MB) übersteigt 3.5 MB Schwelle. Komprimiere PDF...`);
+      const tempIn = path.join(localDownloadFolder, `compress_in_${Date.now()}.pdf`);
+      const tempOut = path.join(localDownloadFolder, `compress_out_${Date.now()}.pdf`);
+      try {
+        await fs.promises.writeFile(tempIn, fileBuffer);
+        await new Promise((resolve, reject) => {
+          execFile(
+            getPythonPath(),
+            [path.join(__dirname, "app", "compress_pdf.py"), tempIn, tempOut],
+            (error, stdout, stderr) => {
+              if (error) reject(error);
+              else resolve();
+            }
+          );
+        });
+        if (fs.existsSync(tempOut)) {
+          fileBuffer = await fs.promises.readFile(tempOut);
+          console.log(`[LEXOFFICE] Datei erfolgreich auf ${(fileBuffer.length / (1024*1024)).toFixed(2)} MB komprimiert.`);
+        }
+      } catch (compressErr) {
+        console.error("[LEXOFFICE] Komprimierungs-Warnung:", compressErr);
+      } finally {
+        if (fs.existsSync(tempIn)) fs.promises.unlink(tempIn).catch(() => {});
+        if (fs.existsSync(tempOut)) fs.promises.unlink(tempOut).catch(() => {});
+      }
+    }
+
+    const formData = new FormData();
+    const blob = new Blob([fileBuffer], { type: "application/pdf" });
+    formData.append("file", blob, fileName);
+    formData.append("type", "voucher");
+
+    const lexResponse = await fetch("https://api.lexoffice.io/v1/files", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+      body: formData,
+    });
+
+    if (!lexResponse.ok) {
+      const errText = await lexResponse.text();
+      console.error("[LEXOFFICE] Upload Fehler:", lexResponse.status, errText);
+      return res.status(lexResponse.status).json({
+        success: false,
+        error: `Lexoffice API Fehler (${lexResponse.status}): ${errText}`,
+      });
+    }
+
+    const lexData = await lexResponse.json();
+    if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+    job.lexofficeTransfers[companyKey] = {
+      transferredAt: new Date().toISOString(),
+      lexofficeFileId: lexData.id,
+      company: companyKey,
+    };
+    saveJobs();
+
+    console.log(`[LEXOFFICE] Job ${jobId} erfolgreich zu Lexoffice (${companyKey}) übertragen (ID: ${lexData.id})`);
+    res.json({
+      success: true,
+      lexofficeFileId: lexData.id,
+      transferredAt: job.lexofficeTransfers[companyKey].transferredAt,
+    });
+  } catch (err) {
+    console.error("[LEXOFFICE] Fehler bei Übertragung:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung zu Lexoffice." });
   }
 });
 

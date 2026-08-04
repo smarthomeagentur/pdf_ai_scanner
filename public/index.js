@@ -149,6 +149,15 @@ async function loadFolders() {
         document.getElementById("ai-company-input").value =
           window.currentSettings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
         document.getElementById("monitor-drive-checkbox").checked = window.currentSettings.MONITOR_DRIVE || false;
+
+        document.getElementById("lexoffice-settings-container").style.display = "block";
+        document.getElementById("lexoffice-key-wirewire").value = window.currentSettings.LEXOFFICE_KEY_WIREWIRE || "";
+        document.getElementById("lexoffice-key-thewire").value = window.currentSettings.LEXOFFICE_KEY_THEWIRE || "";
+        document.getElementById("lexoffice-key-polyxo").value = window.currentSettings.LEXOFFICE_KEY_POLYXO || "";
+        document.getElementById("admin-backup-container").style.display = "block";
+
+        const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+        if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
       }
 
       document.getElementById("ai-prompt-settings-container").style.display = "block";
@@ -311,6 +320,10 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
     return;
   }
 
+  const lexKeyWirewire = document.getElementById("lexoffice-key-wirewire").value.trim();
+  const lexKeyThewire = document.getElementById("lexoffice-key-thewire").value.trim();
+  const lexKeyPolyxo = document.getElementById("lexoffice-key-polyxo").value.trim();
+
   const res = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -320,6 +333,9 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
       AI_CATEGORIES: aiCategories,
       AI_COMPANY: aiCompany,
       MONITOR_DRIVE: monitorDriveState,
+      LEXOFFICE_KEY_WIREWIRE: lexKeyWirewire,
+      LEXOFFICE_KEY_THEWIRE: lexKeyThewire,
+      LEXOFFICE_KEY_POLYXO: lexKeyPolyxo,
     }),
   });
 
@@ -339,9 +355,83 @@ const jobListContainer = document.getElementById("job-list-container");
 const jobList = document.getElementById("job-list");
 
 const triggerClearJobsBtn = document.getElementById("trigger-clear-jobs-btn");
+const triggerSyncDriveBtn = document.getElementById("trigger-sync-drive-btn");
 const confirmClearModal = document.getElementById("confirm-clear-modal");
 const confirmClearBtn = document.getElementById("confirm-clear-btn");
 const cancelClearBtn = document.getElementById("cancel-clear-btn");
+
+if (triggerSyncDriveBtn) {
+  triggerSyncDriveBtn.addEventListener("click", async () => {
+    triggerSyncDriveBtn.disabled = true;
+    triggerSyncDriveBtn.innerText = "Wiederherstellen...";
+    try {
+      const res = await fetch("/api/drive/sync", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        alert(`${data.restoredCount} Dokument(e) erfolgreich aus Google Drive wiederhergestellt!`);
+        settingsModal.style.display = "none";
+        startPolling();
+        if (typeof loadRechnungenView === "function") loadRechnungenView();
+      } else {
+        alert("Fehler bei der Wiederherstellung: " + (data.error || "Unbekannter Fehler"));
+      }
+    } catch (e) {
+      alert("Fehler bei der Wiederherstellung: " + e.message);
+    } finally {
+      triggerSyncDriveBtn.disabled = false;
+      triggerSyncDriveBtn.innerText = "Dokumente aus Google Drive wiederherstellen";
+    }
+  });
+}
+
+const downloadBackupBtn = document.getElementById("download-backup-btn");
+const triggerRestoreBtn = document.getElementById("trigger-restore-btn");
+const restoreFileInput = document.getElementById("restore-file-input");
+
+if (downloadBackupBtn) {
+  downloadBackupBtn.addEventListener("click", () => {
+    window.location.href = "/api/admin/backup";
+  });
+}
+
+if (triggerRestoreBtn && restoreFileInput) {
+  triggerRestoreBtn.addEventListener("click", () => {
+    restoreFileInput.click();
+  });
+
+  restoreFileInput.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!confirm(`Möchtest du das Backup "${file.name}" wirklich einspielen? Bestehende Einstellungen und Dokumenten-Indizes werden überschrieben.`)) {
+      restoreFileInput.value = "";
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+
+      const res = await fetch("/api/admin/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message || "Backup erfolgreich wiederhergestellt!");
+        location.reload();
+      } else {
+        alert("Fehler bei der Wiederherstellung: " + (data.error || "Unbekannter Fehler"));
+      }
+    } catch (err) {
+      alert("Ungültiges Backup-Dateiformat: " + err.message);
+    } finally {
+      restoreFileInput.value = "";
+    }
+  });
+}
 
 let activeJobs = [];
 let pollingInterval = null;
@@ -544,8 +634,6 @@ async function uploadFiles(files) {
 }
 
 function startPolling() {
-  if (pollingInterval) return;
-
   const fetchStatus = async () => {
     try {
       const res = await fetch(`/api/status?ids=all`);
@@ -555,9 +643,9 @@ function startPolling() {
         activeJobs = data.statuses || [];
         renderJobs();
 
-        // Stop polling dynamically if no jobs are pending on server
+        // Stop polling dynamically if no jobs are pending/processing on server
         const hasPendingServerJobs = activeJobs.some((j) => j.status === "pending" || j.status === "processing");
-        if (!hasPendingServerJobs && activeJobs.length === 0) {
+        if (!hasPendingServerJobs && pollingInterval) {
           clearInterval(pollingInterval);
           pollingInterval = null;
         }
@@ -568,8 +656,13 @@ function startPolling() {
   };
 
   fetchStatus();
-  pollingInterval = setInterval(fetchStatus, 5000); // 5 Sekunden Polling
+  if (!pollingInterval) {
+    pollingInterval = setInterval(fetchStatus, 5000); // 5 Sekunden Polling
+  }
 }
+
+// Initialisiere Polling / Laden aller Jobs beim Seitenstart
+startPolling();
 
 function renderJobs() {
   if (document.querySelector('.category-picker-box')) {
@@ -651,12 +744,16 @@ function renderJobs() {
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsbetrag:</strong> ${invAmtFormatted} €<br>`;
       }
 
-      if (job.result.localThumbnail || job.result.thumbnailLink) {
-        const imgSrc = job.result.localThumbnail || job.result.thumbnailLink;
+      const driveId = job.rawDriveId || job.id;
+      const imgSrc = job.result.localThumbnail
+        ? job.result.localThumbnail
+        : (driveId ? `/api/thumbnail/${driveId}` : (job.result.thumbnailLink || ""));
+
+      if (imgSrc) {
         previewHtml = `<a href="${
           job.result.webViewLink || "#"
         }" target="_blank" class="pdf-preview-container">
-                        <img src="${imgSrc}" alt="PDF Vorschau" class="pdf-preview-img">
+                        <img src="${imgSrc}" alt="PDF Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
                     </a>`;
       }
 
@@ -1016,3 +1113,472 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+
+// ==========================================
+// --- Rechnungsverarbeitung & Lexoffice ---
+// ==========================================
+
+const navUploadTab = document.getElementById("nav-upload-tab");
+const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+const viewUpload = document.getElementById("view-upload");
+const viewRechnungen = document.getElementById("view-rechnungen");
+
+if (navUploadTab && navRechnungenTab) {
+  navUploadTab.addEventListener("click", () => {
+    navUploadTab.classList.add("active");
+    navRechnungenTab.classList.remove("active");
+    viewUpload.style.display = "block";
+    viewRechnungen.style.display = "none";
+    startPolling();
+  });
+
+  navRechnungenTab.addEventListener("click", () => {
+    if (!window.isAdmin) return;
+    navRechnungenTab.classList.add("active");
+    navUploadTab.classList.remove("active");
+    viewUpload.style.display = "none";
+    viewRechnungen.style.display = "block";
+    loadRechnungenView();
+  });
+}
+
+let allRechnungenJobs = [];
+let pendingLexofficeTransferTarget = null; // { jobId, companyKey, card, transferBtn }
+
+const filterRechnungenSearch = document.getElementById("filter-rechnungen-search");
+const filterOnlyInvoices = document.getElementById("filter-only-invoices");
+const filterCompany = document.getElementById("filter-company");
+const filterStatus = document.getElementById("filter-status");
+const filterYear = document.getElementById("filter-year");
+const filterQuarter = document.getElementById("filter-quarter");
+const rechnungenList = document.getElementById("rechnungen-list");
+const rechnungenCountBadge = document.getElementById("rechnungen-count-badge");
+
+if (filterRechnungenSearch) filterRechnungenSearch.addEventListener("input", renderRechnungenList);
+if (filterOnlyInvoices) filterOnlyInvoices.addEventListener("change", renderRechnungenList);
+if (filterCompany) filterCompany.addEventListener("change", renderRechnungenList);
+if (filterStatus) filterStatus.addEventListener("change", renderRechnungenList);
+if (filterYear) filterYear.addEventListener("change", renderRechnungenList);
+if (filterQuarter) filterQuarter.addEventListener("change", renderRechnungenList);
+
+async function loadRechnungenView() {
+  if (!rechnungenList) return;
+  rechnungenList.innerHTML = `
+    <div class="text-center p-5 text-muted">
+      <div class="spinner-border text-primary mb-3" role="status"></div>
+      <div>Lade Dokumente...</div>
+    </div>
+  `;
+  try {
+    const res = await fetch("/api/status?ids=all");
+    const data = await res.json();
+    if (data.success) {
+      allRechnungenJobs = (data.statuses || []).filter((j) => j.status === "completed" && j.result);
+      populateYearFilter(allRechnungenJobs);
+      renderRechnungenList();
+    } else {
+      rechnungenList.innerHTML = `<div class="alert alert-danger">Fehler beim Laden der Dokumente.</div>`;
+    }
+  } catch (err) {
+    console.error("Error loading rechnungen:", err);
+    rechnungenList.innerHTML = `<div class="alert alert-danger">Fehler beim Laden der Dokumente.</div>`;
+  }
+}
+
+function getDocumentYearAndQuarter(job) {
+  let dateStr = null;
+  if (job.result && job.result.documentDate && job.result.documentDate !== "unknown") {
+    dateStr = job.result.documentDate; // Format DD.MM.YYYY
+  }
+
+  let year = null;
+  let month = null;
+
+  if (dateStr && dateStr.includes(".")) {
+    const parts = dateStr.split(".");
+    if (parts.length === 3) {
+      month = parseInt(parts[1], 10);
+      year = parts[2].trim();
+      if (year.length === 2) year = "20" + year;
+    }
+  }
+
+  if (!year || !month) {
+    const d = new Date(job.uploadDate || Date.now());
+    year = d.getFullYear().toString();
+    month = d.getMonth() + 1;
+  }
+
+  let quarter = "Q1";
+  if (month >= 1 && month <= 3) quarter = "Q1";
+  else if (month >= 4 && month <= 6) quarter = "Q2";
+  else if (month >= 7 && month <= 9) quarter = "Q3";
+  else if (month >= 10 && month <= 12) quarter = "Q4";
+
+  return { year, quarter, dateStr };
+}
+
+function populateYearFilter(jobs) {
+  if (!filterYear) return;
+  const years = new Set();
+  jobs.forEach((j) => {
+    const { year } = getDocumentYearAndQuarter(j);
+    if (year) years.add(year);
+  });
+
+  const sortedYears = Array.from(years).sort((a, b) => b.localeCompare(a));
+  const currentSelected = filterYear.value;
+
+  filterYear.innerHTML = `<option value="alle">Alle Jahre</option>`;
+  sortedYears.forEach((y) => {
+    const opt = document.createElement("option");
+    opt.value = y;
+    opt.innerText = y;
+    filterYear.appendChild(opt);
+  });
+
+  if (sortedYears.includes(currentSelected)) {
+    filterYear.value = currentSelected;
+  }
+}
+
+function detectDefaultTargetCompany(companyNameStr) {
+  const comp = (companyNameStr || "").toLowerCase();
+  if (comp.includes("wirewire")) return "wirewire";
+  if (comp.includes("the wire") || comp.includes("thewire")) return "thewire";
+  if (comp.includes("polyxo")) return "polyxo";
+  return "";
+}
+
+function renderRechnungenList() {
+  if (!rechnungenList) return;
+  if (!allRechnungenJobs || allRechnungenJobs.length === 0) {
+    rechnungenList.innerHTML = `<div class="text-center p-5 text-muted">Keine Dokumente vorhanden.</div>`;
+    if (rechnungenCountBadge) rechnungenCountBadge.innerText = "0 Dokumente";
+    return;
+  }
+
+  const searchQuery = filterRechnungenSearch ? filterRechnungenSearch.value.trim().toLowerCase() : "";
+  const onlyInvoices = filterOnlyInvoices ? filterOnlyInvoices.checked : true;
+  const selectedCompany = filterCompany ? filterCompany.value : "alle";
+  const selectedStatus = filterStatus ? filterStatus.value : "alle";
+  const selectedYear = filterYear ? filterYear.value : "alle";
+  const selectedQuarter = filterQuarter ? filterQuarter.value : "alle";
+
+  const filteredJobs = allRechnungenJobs.filter((job) => {
+    const res = job.result;
+    if (!res) return false;
+
+    // 0. Live Text Search filter
+    if (searchQuery) {
+      const title = (res.full || job.originalName || "").toLowerCase();
+      const comp = (res.company || "").toLowerCase();
+      const targetComp = (job.targetCompany || "").toLowerCase();
+      const invNum = (res.invoiceNumber || job.invoiceNumber || "").toLowerCase();
+      const cat = (res.category || "").toLowerCase();
+      const tags = (res.tags && Array.isArray(res.tags) ? res.tags.join(" ") : "").toLowerCase();
+      const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
+
+      const matches =
+        title.includes(searchQuery) ||
+        comp.includes(searchQuery) ||
+        targetComp.includes(searchQuery) ||
+        invNum.includes(searchQuery) ||
+        cat.includes(searchQuery) ||
+        tags.includes(searchQuery) ||
+        amtStr.includes(searchQuery);
+
+      if (!matches) return false;
+    }
+
+    // 1. Invoices filter
+    if (onlyInvoices) {
+      const isInvoice = res.isInvoice === true || (res.category && res.category.toLowerCase().includes("rechnung"));
+      if (!isInvoice) return false;
+    }
+
+    // 2. Company filter
+    const compName = (res.company || "").toLowerCase();
+    const targetComp = (job.targetCompany || "").toLowerCase();
+    const isWirewire = compName.includes("wirewire") || targetComp === "wirewire";
+    const isThewire = compName.includes("the wire") || compName.includes("thewire") || targetComp === "thewire";
+    const isPolyxo = compName.includes("polyxo") || targetComp === "polyxo";
+
+    if (selectedCompany === "wirewire") {
+      if (!isWirewire) return false;
+    } else if (selectedCompany === "thewire") {
+      if (!isThewire) return false;
+    } else if (selectedCompany === "polyxo") {
+      if (!isPolyxo) return false;
+    } else if (selectedCompany === "andere") {
+      if (isWirewire || isThewire || isPolyxo) return false;
+    }
+
+    // 3. Status filter (Lexoffice transfer status)
+    if (selectedStatus !== "alle") {
+      const lexTransfers = job.lexofficeTransfers || {};
+      let isTransferred = false;
+      if (selectedCompany === "wirewire" || selectedCompany === "thewire" || selectedCompany === "polyxo") {
+        isTransferred = !!lexTransfers[selectedCompany];
+      } else {
+        isTransferred = Object.keys(lexTransfers).length > 0;
+      }
+
+      if (selectedStatus === "uebertragen" && !isTransferred) return false;
+      if (selectedStatus === "nicht_uebertragen" && isTransferred) return false;
+    }
+
+    // 4. Year & Quarter filter
+    const { year, quarter } = getDocumentYearAndQuarter(job);
+    if (selectedYear !== "alle" && year !== selectedYear) return false;
+    if (selectedQuarter !== "alle" && quarter !== selectedQuarter) return false;
+
+    return true;
+  });
+
+  if (rechnungenCountBadge) {
+    rechnungenCountBadge.innerText = `${filteredJobs.length} Dokument(e) gefunden`;
+  }
+
+  if (filteredJobs.length === 0) {
+    rechnungenList.innerHTML = `
+      <div class="text-center p-5 text-muted bg-white rounded shadow-sm">
+        <span class="material-symbols-outlined mb-2" style="font-size: 48px; color: #ccc;">find_in_page</span>
+        <div>Keine Dokumente entsprechen den gewählten Filtern.</div>
+      </div>
+    `;
+    return;
+  }
+
+  rechnungenList.innerHTML = "";
+  filteredJobs.forEach((job) => {
+    const card = createRechnungCard(job);
+    rechnungenList.appendChild(card);
+  });
+}
+
+function createRechnungCard(job) {
+  const res = job.result || {};
+  const defaultTarget = job.targetCompany || detectDefaultTargetCompany(res.company);
+
+  const card = document.createElement("div");
+  card.className = "card shadow-sm border-0 mb-2";
+  card.style.borderRadius = "10px";
+
+  const driveId = job.rawDriveId || job.id;
+  const thumbSrc = res.localThumbnail
+    ? res.localThumbnail
+    : (driveId ? `/api/thumbnail/${driveId}` : (res.thumbnailLink || ""));
+
+  const thumbnailHtml = thumbSrc
+    ? `<img src="${thumbSrc}" style="width: 60px; height: 80px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd;" onerror="this.onerror=null; this.parentElement.innerHTML='<div style=\\'width:60px;height:80px;background:#eee;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#aaa;\\'><span class=\\'material-symbols-outlined\\'>description</span></div>';" />`
+    : `<div style="width: 60px; height: 80px; background: #eee; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #aaa;"><span class="material-symbols-outlined">description</span></div>`;
+
+  // Format amount
+  let amountFormatted = "";
+  if (res.invoiceAmmount && res.invoiceAmmount > 0) {
+    amountFormatted = (res.invoiceAmmount / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  }
+
+  // Lexoffice transfers status
+  const lexTransfers = job.lexofficeTransfers || {};
+  const isInvoiceBadge = res.isInvoice
+    ? `<span class="badge bg-success-subtle text-success border border-success-subtle me-1">Rechnung</span>`
+    : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle me-1">Dokument</span>`;
+
+  card.innerHTML = `
+    <div class="card-body p-3">
+      <div class="d-flex gap-3 align-items-start">
+        <div class="flex-shrink-0">
+          ${thumbnailHtml}
+        </div>
+        <div class="flex-grow-1" style="min-width: 0;">
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+            ${isInvoiceBadge}
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${res.company || "Unbekannt"}</span>
+            ${res.category ? `<span class="badge bg-light text-dark border">${res.category}</span>` : ""}
+            ${res.documentDate && res.documentDate !== "unknown" ? `<span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${res.documentDate}</span>` : ""}
+          </div>
+          <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 14px;" title="${res.full || job.originalName}">${res.full || job.originalName}</h6>
+          <div class="small text-muted d-flex gap-3 flex-wrap">
+            ${res.invoiceNumber && res.invoiceNumber !== "none" ? `<span>Rechnungs-Nr: <strong>${res.invoiceNumber}</strong></span>` : ""}
+            ${amountFormatted ? `<span class="text-success font-monospace">Betrag: <strong>${amountFormatted}</strong></span>` : ""}
+          </div>
+          <div class="lexoffice-status-area mt-2 small"></div>
+        </div>
+      </div>
+
+      <div class="border-top mt-3 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div class="text-muted small" style="font-size: 12px; font-weight: 500;">Lexoffice Ziel-Firma:</div>
+        <div class="d-flex align-items-center gap-2 ms-auto">
+          <select class="form-select form-select-sm lexoffice-target-select" style="width: 140px; font-size: 13px;">
+            <option value="" ${!defaultTarget ? "selected" : ""} disabled>Firma wählen...</option>
+            <option value="wirewire" ${defaultTarget === "wirewire" ? "selected" : ""}>wirewire</option>
+            <option value="thewire" ${defaultTarget === "thewire" ? "selected" : ""}>thewire</option>
+            <option value="polyxo" ${defaultTarget === "polyxo" ? "selected" : ""}>polyxo</option>
+          </select>
+          <button class="btn btn-sm btn-primary d-flex align-items-center gap-1 lexoffice-transfer-btn" style="border-radius: 20px; padding: 5px 14px; font-weight: 500; font-size: 13px; white-space: nowrap;">
+            <span class="material-symbols-outlined" style="font-size: 16px;">cloud_upload</span>
+            <span>Zu Lexoffice</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const targetSelect = card.querySelector(".lexoffice-target-select");
+  const transferBtn = card.querySelector(".lexoffice-transfer-btn");
+  const statusArea = card.querySelector(".lexoffice-status-area");
+
+  function updateCardStatusDisplay() {
+    const selComp = targetSelect.value;
+    if (!selComp) {
+      statusArea.innerHTML = `
+        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle d-inline-flex align-items-center gap-1 p-1 px-2">
+          <span class="material-symbols-outlined" style="font-size: 14px;">warning</span>
+          Firma manuell auswählen
+        </span>
+      `;
+      return;
+    }
+    const transferInfo = lexTransfers[selComp];
+
+    if (transferInfo) {
+      const dateStr = new Date(transferInfo.transferredAt).toLocaleString("de-DE", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      statusArea.innerHTML = `
+        <span class="badge bg-success text-white d-inline-flex align-items-center gap-1 p-1 px-2" style="font-weight: 500;">
+          <span class="material-symbols-outlined" style="font-size: 14px;">check_circle</span>
+          Übertragen an ${selComp} am ${dateStr}
+        </span>
+      `;
+    } else {
+      statusArea.innerHTML = `
+        <span class="badge bg-light text-secondary border d-inline-flex align-items-center gap-1 p-1 px-2">
+          <span class="material-symbols-outlined" style="font-size: 14px;">info</span>
+          Nicht an ${selComp} übertragen
+        </span>
+      `;
+    }
+  }
+
+  targetSelect.addEventListener("change", async () => {
+    job.targetCompany = targetSelect.value;
+    updateCardStatusDisplay();
+    try {
+      await fetch(`/api/jobs/${job.id}/target-company`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetCompany: targetSelect.value }),
+      });
+    } catch (e) {
+      console.error("Fehler beim Speichern der Ziel-Firma:", e);
+    }
+  });
+
+  updateCardStatusDisplay();
+
+  transferBtn.addEventListener("click", async () => {
+    const selComp = targetSelect.value;
+    if (!selComp) {
+      alert("Bitte wählen Sie zuerst eine Lexoffice Ziel-Firma aus.");
+      return;
+    }
+    transferBtn.disabled = true;
+    transferBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Prüfe...`;
+
+    try {
+      // 1. Check if already transferred
+      const checkRes = await fetch("/api/lexoffice/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.id, companyKey: selComp }),
+      });
+      const checkData = await checkRes.json();
+
+      if (checkData.alreadyTransferred) {
+        // Show modal confirmation for re-transfer
+        pendingLexofficeTransferTarget = { jobId: job.id, companyKey: selComp, card, transferBtn };
+        document.getElementById("confirm-lexoffice-text").innerText =
+          `Dieses Dokument wurde am ${new Date(checkData.transferredInfo.transferredAt).toLocaleString("de-DE")} bereits zu Lexoffice (${selComp}) übertragen. Möchtest du es wirklich erneut übertragen?`;
+        document.getElementById("confirm-lexoffice-modal").style.display = "flex";
+        transferBtn.disabled = false;
+        transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
+        return;
+      }
+
+      // 2. Perform transfer
+      await executeLexofficeTransfer(job.id, selComp, false, card, transferBtn);
+    } catch (err) {
+      console.error(err);
+      alert("Fehler bei der Prüfung / Übertragung zu Lexoffice: " + err.message);
+      transferBtn.disabled = false;
+      transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
+    }
+  });
+
+  return card;
+}
+
+async function executeLexofficeTransfer(jobId, companyKey, force, card, transferBtn) {
+  transferBtn.disabled = true;
+  transferBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Übertrag...`;
+
+  try {
+    const res = await fetch("/api/lexoffice/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, companyKey, force }),
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      // Find job in allRechnungenJobs and update lexofficeTransfers
+      const targetJob = allRechnungenJobs.find((j) => j.id === jobId);
+      if (targetJob) {
+        if (!targetJob.lexofficeTransfers) targetJob.lexofficeTransfers = {};
+        targetJob.lexofficeTransfers[companyKey] = {
+          transferredAt: data.transferredAt,
+          lexofficeFileId: data.lexofficeFileId,
+          company: companyKey,
+        };
+      }
+      renderRechnungenList();
+    } else {
+      alert("Übertragung fehlgeschlagen: " + (data.error || "Unbekannter Fehler"));
+      transferBtn.disabled = false;
+      transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
+    }
+  } catch (e) {
+    alert("Fehler bei der Übertragung: " + e.message);
+    transferBtn.disabled = false;
+    transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
+  }
+}
+
+// Modal handlers for Lexoffice re-transfer
+const cancelLexBtn = document.getElementById("cancel-lexoffice-btn");
+const confirmLexBtn = document.getElementById("confirm-lexoffice-btn");
+
+if (cancelLexBtn) {
+  cancelLexBtn.addEventListener("click", () => {
+    document.getElementById("confirm-lexoffice-modal").style.display = "none";
+    pendingLexofficeTransferTarget = null;
+  });
+}
+
+if (confirmLexBtn) {
+  confirmLexBtn.addEventListener("click", async () => {
+    document.getElementById("confirm-lexoffice-modal").style.display = "none";
+    if (pendingLexofficeTransferTarget) {
+      const { jobId, companyKey, card, transferBtn } = pendingLexofficeTransferTarget;
+      pendingLexofficeTransferTarget = null;
+      await executeLexofficeTransfer(jobId, companyKey, true, card, transferBtn);
+    }
+  });
+}
