@@ -1141,6 +1141,7 @@ if (navUploadTab && navRechnungenTab) {
 let allRechnungenJobs = [];
 let pendingLexofficeTransferTarget = null; // { jobId, companyKey, card, transferBtn }
 
+const filterRechnungenSearch = document.getElementById("filter-rechnungen-search");
 const filterOnlyInvoices = document.getElementById("filter-only-invoices");
 const filterCompany = document.getElementById("filter-company");
 const filterStatus = document.getElementById("filter-status");
@@ -1149,6 +1150,7 @@ const filterQuarter = document.getElementById("filter-quarter");
 const rechnungenList = document.getElementById("rechnungen-list");
 const rechnungenCountBadge = document.getElementById("rechnungen-count-badge");
 
+if (filterRechnungenSearch) filterRechnungenSearch.addEventListener("input", renderRechnungenList);
 if (filterOnlyInvoices) filterOnlyInvoices.addEventListener("change", renderRechnungenList);
 if (filterCompany) filterCompany.addEventListener("change", renderRechnungenList);
 if (filterStatus) filterStatus.addEventListener("change", renderRechnungenList);
@@ -1252,6 +1254,7 @@ function renderRechnungenList() {
     return;
   }
 
+  const searchQuery = filterRechnungenSearch ? filterRechnungenSearch.value.trim().toLowerCase() : "";
   const onlyInvoices = filterOnlyInvoices ? filterOnlyInvoices.checked : true;
   const selectedCompany = filterCompany ? filterCompany.value : "alle";
   const selectedStatus = filterStatus ? filterStatus.value : "alle";
@@ -1261,6 +1264,28 @@ function renderRechnungenList() {
   const filteredJobs = allRechnungenJobs.filter((job) => {
     const res = job.result;
     if (!res) return false;
+
+    // 0. Live Text Search filter
+    if (searchQuery) {
+      const title = (res.full || job.originalName || "").toLowerCase();
+      const comp = (res.company || "").toLowerCase();
+      const targetComp = (job.targetCompany || "").toLowerCase();
+      const invNum = (res.invoiceNumber || job.invoiceNumber || "").toLowerCase();
+      const cat = (res.category || "").toLowerCase();
+      const tags = (res.tags && Array.isArray(res.tags) ? res.tags.join(" ") : "").toLowerCase();
+      const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
+
+      const matches =
+        title.includes(searchQuery) ||
+        comp.includes(searchQuery) ||
+        targetComp.includes(searchQuery) ||
+        invNum.includes(searchQuery) ||
+        cat.includes(searchQuery) ||
+        tags.includes(searchQuery) ||
+        amtStr.includes(searchQuery);
+
+      if (!matches) return false;
+    }
 
     // 1. Invoices filter
     if (onlyInvoices) {
