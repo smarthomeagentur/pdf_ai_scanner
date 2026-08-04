@@ -155,6 +155,9 @@ async function loadFolders() {
         document.getElementById("lexoffice-key-thewire").value = window.currentSettings.LEXOFFICE_KEY_THEWIRE || "";
         document.getElementById("lexoffice-key-polyxo").value = window.currentSettings.LEXOFFICE_KEY_POLYXO || "";
         document.getElementById("admin-backup-container").style.display = "block";
+
+        const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+        if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
       }
 
       document.getElementById("ai-prompt-settings-container").style.display = "block";
@@ -1130,6 +1133,7 @@ if (navUploadTab && navRechnungenTab) {
   });
 
   navRechnungenTab.addEventListener("click", () => {
+    if (!window.isAdmin) return;
     navRechnungenTab.classList.add("active");
     navUploadTab.classList.remove("active");
     viewUpload.style.display = "none";

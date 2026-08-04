@@ -911,7 +911,7 @@ app.post("/api/jobs/:id/category", express.json(), (req, res) => {
   }
 });
 
-app.post("/api/jobs/:id/target-company", express.json(), (req, res) => {
+app.post("/api/jobs/:id/target-company", requireAdmin, express.json(), (req, res) => {
   const jobId = req.params.id;
   const targetCompany = req.body.targetCompany;
   if (uploadJobs[jobId]) {
@@ -923,8 +923,8 @@ app.post("/api/jobs/:id/target-company", express.json(), (req, res) => {
   }
 });
 
-// Lexoffice Endpoints
-app.post("/api/lexoffice/check", express.json(), async (req, res) => {
+// Lexoffice Endpoints (Admin only)
+app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) => {
   const { jobId, companyKey } = req.body;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
@@ -939,7 +939,7 @@ app.post("/api/lexoffice/check", express.json(), async (req, res) => {
   });
 });
 
-app.post("/api/lexoffice/transfer", express.json(), async (req, res) => {
+app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, res) => {
   const { jobId, companyKey, force } = req.body;
   const validCompanies = ["wirewire", "thewire", "polyxo"];
   if (!validCompanies.includes(companyKey)) {
