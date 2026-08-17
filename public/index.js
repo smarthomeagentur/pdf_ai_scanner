@@ -154,6 +154,13 @@ async function loadFolders() {
         document.getElementById("lexoffice-key-wirewire").value = window.currentSettings.LEXOFFICE_KEY_WIREWIRE || "";
         document.getElementById("lexoffice-key-thewire").value = window.currentSettings.LEXOFFICE_KEY_THEWIRE || "";
         document.getElementById("lexoffice-key-polyxo").value = window.currentSettings.LEXOFFICE_KEY_POLYXO || "";
+        
+        document.getElementById("clickup-settings-container").style.display = "block";
+        document.getElementById("clickup-api-key").value = window.currentSettings.CLICKUP_API_KEY || "";
+        document.getElementById("clickup-list-id").value = window.currentSettings.CLICKUP_LIST_ID || "";
+        document.getElementById("clickup-auto-task").checked = window.currentSettings.CLICKUP_AUTO_TASK !== false;
+        document.getElementById("clickup-filter-private").checked = window.currentSettings.CLICKUP_FILTER_PRIVATE !== false;
+
         document.getElementById("admin-backup-container").style.display = "block";
 
         const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
@@ -324,6 +331,11 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
   const lexKeyThewire = document.getElementById("lexoffice-key-thewire").value.trim();
   const lexKeyPolyxo = document.getElementById("lexoffice-key-polyxo").value.trim();
 
+  const clickupApiKey = document.getElementById("clickup-api-key").value.trim();
+  const clickupListId = document.getElementById("clickup-list-id").value.trim();
+  const clickupAutoTask = document.getElementById("clickup-auto-task").checked;
+  const clickupFilterPrivate = document.getElementById("clickup-filter-private").checked;
+
   const res = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -336,6 +348,10 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
       LEXOFFICE_KEY_WIREWIRE: lexKeyWirewire,
       LEXOFFICE_KEY_THEWIRE: lexKeyThewire,
       LEXOFFICE_KEY_POLYXO: lexKeyPolyxo,
+      CLICKUP_API_KEY: clickupApiKey,
+      CLICKUP_LIST_ID: clickupListId,
+      CLICKUP_AUTO_TASK: clickupAutoTask,
+      CLICKUP_FILTER_PRIVATE: clickupFilterPrivate,
     }),
   });
 
@@ -757,6 +773,24 @@ function renderJobs() {
                     </a>`;
       }
 
+      let clickupDetailsHtml = `
+        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">ClickUp:</strong> 
+            ${job.clickup && job.clickup.taskId
+              ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${job.clickup.taskId}`}" target="_blank" style="color: #7b68ee; font-weight: 500; text-decoration: none;">Task #${job.clickup.taskId} (${job.clickup.status || 'offen'})</a>`
+              : `<span style="color: #888;">Nicht übertragen</span>`
+            }
+          </div>
+          ${window.isAdmin ? `
+            <button class="btn btn-sm btn-outline-primary btn-manual-clickup-transfer" data-job-id="${job.id}" style="border-radius: 12px; font-size: 12px; padding: 2px 10px; border-color: #7b68ee; color: #7b68ee; display: inline-flex; align-items: center; gap: 4px;">
+              <span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span>
+              <span>${job.clickup && job.clickup.taskId ? 'Aktualisieren' : 'Zu ClickUp'}</span>
+            </button>
+          ` : ''}
+        </div>
+      `;
+
       resultHtml = `
                     <details class="job-result" data-job-id="${
                       job.id
@@ -782,7 +816,8 @@ function renderJobs() {
                             </div><br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${tagsStr}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
-${invoiceHtml}                            <br><strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
+${invoiceHtml}                            <strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
+${clickupDetailsHtml}
                         </div>
                     </details>
                 `;
@@ -1408,7 +1443,21 @@ function createRechnungCard(job) {
         </div>
       </div>
 
-      <div class="border-top mt-3 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div class="border-top mt-2 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2">
+          <span class="text-muted small" style="font-size: 12px; font-weight: 500;">ClickUp:</span>
+          ${job.clickup && job.clickup.taskId
+            ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${job.clickup.taskId}`}" target="_blank" class="badge text-decoration-none" style="background: #7b68ee; color: white;">#${job.clickup.taskId} (${job.clickup.status || 'offen'})</a>`
+            : `<span class="badge bg-light text-secondary border">Nicht übertragen</span>`
+          }
+        </div>
+        <button class="btn btn-sm btn-outline-secondary rechnung-clickup-btn d-flex align-items-center gap-1" style="border-radius: 20px; padding: 4px 12px; font-size: 12px; border-color: #7b68ee; color: #7b68ee;">
+          <span class="material-symbols-outlined" style="font-size: 15px;">cloud_upload</span>
+          <span>${job.clickup && job.clickup.taskId ? "ClickUp aktualisieren" : "Zu ClickUp"}</span>
+        </button>
+      </div>
+
+      <div class="border-top mt-2 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div class="text-muted small" style="font-size: 12px; font-weight: 500;">Lexoffice Ziel-Firma:</div>
         <div class="d-flex align-items-center gap-2 ms-auto">
           <select class="form-select form-select-sm lexoffice-target-select" style="width: 140px; font-size: 13px;">
@@ -1582,3 +1631,332 @@ if (confirmLexBtn) {
     }
   });
 }
+
+// ==========================================
+// --- ClickUp Integration & Sync All UI ---
+// ==========================================
+
+const testClickUpBtn = document.getElementById("clickup-test-connection-btn");
+const clickupTestStatus = document.getElementById("clickup-test-status");
+
+if (testClickUpBtn) {
+  testClickUpBtn.addEventListener("click", async () => {
+    const apiKey = document.getElementById("clickup-api-key").value.trim();
+    const listId = document.getElementById("clickup-list-id").value.trim();
+
+    if (!apiKey) {
+      clickupTestStatus.innerHTML = '<span style="color: #dc3545;">⚠️ Bitte geben Sie zuerst einen API-Key ein.</span>';
+      return;
+    }
+
+    testClickUpBtn.disabled = true;
+    testClickUpBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Prüfe...`;
+    clickupTestStatus.innerHTML = '<span style="color: #666;">Verbindung zu ClickUp wird getestet...</span>';
+
+    try {
+      const res = await fetch("/api/clickup/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey, listId }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        clickupTestStatus.innerHTML = `
+          <span style="color: #198754; font-weight: 500;">
+            ✓ Erfolgreich verbunden! Liste: <strong>${data.listName}</strong> (Space: ${data.spaceName || '-'})
+          </span>
+        `;
+      } else {
+        clickupTestStatus.innerHTML = `
+          <span style="color: #dc3545;">
+            ✗ Verbindung fehlgeschlagen: ${data.error || "Unbekannter Fehler"}
+          </span>
+        `;
+      }
+    } catch (e) {
+      clickupTestStatus.innerHTML = `<span style="color: #dc3545;">✗ Netzwerkfehler: ${e.message}</span>`;
+    } finally {
+      testClickUpBtn.disabled = false;
+      testClickUpBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">sync_alt</span> Verbindung prüfen`;
+    }
+  });
+}
+
+// Single ClickUp Transfer
+let pendingClickupTransferJobId = null;
+let pendingClickupTransferBtn = null;
+
+async function executeClickupTransfer(jobId, force = false, btn = null) {
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Sende...`;
+  }
+
+  try {
+    const res = await fetch("/api/clickup/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, force }),
+    });
+
+    const data = await res.json();
+
+    if (data.alreadyTransferred && !force) {
+      pendingClickupTransferJobId = jobId;
+      pendingClickupTransferBtn = btn;
+      document.getElementById("confirm-clickup-text").innerText = data.error || "Dokument wurde bereits an ClickUp übertragen.";
+      document.getElementById("confirm-clickup-modal").style.display = "flex";
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span> <span>Aktualisieren</span>`;
+      }
+      return;
+    }
+
+    if (data.success) {
+      // Update local job state
+      const targetJob = activeJobs.find((j) => j.id === jobId) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+      if (targetJob) {
+        targetJob.clickup = data.clickup;
+      }
+      renderJobs();
+      if (typeof renderRechnungenList === "function") renderRechnungenList();
+    } else {
+      alert("ClickUp Übertragung fehlgeschlagen: " + (data.error || "Unbekannter Fehler"));
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span> <span>Zu ClickUp</span>`;
+      }
+    }
+  } catch (err) {
+    alert("Fehler bei ClickUp-Übertragung: " + err.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span> <span>Zu ClickUp</span>`;
+    }
+  }
+}
+
+// Modal handlers for single ClickUp transfer
+const cancelClickupBtn = document.getElementById("cancel-clickup-transfer-btn");
+const confirmClickupBtn = document.getElementById("confirm-clickup-transfer-btn");
+
+if (cancelClickupBtn) {
+  cancelClickupBtn.addEventListener("click", () => {
+    document.getElementById("confirm-clickup-modal").style.display = "none";
+    pendingClickupTransferJobId = null;
+    pendingClickupTransferBtn = null;
+  });
+}
+
+if (confirmClickupBtn) {
+  confirmClickupBtn.addEventListener("click", async () => {
+    document.getElementById("confirm-clickup-modal").style.display = "none";
+    if (pendingClickupTransferJobId) {
+      const jobId = pendingClickupTransferJobId;
+      const btn = pendingClickupTransferBtn;
+      pendingClickupTransferJobId = null;
+      pendingClickupTransferBtn = null;
+      await executeClickupTransfer(jobId, true, btn);
+    }
+  });
+}
+
+// Click listener delegation for manual transfer buttons
+document.addEventListener("click", (e) => {
+  const manualBtn = e.target.closest(".btn-manual-clickup-transfer") || e.target.closest(".rechnung-clickup-btn");
+  if (manualBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = manualBtn.getAttribute("data-job-id") || manualBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => manualBtn.closest(".job-item") && manualBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
+    if (jobId) {
+      executeClickupTransfer(jobId, false, manualBtn);
+    }
+  }
+});
+
+// --- ClickUp Sync All Review Modal Logic ---
+const triggerSyncModalBtn = document.getElementById("clickup-trigger-sync-btn");
+const clickupSyncModal = document.getElementById("clickup-sync-modal");
+const closeSyncModalBtn = document.getElementById("close-clickup-sync-btn");
+const cancelSyncModalBtn = document.getElementById("cancel-clickup-sync-btn");
+const confirmSyncModalBtn = document.getElementById("confirm-clickup-sync-btn");
+
+const countCreateSpan = document.getElementById("clickup-count-create");
+const countUpdateSpan = document.getElementById("clickup-count-update");
+const countSkipSpan = document.getElementById("clickup-count-skip");
+const syncItemsList = document.getElementById("clickup-sync-items-list");
+const syncProgressContainer = document.getElementById("clickup-sync-progress-container");
+const syncProgressBar = document.getElementById("clickup-sync-progress-bar");
+const syncProgressText = document.getElementById("clickup-sync-progress-text");
+const syncProgressPercent = document.getElementById("clickup-sync-progress-percent");
+
+let currentSyncPreviewData = null;
+let currentSyncFilter = "all";
+
+function renderSyncPreviewItems() {
+  if (!currentSyncPreviewData) return;
+  const { toCreate = [], toUpdate = [], toSkip = [] } = currentSyncPreviewData;
+
+  countCreateSpan.innerText = toCreate.length;
+  countUpdateSpan.innerText = toUpdate.length;
+  countSkipSpan.innerText = toSkip.length;
+
+  let itemsToRender = [];
+  if (currentSyncFilter === "all" || currentSyncFilter === "create") {
+    toCreate.forEach((item) => itemsToRender.push({ ...item, type: "create" }));
+  }
+  if (currentSyncFilter === "all" || currentSyncFilter === "update") {
+    toUpdate.forEach((item) => itemsToRender.push({ ...item, type: "update" }));
+  }
+  if (currentSyncFilter === "all" || currentSyncFilter === "skip") {
+    toSkip.forEach((item) => itemsToRender.push({ ...item, type: "skip" }));
+  }
+
+  if (itemsToRender.length === 0) {
+    syncItemsList.innerHTML = '<div style="text-align: center; color: #888; padding: 30px;">Keine Dokumente für diesen Filter gefunden.</div>';
+    return;
+  }
+
+  let html = "";
+  itemsToRender.forEach((item) => {
+    let badgeHtml = "";
+    let actionInfoHtml = "";
+
+    if (item.type === "create") {
+      badgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">+ Neu anlegen</span>`;
+      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Vorgeschlagener Task: <strong>${item.suggestedTaskName || item.fileName}</strong></span>`;
+    } else if (item.type === "update") {
+      badgeHtml = `<span style="background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">↻ Aktualisieren</span>`;
+      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Aktualisiert Task: <a href="${item.existingTaskUrl}" target="_blank" style="color: #1976d2; font-weight: 500;">#${item.existingTaskId} (${item.existingTaskName})</a></span>`;
+    } else if (item.type === "skip") {
+      badgeHtml = `<span style="background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⊘ Überspringen</span>`;
+      actionInfoHtml = `<span style="color: #e65100; font-size: 12px;">${item.reason || "Privat"}</span>`;
+    }
+
+    html += `
+      <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+        <div style="flex: 1; min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
+            ${badgeHtml}
+            <span style="font-weight: 600; font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.fileName}">${item.fileName}</span>
+          </div>
+          <div style="display: flex; gap: 12px; font-size: 12px; color: #777; flex-wrap: wrap; margin-top: 2px;">
+            <span>🏢 ${item.company || 'Unbekannt'}</span>
+            <span>📁 ${item.category || '-'}</span>
+            ${item.amount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${item.amount}</span>` : ''}
+          </div>
+          <div style="margin-top: 4px;">
+            ${actionInfoHtml}
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  syncItemsList.innerHTML = html;
+}
+
+if (triggerSyncModalBtn) {
+  triggerSyncModalBtn.addEventListener("click", async () => {
+    clickupSyncModal.style.display = "flex";
+    syncItemsList.innerHTML = '<div style="text-align: center; color: #888; padding: 30px;"><div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div><br>Lade Sync-Vorschau aus ClickUp...</div>';
+    confirmSyncModalBtn.disabled = true;
+    syncProgressContainer.style.display = "none";
+
+    try {
+      const res = await fetch("/api/clickup/sync-preview");
+      const data = await res.json();
+
+      if (data.success) {
+        currentSyncPreviewData = data;
+        currentSyncFilter = "all";
+        renderSyncPreviewItems();
+        confirmSyncModalBtn.disabled = (data.toCreate.length === 0 && data.toUpdate.length === 0);
+      } else {
+        syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Fehler beim Laden der Vorschau: ${data.error || "Unbekannt"}</div>`;
+      }
+    } catch (e) {
+      syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Netzwerkfehler: ${e.message}</div>`;
+    }
+  });
+}
+
+// Modal tab listeners
+["all", "create", "update", "skip"].forEach((tabKey) => {
+  const tabBtn = document.getElementById(`clickup-tab-${tabKey}`);
+  if (tabBtn) {
+    tabBtn.addEventListener("click", () => {
+      document.querySelectorAll("[id^='clickup-tab-']").forEach((b) => b.classList.remove("active"));
+      tabBtn.classList.add("active");
+      currentSyncFilter = tabKey;
+      renderSyncPreviewItems();
+    });
+  }
+});
+
+// Close modal handlers
+const closeSyncModal = () => {
+  clickupSyncModal.style.display = "none";
+  currentSyncPreviewData = null;
+};
+
+if (closeSyncModalBtn) closeSyncModalBtn.addEventListener("click", closeSyncModal);
+if (cancelSyncModalBtn) cancelSyncModalBtn.addEventListener("click", closeSyncModal);
+
+// Start batch synchronization
+if (confirmSyncModalBtn) {
+  confirmSyncModalBtn.addEventListener("click", async () => {
+    if (!currentSyncPreviewData) return;
+
+    confirmSyncModalBtn.disabled = true;
+    cancelSyncModalBtn.disabled = true;
+    syncProgressContainer.style.display = "block";
+    syncProgressBar.style.width = "15%";
+    syncProgressPercent.innerText = "15%";
+    syncProgressText.innerText = "Synchronisiere Dokumente mit ClickUp...";
+
+    try {
+      // Simulate progress progression for smooth UX
+      const progressTimer = setInterval(() => {
+        const currentW = parseInt(syncProgressBar.style.width, 10) || 15;
+        if (currentW < 90) {
+          syncProgressBar.style.width = `${currentW + 5}%`;
+          syncProgressPercent.innerText = `${currentW + 5}%`;
+        }
+      }, 500);
+
+      const res = await fetch("/api/clickup/sync-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      clearInterval(progressTimer);
+      syncProgressBar.style.width = "100%";
+      syncProgressPercent.innerText = "100%";
+
+      const data = await res.json();
+
+      if (data.success) {
+        syncProgressText.innerText = "Synchronisation erfolgreich abgeschlossen!";
+        setTimeout(() => {
+          alert(`ClickUp Synchronisation erfolgreich abgeschlossen!\n\n• ${data.createdCount} neu angelegt\n• ${data.updatedCount} aktualisiert\n• ${data.skippedCount} übersprungen`);
+          closeSyncModal();
+          startPolling();
+          if (typeof renderRechnungenList === "function") renderRechnungenList();
+        }, 500);
+      } else {
+        alert("Synchronisation fehlgeschlagen: " + (data.error || "Unbekannter Fehler"));
+        confirmSyncModalBtn.disabled = false;
+        cancelSyncModalBtn.disabled = false;
+      }
+    } catch (e) {
+      alert("Fehler bei der Synchronisation: " + e.message);
+      confirmSyncModalBtn.disabled = false;
+      cancelSyncModalBtn.disabled = false;
+    }
+  });
+}
+
