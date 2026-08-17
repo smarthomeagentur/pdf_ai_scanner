@@ -7,13 +7,26 @@ class ClickUpAPI {
   constructor(
     apiKey = process.env.CLICKUP_API_KEY,
     defaultListId = process.env.CLICKUP_LIST_ID,
-    defaultCompanyFieldId = process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+    customFields = {},
     statusInvoice = process.env.CLICKUP_STATUS_INVOICE,
     statusDefault = process.env.CLICKUP_STATUS_DEFAULT
   ) {
     this.apiKey = apiKey ? apiKey.trim() : (process.env.CLICKUP_API_KEY || "").trim();
     this.defaultListId = defaultListId ? defaultListId.trim() : (process.env.CLICKUP_LIST_ID || "").trim();
-    this.defaultCompanyFieldId = defaultCompanyFieldId ? defaultCompanyFieldId.trim() : (process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "").trim();
+    
+    // Support either a single company field id string (legacy) or an object with all custom fields
+    const cfObj = typeof customFields === "string" ? { company: customFields } : (customFields || {});
+    this.customFields = {
+      company: cfObj.company || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "f20f5692-fcce-4f62-9c63-1521d68f33f4",
+      category: cfObj.category || process.env.CLICKUP_CUSTOM_FIELD_CATEGORY_ID || "c0284d2c-60bb-4493-85c1-3937312166cf",
+      documentDate: cfObj.documentDate || process.env.CLICKUP_CUSTOM_FIELD_DATE_ID || "acb913e6-c01e-4a1b-a141-974172b44c05",
+      tags: cfObj.tags || process.env.CLICKUP_CUSTOM_FIELD_TAGS_ID || "4c0fbada-c66b-4f72-b2de-f253c0cf30af",
+      invoiceNumber: cfObj.invoiceNumber || process.env.CLICKUP_CUSTOM_FIELD_INVOICE_NUM_ID || "e9698a25-31c8-4347-a197-3b6d227acb7c",
+      invoiceAmount: cfObj.invoiceAmount || process.env.CLICKUP_CUSTOM_FIELD_AMOUNT_ID || "60f538dd-f66f-4128-a983-ea915ec1fc58",
+      driveLink: cfObj.driveLink || process.env.CLICKUP_CUSTOM_FIELD_DRIVE_LINK_ID || "1d7faae3-dc9b-46cd-b6ca-eda891869d64",
+    };
+    this.defaultCompanyFieldId = this.customFields.company;
+
     this.statusInvoice = statusInvoice ? statusInvoice.trim() : (process.env.CLICKUP_STATUS_INVOICE || "rechnung").trim();
     this.statusDefault = statusDefault ? statusDefault.trim() : (process.env.CLICKUP_STATUS_DEFAULT || "offen").trim();
     this.baseUrl = "https://api.clickup.com/api/v2";
@@ -28,7 +41,13 @@ class ClickUpAPI {
   }
 
   setCompanyFieldId(fieldId) {
-    this.defaultCompanyFieldId = fieldId ? fieldId.trim() : (process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "").trim();
+    this.customFields.company = fieldId ? fieldId.trim() : (process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "").trim();
+    this.defaultCompanyFieldId = this.customFields.company;
+  }
+
+  setCustomFields(customFields = {}) {
+    Object.assign(this.customFields, customFields);
+    if (this.customFields.company) this.defaultCompanyFieldId = this.customFields.company;
   }
 
   setStatusInvoice(status) {
@@ -357,6 +376,58 @@ class ClickUpAPI {
   }
 
   /**
+   * Build array of custom field values for task creation/update
+   */
+  buildCustomFieldsPayload(aiResult = {}, driveLink = "") {
+    const fields = [];
+    const addField = (fieldId, value) => {
+      if (fieldId && value !== undefined && value !== null && value !== "") {
+        fields.push({ id: fieldId, value });
+      }
+    };
+
+    // 1. Firma (short_text)
+    if (aiResult.company && aiResult.company !== "Unbekannt") {
+      addField(this.customFields.company, aiResult.company);
+    }
+    // 2. Kategorie (short_text)
+    if (aiResult.category && aiResult.category !== "unknown") {
+      addField(this.customFields.category, aiResult.category);
+    }
+    // 3. Belegdatum (short_text)
+    if (aiResult.documentDate && aiResult.documentDate !== "unknown") {
+      addField(this.customFields.documentDate, aiResult.documentDate);
+    }
+    // 4. Schlagworte (short_text)
+    if (aiResult.tags) {
+      const tagsStr = Array.isArray(aiResult.tags)
+        ? aiResult.tags.filter((t) => t && t !== "none").join(", ")
+        : String(aiResult.tags);
+      if (tagsStr) addField(this.customFields.tags, tagsStr);
+    }
+    // 5. Rechnungsnummer (short_text)
+    if (aiResult.invoiceNumber && aiResult.invoiceNumber !== "none") {
+      addField(this.customFields.invoiceNumber, aiResult.invoiceNumber);
+    }
+    // 6. Rechnungsbetrag (currency / number float e.g. 19.99)
+    if (aiResult.invoiceAmmount !== undefined && aiResult.invoiceAmmount !== null && aiResult.invoiceAmmount > 0) {
+      const amountFloat =
+        typeof aiResult.invoiceAmmount === "number"
+          ? aiResult.invoiceAmmount / 100
+          : parseFloat(aiResult.invoiceAmmount);
+      if (!isNaN(amountFloat) && amountFloat > 0) {
+        addField(this.customFields.invoiceAmount, amountFloat);
+      }
+    }
+    // 7. Google Drive Link (url)
+    if (driveLink) {
+      addField(this.customFields.driveLink, driveLink);
+    }
+
+    return fields;
+  }
+
+  /**
    * High-level method: Create or update document task in ClickUp
    */
   async createOrUpdateDocumentTask({
@@ -377,18 +448,7 @@ class ClickUpAPI {
     const markdownDesc = this.generateMarkdownDescription(aiResult, fileName, driveLink);
     const taskStatus = aiResult.isInvoice ? this.statusInvoice : this.statusDefault;
     const dueDate = this.parseDocumentDateToMs(aiResult.documentDate);
-
-    // Tags to apply
-    const tagsToApply = [];
-    if (aiResult.category && aiResult.category !== "unknown") tagsToApply.push(aiResult.category);
-    if (Array.isArray(aiResult.tags)) {
-      aiResult.tags.forEach((t) => {
-        if (t && t !== "none" && !tagsToApply.includes(t)) tagsToApply.push(t);
-      });
-    }
-    if (aiResult.company && aiResult.company !== "Unbekannt" && !tagsToApply.includes(aiResult.company)) {
-      tagsToApply.push(aiResult.company);
-    }
+    const customFieldsPayload = this.buildCustomFieldsPayload(aiResult, driveLink);
 
     let task = null;
     let isUpdated = false;
@@ -411,17 +471,9 @@ class ClickUpAPI {
         markdown_description: markdownDesc,
         status: taskStatus,
         notify_all: false,
-        tags: tagsToApply,
-        custom_fields: [],
+        custom_fields: customFieldsPayload,
       };
       if (dueDate) createPayload.due_date = dueDate;
-
-      if (aiResult.company && this.defaultCompanyFieldId) {
-        createPayload.custom_fields.push({
-          id: this.defaultCompanyFieldId,
-          value: aiResult.company,
-        });
-      }
 
       task = await this.createTask(listId, createPayload);
       isUpdated = false;
@@ -429,15 +481,10 @@ class ClickUpAPI {
 
     const taskId = task.id || existingTaskId;
 
-    // Set Custom Field "Firma" if updated
-    if (aiResult.company && this.defaultCompanyFieldId && isUpdated) {
-      await this.setCustomField(taskId, this.defaultCompanyFieldId, aiResult.company);
-    }
-
-    // Add tags if updated
-    if (isUpdated && tagsToApply.length > 0) {
-      for (const tag of tagsToApply) {
-        await this.addTag(taskId, tag);
+    // Set / update all Custom Fields if task was updated
+    if (isUpdated && customFieldsPayload.length > 0) {
+      for (const cf of customFieldsPayload) {
+        await this.setCustomField(taskId, cf.id, cf.value);
       }
     }
 
