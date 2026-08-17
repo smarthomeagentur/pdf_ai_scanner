@@ -1,20 +1,42 @@
 const fs = require("fs");
 const path = require("path");
+const dotenv = require("dotenv");
+dotenv.config();
 
 class ClickUpAPI {
-  constructor(apiKey, defaultListId = "901510878865", defaultCompanyFieldId = "f20f5692-fcce-4f62-9c63-1521d68f33f4") {
-    this.apiKey = apiKey ? apiKey.trim() : "";
-    this.defaultListId = defaultListId ? defaultListId.trim() : "901510878865";
-    this.defaultCompanyFieldId = defaultCompanyFieldId ? defaultCompanyFieldId.trim() : "f20f5692-fcce-4f62-9c63-1521d68f33f4";
+  constructor(
+    apiKey = process.env.CLICKUP_API_KEY,
+    defaultListId = process.env.CLICKUP_LIST_ID,
+    defaultCompanyFieldId = process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+    statusInvoice = process.env.CLICKUP_STATUS_INVOICE,
+    statusDefault = process.env.CLICKUP_STATUS_DEFAULT
+  ) {
+    this.apiKey = apiKey ? apiKey.trim() : (process.env.CLICKUP_API_KEY || "").trim();
+    this.defaultListId = defaultListId ? defaultListId.trim() : (process.env.CLICKUP_LIST_ID || "").trim();
+    this.defaultCompanyFieldId = defaultCompanyFieldId ? defaultCompanyFieldId.trim() : (process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "").trim();
+    this.statusInvoice = statusInvoice ? statusInvoice.trim() : (process.env.CLICKUP_STATUS_INVOICE || "rechnung").trim();
+    this.statusDefault = statusDefault ? statusDefault.trim() : (process.env.CLICKUP_STATUS_DEFAULT || "offen").trim();
     this.baseUrl = "https://api.clickup.com/api/v2";
   }
 
   setApiKey(apiKey) {
-    this.apiKey = apiKey ? apiKey.trim() : "";
+    this.apiKey = apiKey ? apiKey.trim() : (process.env.CLICKUP_API_KEY || "").trim();
   }
 
   setListId(listId) {
-    this.defaultListId = listId ? listId.trim() : "901510878865";
+    this.defaultListId = listId ? listId.trim() : (process.env.CLICKUP_LIST_ID || "").trim();
+  }
+
+  setCompanyFieldId(fieldId) {
+    this.defaultCompanyFieldId = fieldId ? fieldId.trim() : (process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "").trim();
+  }
+
+  setStatusInvoice(status) {
+    this.statusInvoice = status ? status.trim() : (process.env.CLICKUP_STATUS_INVOICE || "rechnung").trim();
+  }
+
+  setStatusDefault(status) {
+    this.statusDefault = status ? status.trim() : (process.env.CLICKUP_STATUS_DEFAULT || "offen").trim();
   }
 
   getHeaders(contentType = "application/json") {
@@ -353,7 +375,7 @@ class ClickUpAPI {
     const driveLink = driveFile?.webViewLink || aiResult.webViewLink || "";
     const taskName = this.generateTaskName(aiResult);
     const markdownDesc = this.generateMarkdownDescription(aiResult, fileName, driveLink);
-    const taskStatus = aiResult.isInvoice ? "rechnung" : "offen";
+    const taskStatus = aiResult.isInvoice ? this.statusInvoice : this.statusDefault;
     const dueDate = this.parseDocumentDateToMs(aiResult.documentDate);
 
     // Tags to apply

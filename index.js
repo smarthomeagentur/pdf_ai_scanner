@@ -83,10 +83,12 @@ const appSettings = {
   LEXOFFICE_KEY_THEWIRE: process.env.LEXOFFICE_KEY_THEWIRE || "",
   LEXOFFICE_KEY_POLYXO: process.env.LEXOFFICE_KEY_POLYXO || "",
   CLICKUP_API_KEY: process.env.CLICKUP_API_KEY || "",
-  CLICKUP_LIST_ID: process.env.CLICKUP_LIST_ID || "901510878865",
+  CLICKUP_LIST_ID: process.env.CLICKUP_LIST_ID || "",
   CLICKUP_AUTO_TASK: true,
   CLICKUP_FILTER_PRIVATE: true,
-  CLICKUP_CUSTOM_FIELD_COMPANY_ID: "f20f5692-fcce-4f62-9c63-1521d68f33f4",
+  CLICKUP_CUSTOM_FIELD_COMPANY_ID: process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "",
+  CLICKUP_STATUS_INVOICE: process.env.CLICKUP_STATUS_INVOICE || "rechnung",
+  CLICKUP_STATUS_DEFAULT: process.env.CLICKUP_STATUS_DEFAULT || "offen",
 };
 
 if (fs.existsSync(SETTINGS_FILE)) {
@@ -96,9 +98,11 @@ if (fs.existsSync(SETTINGS_FILE)) {
 }
 
 const clickupApi = new ClickUpAPI(
-  appSettings.CLICKUP_API_KEY,
-  appSettings.CLICKUP_LIST_ID,
-  appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID
+  appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY,
+  appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID,
+  appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+  appSettings.CLICKUP_STATUS_INVOICE || process.env.CLICKUP_STATUS_INVOICE,
+  appSettings.CLICKUP_STATUS_DEFAULT || process.env.CLICKUP_STATUS_DEFAULT
 );
 
 const app = express();
@@ -1161,7 +1165,7 @@ async function getJobPdfBuffer(job) {
 app.post("/api/clickup/verify", requireAdmin, express.json(), async (req, res) => {
   try {
     const apiKey = (req.body.apiKey !== undefined ? req.body.apiKey : appSettings.CLICKUP_API_KEY) || process.env.CLICKUP_API_KEY;
-    const listId = (req.body.listId !== undefined ? req.body.listId : appSettings.CLICKUP_LIST_ID) || "901510878865";
+    const listId = (req.body.listId !== undefined ? req.body.listId : appSettings.CLICKUP_LIST_ID) || process.env.CLICKUP_LIST_ID || "";
     const testApi = new ClickUpAPI(apiKey, listId);
     const result = await testApi.verifyConnection(listId);
     res.json(result);

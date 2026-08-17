@@ -157,7 +157,7 @@ async function loadFolders() {
         
         document.getElementById("clickup-settings-container").style.display = "block";
         document.getElementById("clickup-api-key").value = window.currentSettings.CLICKUP_API_KEY || "";
-        document.getElementById("clickup-list-id").value = window.currentSettings.CLICKUP_LIST_ID || "901510878865";
+        document.getElementById("clickup-list-id").value = window.currentSettings.CLICKUP_LIST_ID || "";
         document.getElementById("clickup-auto-task").checked = window.currentSettings.CLICKUP_AUTO_TASK !== false;
         document.getElementById("clickup-filter-private").checked = window.currentSettings.CLICKUP_FILTER_PRIVATE !== false;
 
