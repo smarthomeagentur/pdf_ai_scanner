@@ -349,6 +349,51 @@
 
           <div
             class="setting-group"
+            id="clickup-settings-container"
+            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
+          >
+            <label><strong>ClickUp Integration (nur Admin):</strong></label>
+            <div style="margin-top: 10px">
+              <label style="font-size: 0.9em; color: #555">ClickUp API Key (Personal Token):</label>
+              <input
+                type="password"
+                id="clickup-api-key"
+                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                placeholder="pk_..."
+              />
+            </div>
+            <div style="margin-top: 10px">
+              <label style="font-size: 0.9em; color: #555">Zielliste ID (z.B. Inbox):</label>
+              <input
+                type="text"
+                id="clickup-list-id"
+                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                placeholder="901510878865"
+              />
+            </div>
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="clickup-auto-task" style="width: 18px; height: 18px;" />
+                Automatisch Task in ClickUp erstellen nach Scan / Drive-Sync
+              </label>
+              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="clickup-filter-private" style="width: 18px; height: 18px;" />
+                Private Dokumente (z.B. Firma "Daniel" / Kategorie "Privat") überspringen
+              </label>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 12px;">
+              <button id="clickup-test-connection-btn" type="button" class="action-button" style="background-color: #6c757d; color: white; flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">sync_alt</span> Verbindung prüfen
+              </button>
+              <button id="clickup-trigger-sync-btn" type="button" class="action-button" style="background-color: #7b68ee; color: white; flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">cloud_sync</span> Sync All Review
+              </button>
+            </div>
+            <div id="clickup-test-status" style="margin-top: 8px; font-size: 13px;"></div>
+          </div>
+
+          <div
+            class="setting-group"
             id="admin-backup-container"
             style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;"
           >
@@ -397,7 +442,96 @@
         </div>
       </div>
 
-      <!-- Duplicate Check Modal -->
+      <!-- ClickUp Sync All Review Modal -->
+      <div id="clickup-sync-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 650px; width: 95%; max-height: 85vh; display: flex; flex-direction: column; text-align: left; padding: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0; color: #333; display: flex; align-items: center; gap: 8px;">
+              <span class="material-symbols-outlined" style="color: #7b68ee;">cloud_sync</span> ClickUp Gesamtsynchronisation
+            </h3>
+            <button id="close-clickup-sync-btn" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #888;">&times;</button>
+          </div>
+
+          <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
+            Prüfe die Dokumente vor der Synchronisation. Bereits existierende Tickets werden mit den KI-Metadaten aktualisiert. Neue Dokumente werden angelegt.
+          </p>
+
+          <!-- Summary Pills -->
+          <div style="display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
+            <div id="clickup-pill-create" style="flex: 1; min-width: 120px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 10px; text-align: center;">
+              <div style="font-size: 20px; font-weight: bold; color: #2e7d32;" id="clickup-count-create">0</div>
+              <div style="font-size: 12px; color: #388e3c; font-weight: 500;">Neu erstellen</div>
+            </div>
+            <div id="clickup-pill-update" style="flex: 1; min-width: 120px; background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 10px; text-align: center;">
+              <div style="font-size: 20px; font-weight: bold; color: #1565c0;" id="clickup-count-update">0</div>
+              <div style="font-size: 12px; color: #1976d2; font-weight: 500;">Aktualisieren</div>
+            </div>
+            <div id="clickup-pill-skip" style="flex: 1; min-width: 120px; background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 8px; padding: 10px; text-align: center;">
+              <div style="font-size: 20px; font-weight: bold; color: #e65100;" id="clickup-count-skip">0</div>
+              <div style="font-size: 12px; color: #f57c00; font-weight: 500;">Überspringen (Privat)</div>
+            </div>
+          </div>
+
+          <!-- Tab Selection & Search -->
+          <div style="display: flex; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+            <button id="clickup-tab-all" class="btn btn-sm btn-outline-primary active" style="border-radius: 16px;">Alle anzeigen</button>
+            <button id="clickup-tab-create" class="btn btn-sm btn-outline-success" style="border-radius: 16px;">Nur Neue</button>
+            <button id="clickup-tab-update" class="btn btn-sm btn-outline-info" style="border-radius: 16px;">Nur Updates</button>
+            <button id="clickup-tab-skip" class="btn btn-sm btn-outline-warning" style="border-radius: 16px;">Nur Private</button>
+          </div>
+
+          <!-- Items List Container -->
+          <div id="clickup-sync-items-list" style="flex: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fafafa; min-height: 200px; max-height: 380px;">
+            <div style="text-align: center; color: #888; padding: 30px;">Lade Vorschau...</div>
+          </div>
+
+          <!-- Sync Progress Bar -->
+          <div id="clickup-sync-progress-container" style="display: none; margin-top: 14px;">
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+              <span id="clickup-sync-progress-text">Synchronisiere mit ClickUp...</span>
+              <span id="clickup-sync-progress-percent">0%</span>
+            </div>
+            <div style="height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
+              <div id="clickup-sync-progress-bar" style="width: 0%; height: 100%; background: #7b68ee; transition: width 0.3s;"></div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; border-top: 1px solid #eee; padding-top: 14px;">
+            <button id="cancel-clickup-sync-btn" class="action-button" style="background: #e0e0e0; color: #333; margin: 0; padding: 10px 18px;">Abbrechen</button>
+            <button id="confirm-clickup-sync-btn" class="action-button" style="background: #7b68ee; color: white; margin: 0; padding: 10px 22px; font-weight: 600;">
+              <span class="material-symbols-outlined" style="font-size: 18px; vertical-align: middle; margin-right: 4px;">play_arrow</span> Synchronisation starten
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confirm ClickUp Single Re-Transfer Modal -->
+      <div id="confirm-clickup-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 420px; text-align: center;">
+          <h3 style="margin-top: 0; color: #333;">Bereits übertragen</h3>
+          <p id="confirm-clickup-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
+            Dieses Dokument wurde bereits an ClickUp übertragen. Möchtest du es aktualisieren?
+          </p>
+          <div style="display: flex; gap: 10px; justify-content: center;">
+            <button id="cancel-clickup-transfer-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
+            <button id="confirm-clickup-transfer-btn" class="action-button" style="background: #7b68ee; color: white; flex: 1; margin: 0;">Erneut übertragen</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confirm Lexoffice Re-Transfer Modal -->
+      <div id="confirm-lexoffice-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 420px; text-align: center;">
+          <h3 style="margin-top: 0; color: #333;">Bereits übertragen</h3>
+          <p id="confirm-lexoffice-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
+            Dieses Dokument wurde bereits an Lexoffice übertragen. Möchtest du es wirklich noch einmal übertragen?
+          </p>
+          <div style="display: flex; gap: 10px; justify-content: center;">
+            <button id="cancel-lexoffice-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
+            <button id="confirm-lexoffice-btn" class="action-button" style="background: #0d6efd; color: white; flex: 1; margin: 0;">Erneut übertragen</button>
+          </div>
+        </div>
+      </div>
       <div id="duplicate-check-modal" class="modal-overlay" style="z-index: 3000;">
         <div class="modal-content" style="max-width: 400px; text-align: center;">
           <h3 style="margin-top: 0; color: #333;">Mögliches Duplikat</h3>

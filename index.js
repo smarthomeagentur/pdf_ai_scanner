@@ -23,6 +23,7 @@ const jwt = require("jsonwebtoken");
 
 const aiAgent = require("./app/aiAgent.js");
 const DriveAPI = require("./app/driveApi.js");
+const ClickUpAPI = require("./app/clickupApi.js");
 
 dotenv.config();
 
@@ -81,6 +82,11 @@ const appSettings = {
   LEXOFFICE_KEY_WIREWIRE: process.env.LEXOFFICE_KEY_WIREWIRE || "",
   LEXOFFICE_KEY_THEWIRE: process.env.LEXOFFICE_KEY_THEWIRE || "",
   LEXOFFICE_KEY_POLYXO: process.env.LEXOFFICE_KEY_POLYXO || "",
+  CLICKUP_API_KEY: process.env.CLICKUP_API_KEY || "",
+  CLICKUP_LIST_ID: process.env.CLICKUP_LIST_ID || "901510878865",
+  CLICKUP_AUTO_TASK: true,
+  CLICKUP_FILTER_PRIVATE: true,
+  CLICKUP_CUSTOM_FIELD_COMPANY_ID: "f20f5692-fcce-4f62-9c63-1521d68f33f4",
 };
 
 if (fs.existsSync(SETTINGS_FILE)) {
@@ -88,6 +94,12 @@ if (fs.existsSync(SETTINGS_FILE)) {
     Object.assign(appSettings, JSON.parse(fs.readFileSync(SETTINGS_FILE)));
   } catch (e) { }
 }
+
+const clickupApi = new ClickUpAPI(
+  appSettings.CLICKUP_API_KEY,
+  appSettings.CLICKUP_LIST_ID,
+  appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID
+);
 
 const app = express();
 app.set("trust proxy", 1); // Trust first proxy for express-rate-limit
@@ -302,10 +314,18 @@ app.post("/api/settings", requireAdmin, express.json(), async (req, res) => {
     "LEXOFFICE_KEY_WIREWIRE",
     "LEXOFFICE_KEY_THEWIRE",
     "LEXOFFICE_KEY_POLYXO",
+    "CLICKUP_API_KEY",
+    "CLICKUP_LIST_ID",
+    "CLICKUP_AUTO_TASK",
+    "CLICKUP_FILTER_PRIVATE",
   ].forEach((key) => {
     if (req.body[key] !== undefined) appSettings[key] = req.body[key];
   });
   await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
+
+  clickupApi.setApiKey(appSettings.CLICKUP_API_KEY);
+  clickupApi.setListId(appSettings.CLICKUP_LIST_ID);
+
   res.json({ success: true });
 
   if (appSettings.MONITOR_DRIVE) {
@@ -720,6 +740,55 @@ async function processQueue() {
         }
       }
 
+      // Read PDF buffer for ClickUp attachment before unlinking
+      let pdfBuffer = null;
+      if (fs.existsSync(job.filePath)) {
+        try {
+          pdfBuffer = await fs.promises.readFile(job.filePath);
+        } catch (e) {}
+      }
+
+      // ClickUp Integration: Auto-create task if enabled
+      if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
+        const isPrivateDoc =
+          job.isPrivate ||
+          (sortedName.company && sortedName.company.toLowerCase().includes("daniel")) ||
+          (sortedName.category && sortedName.category.toLowerCase() === "privat");
+
+        if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivateDoc) {
+          console.log(`[CLICKUP] Job ${jobId} als privat eingestuft. ClickUp-Upload wird übersprungen.`);
+        } else {
+          try {
+            console.log(`[CLICKUP] Erstelle ClickUp-Task für Job ${jobId} (${sortedName.full})...`);
+            const fileName = sortedName.full
+              ? (sortedName.full.endsWith(".pdf") ? sortedName.full : `${sortedName.full}.pdf`)
+              : (job.originalName || "Dokument.pdf");
+
+            const clickupResult = await clickupApi.createOrUpdateDocumentTask({
+              fileBuffer: pdfBuffer,
+              fileName: fileName,
+              aiResult: sortedName,
+              driveFile: driveFile,
+              listId: appSettings.CLICKUP_LIST_ID,
+              uploadAttachment: !!pdfBuffer,
+            });
+
+            if (clickupResult && clickupResult.success) {
+              job.clickup = {
+                taskId: clickupResult.taskId,
+                taskUrl: clickupResult.taskUrl,
+                taskName: clickupResult.taskName,
+                status: clickupResult.status,
+                transferredAt: new Date().toISOString(),
+              };
+              console.log(`[CLICKUP] Task ${clickupResult.taskId} erfolgreich erstellt für Job ${jobId}`);
+            }
+          } catch (clickupErr) {
+            console.error(`[CLICKUP] Fehler bei automatischer ClickUp-Verarbeitung für Job ${jobId}:`, clickupErr.message);
+          }
+        }
+      }
+
       await fs.promises.unlink(job.filePath).catch(() => { });
 
       const isDuplicate = Object.values(uploadJobs).some(j => 
@@ -1061,6 +1130,241 @@ app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, re
   } catch (err) {
     console.error("[LEXOFFICE] Fehler bei Übertragung:", err);
     res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung zu Lexoffice." });
+  }
+});
+
+// Helper: Get PDF Buffer for a job (from local disk or Google Drive)
+async function getJobPdfBuffer(job) {
+  if (job.filePath && fs.existsSync(job.filePath)) {
+    return await fs.promises.readFile(job.filePath);
+  }
+
+  let driveFileId = job.rawDriveId;
+  if (!driveFileId && job.result && job.result.webViewLink) {
+    const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (match) driveFileId = match[1];
+  }
+
+  if (!driveFileId) return null;
+
+  try {
+    const drive = await driveApi.getClient();
+    const driveRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
+    return Buffer.from(driveRes.data);
+  } catch (e) {
+    console.error(`[PDF BUFFER] Fehler beim Laden der Datei aus Google Drive (ID ${driveFileId}):`, e);
+    return null;
+  }
+}
+
+// ClickUp Endpoints (Admin only)
+app.post("/api/clickup/verify", requireAdmin, express.json(), async (req, res) => {
+  try {
+    const apiKey = (req.body.apiKey !== undefined ? req.body.apiKey : appSettings.CLICKUP_API_KEY) || process.env.CLICKUP_API_KEY;
+    const listId = (req.body.listId !== undefined ? req.body.listId : appSettings.CLICKUP_LIST_ID) || "901510878865";
+    const testApi = new ClickUpAPI(apiKey, listId);
+    const result = await testApi.verifyConnection(listId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/clickup/transfer", requireAdmin, express.json(), async (req, res) => {
+  const { jobId, force } = req.body;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  if (job.clickup && job.clickup.taskId && !force) {
+    return res.json({
+      success: false,
+      alreadyTransferred: true,
+      clickup: job.clickup,
+      error: `Dokument wurde bereits am ${new Date(job.clickup.transferredAt).toLocaleString("de-DE")} zu ClickUp übertragen (Task #${job.clickup.taskId}).`,
+    });
+  }
+
+  try {
+    const fileBuffer = await getJobPdfBuffer(job);
+    const fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
+    const safeFileName = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+
+    const clickupRes = await clickupApi.createOrUpdateDocumentTask({
+      fileBuffer: fileBuffer,
+      fileName: safeFileName,
+      aiResult: job.result || {},
+      existingTaskId: force && job.clickup ? job.clickup.taskId : null,
+      listId: appSettings.CLICKUP_LIST_ID,
+      uploadAttachment: !!fileBuffer,
+    });
+
+    job.clickup = {
+      taskId: clickupRes.taskId,
+      taskUrl: clickupRes.taskUrl,
+      taskName: clickupRes.taskName,
+      status: clickupRes.status,
+      transferredAt: new Date().toISOString(),
+    };
+    saveJobs();
+
+    console.log(`[CLICKUP] Job ${jobId} manuell zu ClickUp übertragen (Task ${clickupRes.taskId})`);
+    res.json({ success: true, clickup: job.clickup, isUpdated: clickupRes.isUpdated });
+  } catch (err) {
+    console.error("[CLICKUP] Fehler bei manueller Übertragung:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung zu ClickUp." });
+  }
+});
+
+app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
+  try {
+    if (!appSettings.CLICKUP_API_KEY) {
+      return res.status(400).json({ success: false, error: "Kein ClickUp API-Key hinterlegt." });
+    }
+
+    const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+    const jobsList = Object.values(uploadJobs).filter((j) => j.status === "completed" && j.result);
+
+    const toCreate = [];
+    const toUpdate = [];
+    const toSkip = [];
+
+    for (const job of jobsList) {
+      const isPrivate =
+        job.isPrivate ||
+        (job.result.company && job.result.company.toLowerCase().includes("daniel")) ||
+        (job.result.category && job.result.category.toLowerCase() === "privat");
+
+      if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivate) {
+        toSkip.push({
+          jobId: job.id,
+          fileName: job.result.full || job.originalName,
+          company: job.result.company || "Unbekannt",
+          category: job.result.category || "-",
+          reason: "Privates Dokument (Filter aktiv)",
+        });
+        continue;
+      }
+
+      const matchingTask = clickupApi.findMatchingTask(job, clickupTasks);
+      if (matchingTask) {
+        toUpdate.push({
+          jobId: job.id,
+          fileName: job.result.full || job.originalName,
+          company: job.result.company || "Unbekannt",
+          category: job.result.category || "-",
+          isInvoice: !!job.result.isInvoice,
+          amount: job.result.invoiceAmmount ? clickupApi.formatAmount(job.result.invoiceAmmount) : "",
+          existingTaskId: matchingTask.id,
+          existingTaskName: matchingTask.name,
+          existingTaskUrl: matchingTask.url || `https://app.clickup.com/t/${matchingTask.id}`,
+        });
+      } else {
+        toCreate.push({
+          jobId: job.id,
+          fileName: job.result.full || job.originalName,
+          company: job.result.company || "Unbekannt",
+          category: job.result.category || "-",
+          isInvoice: !!job.result.isInvoice,
+          amount: job.result.invoiceAmmount ? clickupApi.formatAmount(job.result.invoiceAmmount) : "",
+          suggestedTaskName: clickupApi.generateTaskName(job.result),
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      totalJobs: jobsList.length,
+      totalClickupTasks: clickupTasks.length,
+      toCreate,
+      toUpdate,
+      toSkip,
+    });
+  } catch (err) {
+    console.error("[CLICKUP] Fehler bei Sync-Vorschau:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Erstellen der Sync-Vorschau." });
+  }
+});
+
+app.post("/api/clickup/sync-all", requireAdmin, express.json(), async (req, res) => {
+  try {
+    if (!appSettings.CLICKUP_API_KEY) {
+      return res.status(400).json({ success: false, error: "Kein ClickUp API-Key hinterlegt." });
+    }
+
+    const { selectedJobIds } = req.body;
+    const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+    const jobsList = Object.values(uploadJobs).filter((j) => {
+      if (j.status !== "completed" || !j.result) return false;
+      if (selectedJobIds && Array.isArray(selectedJobIds)) {
+        return selectedJobIds.includes(j.id);
+      }
+      return true;
+    });
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+    const errors = [];
+
+    for (const job of jobsList) {
+      const isPrivate =
+        job.isPrivate ||
+        (job.result.company && job.result.company.toLowerCase().includes("daniel")) ||
+        (job.result.category && job.result.category.toLowerCase() === "privat");
+
+      if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivate) {
+        skippedCount++;
+        continue;
+      }
+
+      try {
+        const matchingTask = clickupApi.findMatchingTask(job, clickupTasks);
+        const fileBuffer = await getJobPdfBuffer(job);
+        const fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
+        const safeFileName = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+
+        const clickupRes = await clickupApi.createOrUpdateDocumentTask({
+          fileBuffer: fileBuffer,
+          fileName: safeFileName,
+          aiResult: job.result || {},
+          existingTaskId: matchingTask ? matchingTask.id : null,
+          listId: appSettings.CLICKUP_LIST_ID,
+          uploadAttachment: !!fileBuffer && !matchingTask,
+        });
+
+        job.clickup = {
+          taskId: clickupRes.taskId,
+          taskUrl: clickupRes.taskUrl,
+          taskName: clickupRes.taskName,
+          status: clickupRes.status,
+          transferredAt: new Date().toISOString(),
+        };
+
+        if (clickupRes.isUpdated) {
+          updatedCount++;
+        } else {
+          createdCount++;
+        }
+      } catch (err) {
+        console.error(`[CLICKUP] Fehler beim Synchronisieren von Job ${job.id}:`, err);
+        errors.push({ jobId: job.id, error: err.message });
+      }
+    }
+
+    saveJobs();
+
+    console.log(`[CLICKUP] Sync All abgeschlossen: ${createdCount} erstellt, ${updatedCount} aktualisiert, ${skippedCount} übersprungen.`);
+    res.json({
+      success: true,
+      createdCount,
+      updatedCount,
+      skippedCount,
+      totalProcessed: jobsList.length,
+      errors,
+    });
+  } catch (err) {
+    console.error("[CLICKUP] Fehler bei Sync All:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der Gesamtsynchronisation." });
   }
 });
 
