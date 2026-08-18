@@ -143,7 +143,7 @@ async function getFileDataJSONGemma(pdfText, settings = {}) {
     'JSON Schema:\n' +
     '{"company":"String","category":"String","tags":["String"],"isInvoice":true,"documentDate":"String","invoiceNumber":"String","invoiceAmmount":0}';
 
-  const targetModel = process.env.LOCAL_AI_MODEL || "gemma2:2b";
+  const targetModel = process.env.LOCAL_AI_MODEL || "gemma4:e2b";
   const textContent = (pdfText && pdfText.trim().length > 0) ? pdfText.slice(0, 4000) : "Kein Text lesbar";
 
   const aiSettings = {
@@ -184,9 +184,42 @@ function checkFileDate(text) {
   return "unknown";
 }
 
+function getPythonPath() {
+  const venvWin = path.join(__dirname, "..", "venv", "Scripts", "python.exe");
+  const venvUnix = path.join(__dirname, "..", "venv", "bin", "python");
+  if (fs.existsSync(venvWin)) return venvWin;
+  if (fs.existsSync(venvUnix)) return venvUnix;
+  return "python";
+}
+
 async function getPdfImageBuffer(pdfPath) {
   try {
     const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
+    const outPng = path.join(os.tmpdir(), `pdfPic_${uniqueId}.png`);
+
+    // 1. Primär: PyMuPDF (fitz) - schnell & zuverlässig
+    try {
+      const { execFile } = require("child_process");
+      const util = require("util");
+      const execFileAsync = util.promisify(execFile);
+      await execFileAsync(getPythonPath(), [
+        "-c",
+        "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
+        pdfPath,
+        outPng,
+      ]);
+      if (fs.existsSync(outPng)) {
+        const buf = await fs.promises.readFile(outPng);
+        await fs.promises.unlink(outPng).catch(() => {});
+        if (buf && buf.length > 100) {
+          return buf.toString("base64");
+        }
+      }
+    } catch (fitzErr) {
+      // Fallback
+    }
+
+    // 2. Fallback: pdf2pic
     const options = {
       density: 150,
       saveFilename: `pdfPic_${uniqueId}`,
@@ -208,7 +241,7 @@ async function getPdfImageBuffer(pdfPath) {
 
     return result.base64;
   } catch (err) {
-    console.error("[AI] Fehler bei der pdf2pic Konvertierung:", err.message || err);
+    console.error("[AI] Fehler bei der PDF-Bild-Extraktion:", err.message || err);
     return false;
   }
 }
