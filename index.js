@@ -825,7 +825,30 @@ async function processSingleJob(jobId) {
     }
 
     // ClickUp Integration
-    if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
+    const isDriveSyncJob = job.source === "drive_sync" || job.source === "google_drive" || !!job.rawDriveId;
+
+    if (isDriveSyncJob) {
+      // DRIVE SYNC: Nur lesend prüfen, ob Task in ClickUp bereits existiert (KEIN automatischer Upload!)
+      if (appSettings.CLICKUP_API_KEY && appSettings.CLICKUP_LIST_ID) {
+        try {
+          const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+          const match = clickupApi.findMatchingTask(job, clickupTasks);
+          if (match) {
+            job.clickup = {
+              taskId: match.id,
+              taskUrl: match.url || `https://app.clickup.com/t/${match.id}`,
+              taskName: match.name,
+              status: match.status?.status || "offen",
+              transferredAt: job.clickup?.transferredAt || new Date().toISOString(),
+            };
+            console.log(`[CLICKUP] Drive-Sync Beleg ${jobId} bereits in ClickUp gefunden: Task #${match.id}`);
+          }
+        } catch (cuErr) {
+          console.error(`[CLICKUP] Fehler beim Prüfen von Task für Job ${jobId}:`, cuErr.message);
+        }
+      }
+    } else if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
+      // LIVE SCAN / UPLOAD: Neuer Scan darf automatisch zu ClickUp übertragen werden
       const isPrivateDoc =
         job.isPrivate ||
         (sortedName.company && sortedName.company.toLowerCase().includes("daniel")) ||
@@ -984,6 +1007,7 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
       id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
       originalName: file.originalname,
       status: "pending",
+      source: "upload",
       inAiPipeline: true,
       aiPipelineStartedAt: new Date().toISOString(),
       result: null,
@@ -1201,6 +1225,7 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
               id: jobId,
               originalName: item.name,
               status: "pending",
+              source: "drive_sync",
               inAiPipeline: true,
               aiPipelineStartedAt: new Date().toISOString(),
               result: null,
@@ -1211,6 +1236,7 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
             };
           } else {
             uploadJobs[jobId].status = "pending";
+            uploadJobs[jobId].source = "drive_sync";
             uploadJobs[jobId].inAiPipeline = true;
             uploadJobs[jobId].aiPipelineStartedAt = new Date().toISOString();
             uploadJobs[jobId].filePath = localPath;
