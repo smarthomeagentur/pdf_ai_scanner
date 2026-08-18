@@ -1201,30 +1201,34 @@ window.addEventListener("beforeinstallprompt", (e) => {
   }
 });
 
-pwaInstallBtn.addEventListener("click", async () => {
-  // Hide the banner
-  pwaBanner.classList.remove("show");
-  localStorage.setItem("pwaPromptDismissed", "true");
+if (pwaInstallBtn) {
+  pwaInstallBtn.addEventListener("click", async () => {
+    // Hide the banner
+    pwaBanner.classList.remove("show");
+    localStorage.setItem("pwaPromptDismissed", "true");
 
-  if (deferredPrompt) {
-    // Show the install prompt
-    deferredPrompt.prompt();
-    // Wait for the user to respond to the prompt
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`User response to the install prompt: ${outcome}`);
-    // We've used the prompt, and can't use it again, throw it away
-    deferredPrompt = null;
-  }
-});
+    if (deferredPrompt) {
+      // Show the install prompt
+      deferredPrompt.prompt();
+      // Wait for the user to respond to the prompt
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response to the install prompt: ${outcome}`);
+      // We've used the prompt, and can't use it again, throw it away
+      deferredPrompt = null;
+    }
+  });
+}
 
-pwaCloseBtn.addEventListener("click", () => {
-  pwaBanner.classList.remove("show");
-  localStorage.setItem("pwaPromptDismissed", "true");
-});
+if (pwaCloseBtn) {
+  pwaCloseBtn.addEventListener("click", () => {
+    if (pwaBanner) pwaBanner.classList.remove("show");
+    localStorage.setItem("pwaPromptDismissed", "true");
+  });
+}
 
 window.addEventListener("appinstalled", () => {
   // Hide banner if shown and clear deferred prompt
-  pwaBanner.classList.remove("show");
+  if (pwaBanner) pwaBanner.classList.remove("show");
   deferredPrompt = null;
   console.log("PWA was installed");
 });
@@ -1237,23 +1241,24 @@ const searchResultsList = document.getElementById("search-results-list");
 const closeSearchBtn = document.getElementById("close-search-btn");
 
 const performSearch = async () => {
+  if (!searchInput) return;
   const query = searchInput.value.trim();
   if (query.length < 2) return;
 
-  searchResultsContainer.style.display = "block";
-  searchResultsList.innerHTML = "<div class='text-center mt-3 mb-3'>Suche in Google Drive läuft...</div>";
+  if (searchResultsContainer) searchResultsContainer.style.display = "block";
+  if (searchResultsList) searchResultsList.innerHTML = "<div class='text-center mt-3 mb-3'>Suche in Google Drive läuft...</div>";
 
   try {
     const res = await fetch("/api/drive/search?q=" + encodeURIComponent(query));
     const data = await res.json();
 
     if (!data.success) {
-      searchResultsList.innerHTML = `<div class="text-danger mt-2">${data.error || "Suche fehlgeschlagen."}</div>`;
+      if (searchResultsList) searchResultsList.innerHTML = `<div class="text-danger mt-2">${data.error || "Suche fehlgeschlagen."}</div>`;
       return;
     }
 
     if (data.files.length === 0) {
-      searchResultsList.innerHTML =
+      if (searchResultsList) searchResultsList.innerHTML =
         "<div class='text-muted mt-2'>Keine Dokumente für diese Suchbegriffe gefunden.</div>";
       return;
     }
@@ -1284,20 +1289,24 @@ const performSearch = async () => {
       `;
     });
 
-    searchResultsList.innerHTML = html;
+    if (searchResultsList) searchResultsList.innerHTML = html;
   } catch (e) {
-    searchResultsList.innerHTML = `<div class="text-danger">Netzwerkfehler bei der Suche.</div>`;
+    if (searchResultsList) searchResultsList.innerHTML = `<div class="text-danger">Netzwerkfehler bei der Suche.</div>`;
   }
 };
 
-searchBtn.addEventListener("click", performSearch);
-searchInput.addEventListener("keypress", (e) => {
-  if (e.key === "Enter") performSearch();
-});
+if (searchBtn) searchBtn.addEventListener("click", performSearch);
+if (searchInput) {
+  searchInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") performSearch();
+  });
+}
 
-closeSearchBtn.addEventListener("click", () => {
-  searchResultsContainer.style.display = "none";
-});
+if (closeSearchBtn) {
+  closeSearchBtn.addEventListener("click", () => {
+    if (searchResultsContainer) searchResultsContainer.style.display = "none";
+  });
+}
 
 // Fetch settings globally on load so category options are available
 async function loadGlobalSettings() {
