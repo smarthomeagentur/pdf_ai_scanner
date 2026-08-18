@@ -510,14 +510,12 @@ function showDuplicateDialog(filename, simJob) {
         if (simJob.result.category) categoryHtml = `<br>Kategorie: ${simJob.result.category}`;
         if (simJob.result.tags && Array.isArray(simJob.result.tags)) tagsHtml = `<br>Tags: ${simJob.result.tags.slice(0, 3).join(", ")}`;
         
-        if (simJob.result.localThumbnail || simJob.result.thumbnailLink) {
-          const imgSrc = simJob.result.localThumbnail || simJob.result.thumbnailLink;
-          previewHtml = `
-            <div style="margin-top: 10px; text-align: center;">
-              <img src="${imgSrc}" style="height: 250px; aspect-ratio: 1 / 1.414; object-fit: fill; border-radius: 4px; border: 1px solid #ccc; background: #fff;" title="Vorschau" alt="Vorschau">
-            </div>
-          `;
-        }
+        const imgSrc = `/api/jobs/${simJob.id}/thumbnail`;
+        previewHtml = `
+          <div style="margin-top: 10px; text-align: center;">
+            <img src="${imgSrc}" loading="lazy" style="height: 250px; aspect-ratio: 1 / 1.414; object-fit: cover; border-radius: 4px; border: 1px solid #ccc; background: #fff;" title="Vorschau" alt="Vorschau" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
+          </div>
+        `;
       }
       
       detailsHtml = `
@@ -1028,18 +1026,12 @@ function renderJobs() {
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsbetrag:</strong> ${invAmtFormatted} €<br>`;
       }
 
-      const driveId = job.rawDriveId || job.id;
-      const imgSrc = job.result.localThumbnail
-        ? job.result.localThumbnail
-        : (driveId ? `/api/thumbnail/${driveId}` : (job.result.thumbnailLink || ""));
-
-      if (imgSrc) {
-        previewHtml = `<a href="${
-          job.result.webViewLink || "#"
-        }" target="_blank" class="pdf-preview-container">
-                        <img src="${imgSrc}" alt="PDF Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
-                    </a>`;
-      }
+      const imgSrc = `/api/jobs/${job.id}/thumbnail`;
+      previewHtml = `<a href="${
+        job.result.webViewLink || "#"
+      }" target="_blank" class="pdf-preview-container">
+                      <img src="${imgSrc}" loading="lazy" alt="PDF Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
+                  </a>`;
 
       let clickupDetailsHtml = `
         <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
@@ -1700,14 +1692,8 @@ function createRechnungCard(job) {
   card.className = "card shadow-sm border-0 mb-2";
   card.style.borderRadius = "10px";
 
-  const driveId = job.rawDriveId || job.id;
-  const thumbSrc = res.localThumbnail
-    ? res.localThumbnail
-    : (driveId ? `/api/thumbnail/${driveId}` : (res.thumbnailLink || ""));
-
-  const thumbnailHtml = thumbSrc
-    ? `<img src="${thumbSrc}" style="width: 60px; height: 80px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd;" onerror="this.onerror=null; this.parentElement.innerHTML='<div style=\\'width:60px;height:80px;background:#eee;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#aaa;\\'><span class=\\'material-symbols-outlined\\'>description</span></div>';" />`
-    : `<div style="width: 60px; height: 80px; background: #eee; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #aaa;"><span class="material-symbols-outlined">description</span></div>`;
+  const thumbSrc = `/api/jobs/${job.id}/thumbnail`;
+  const thumbnailHtml = `<img src="${thumbSrc}" loading="lazy" style="width: 60px; height: 80px; object-fit: cover; border-radius: 4px; border: 1px solid #ddd;" onerror="this.onerror=null; this.parentElement.innerHTML='<div style=\\'width:60px;height:80px;background:#eee;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#aaa;\\'><span class=\\'material-symbols-outlined\\'>description</span></div>';" />`;
 
   // Format amount
   let amountFormatted = "";
@@ -1859,16 +1845,10 @@ async function openLexofficeSyncModal(jobId) {
   if (lexSyncModal) lexSyncModal.style.display = "flex";
 
   // Pre-fill Document preview info
-  const res = job.result || {};
-  const driveId = job.rawDriveId || job.id;
-  const thumbSrc = res.localThumbnail || (driveId ? `/api/thumbnail/${driveId}` : (res.thumbnailLink || ""));
+  const thumbSrc = `/api/jobs/${job.id}/thumbnail`;
 
   if (lexDocThumbContainer) {
-    if (thumbSrc) {
-      lexDocThumbContainer.innerHTML = `<img src="${thumbSrc}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\\'material-symbols-outlined text-muted\\'>description</span>';" />`;
-    } else {
-      lexDocThumbContainer.innerHTML = `<span class="material-symbols-outlined text-muted">description</span>`;
-    }
+    lexDocThumbContainer.innerHTML = `<img src="${thumbSrc}" loading="lazy" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\\'material-symbols-outlined text-muted\\'>description</span>';" />`;
   }
 
   if (lexDocTitle) {

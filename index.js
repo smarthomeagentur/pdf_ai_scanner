@@ -445,77 +445,118 @@ app.get("/api/drive/search", async (req, res) => {
   }
 });
 
-app.get("/api/thumbnail/:fileId", async (req, res) => {
-  const fileId = req.params.fileId;
-  const thumbPath = path.join(thumbsFolder, `${fileId}.jpg`);
+async function getOrGenerateThumbnailPath(identifier) {
+  if (!identifier) return null;
 
-  if (fs.existsSync(thumbPath)) {
-    return res.sendFile(thumbPath);
+  // 1. Direct match on disk (downloads/ or store/thumbs/)
+  const candidatePaths = [
+    path.join(localDownloadFolder, `thumb_${identifier}.jpg`),
+    path.join(localDownloadFolder, `thumb_${identifier}.png`),
+    path.join(thumbsFolder, `${identifier}.jpg`),
+    path.join(thumbsFolder, `thumb_${identifier}.jpg`),
+  ];
+
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) return p;
   }
 
-  try {
-    if (!fs.existsSync(TOKEN_PATH)) {
-      return res.status(404).send("Not authenticated with Drive");
-    }
+  // 2. Check if identifier corresponds to a job in uploadJobs
+  const job = uploadJobs[identifier];
+  const targetThumbPath = path.join(localDownloadFolder, `thumb_${identifier}.jpg`);
 
-    const drive = await driveApi.getClient();
-    let imageBuffer = null;
-
-    // 1. Try fetching thumbnailLink via backend
+  // 2a. If local PDF file exists on disk, render directly with PyMuPDF fitz
+  if (job && job.filePath && fs.existsSync(job.filePath)) {
     try {
-      const fileInfo = await drive.files.get({ fileId: fileId, fields: "thumbnailLink" });
-      if (fileInfo.data && fileInfo.data.thumbnailLink) {
-        const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s220");
-        const imgRes = await fetch(link);
-        if (imgRes.ok) {
-          imageBuffer = Buffer.from(await imgRes.arrayBuffer());
-        }
-      }
-    } catch (e) {}
+      await new Promise((resolve, reject) => {
+        execFile(
+          getPythonPath(),
+          [
+            "-c",
+            "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+            job.filePath,
+            targetThumbPath,
+          ],
+          (err) => (err ? reject(err) : resolve())
+        );
+      });
+      if (fs.existsSync(targetThumbPath)) return targetThumbPath;
+    } catch (e) {
+      console.error(`[THUMBNAIL] Fehler beim Rendern des lokalen PDFs für Job ${identifier}:`, e.message);
+    }
+  }
 
-    // 2. Fallback: Render page 1 as JPEG using PyMuPDF if needed
-    if (!imageBuffer) {
-      const pdfTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.pdf`);
+  // 3. Fallback: Google Drive Download
+  const driveFileId =
+    job?.rawDriveId ||
+    (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null) ||
+    identifier;
+
+  if (fs.existsSync(TOKEN_PATH)) {
+    try {
+      const drive = await driveApi.getClient();
+
+      // 3a. Try thumbnailLink from Google Drive
+      try {
+        const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
+        if (fileInfo.data && fileInfo.data.thumbnailLink) {
+          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s300");
+          const imgRes = await fetch(link);
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            if (buf && buf.length > 100) {
+              await fs.promises.writeFile(targetThumbPath, buf);
+              return targetThumbPath;
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 3b. Download first page/file and render with PyMuPDF fitz
+      const pdfTemp = path.join(localDownloadFolder, `temp_thumb_${identifier}.pdf`);
       try {
         const dest = fs.createWriteStream(pdfTemp);
-        const downloadRes = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "stream" });
+        const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
         await pipeline(downloadRes.data, dest);
 
-        const jpgTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.jpg`);
         await new Promise((resolve, reject) => {
           execFile(
             getPythonPath(),
             [
               "-c",
-              `import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=100); pix.save(sys.argv[2]); doc.close()`,
+              "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
               pdfTemp,
-              jpgTemp,
+              targetThumbPath,
             ],
-            (error) => (error ? reject(error) : resolve())
+            (err) => (err ? reject(err) : resolve())
           );
         });
-
-        if (fs.existsSync(jpgTemp)) {
-          imageBuffer = await fs.promises.readFile(jpgTemp);
-          await fs.promises.unlink(jpgTemp).catch(() => {});
-        }
+        if (fs.existsSync(targetThumbPath)) return targetThumbPath;
       } catch (e) {
+        console.error(`[THUMBNAIL] Fehler beim Rendern des Drive-PDFs für ${identifier}:`, e.message);
       } finally {
         if (fs.existsSync(pdfTemp)) await fs.promises.unlink(pdfTemp).catch(() => {});
       }
+    } catch (driveErr) {
+      console.error(`[THUMBNAIL] Google Drive Fehler für ${identifier}:`, driveErr.message);
     }
+  }
 
-    if (imageBuffer) {
-      await fs.promises.writeFile(thumbPath, imageBuffer);
+  return null;
+}
+
+app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
+  try {
+    const id = req.params.id;
+    const thumbPath = await getOrGenerateThumbnailPath(id);
+    if (thumbPath && fs.existsSync(thumbPath)) {
       res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=864000");
-      return res.send(imageBuffer);
+      res.setHeader("Cache-Control", "public, max-age=864000"); // 10 Tage Browser-Cache
+      return res.sendFile(thumbPath);
     }
-
-    res.status(404).send("Thumbnail not found");
+    return res.status(404).send("Thumbnail not found");
   } catch (err) {
-    console.error("[THUMBNAIL] Error serving thumbnail:", err);
-    res.status(500).send("Error generating thumbnail");
+    console.error("[THUMBNAIL] Fehler beim Ausliefern des Thumbnails:", err);
+    return res.status(500).send("Error generating thumbnail");
   }
 });
 
@@ -533,9 +574,17 @@ function loadJobs() {
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
 
-    // Setze verwaiste Jobs aus vorigen Server-Crashes / Restarts zurück
+    // Entferne alte base64 localThumbnails aus jobs.json & bereinige Crash-Status
     let changed = false;
     for (const jobId in uploadJobs) {
+      if (uploadJobs[jobId].result && uploadJobs[jobId].result.localThumbnail) {
+        delete uploadJobs[jobId].result.localThumbnail;
+        changed = true;
+      }
+      if (uploadJobs[jobId].localThumbnail) {
+        delete uploadJobs[jobId].localThumbnail;
+        changed = true;
+      }
       if (uploadJobs[jobId].status === "processing" || uploadJobs[jobId].status === "pending") {
         uploadJobs[jobId].status = "error";
         uploadJobs[jobId].inAiPipeline = false;
@@ -676,22 +725,23 @@ async function processSingleJob(jobId) {
       sortedName.webContentLink = driveFile.webContentLink;
     }
 
-    const jpgPath = job.filePath.replace(".pdf", ".jpg");
-    let localThumbBase64 = null;
-    if (fs.existsSync(jpgPath)) {
+    // Dynamisches Thumbnail direkt in downloads/thumb_${jobId}.jpg anlegen
+    const targetThumb = path.join(localDownloadFolder, `thumb_${jobId}.jpg`);
+    if (fs.existsSync(job.filePath) && !fs.existsSync(targetThumb)) {
       try {
-        localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
-      } catch (e) { }
-      await fs.promises.unlink(jpgPath).catch(() => { });
-    }
-
-    // Fallback: Falls kein Thumbnail existiert
-    if (!localThumbBase64 && typeof aiAgent.generateThumbnail === "function") {
-      try {
-        localThumbBase64 = await aiAgent.generateThumbnail(job.filePath);
-      } catch (e) {
-        console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
-      }
+        await new Promise((resolve) => {
+          execFile(
+            getPythonPath(),
+            [
+              "-c",
+              "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+              job.filePath,
+              targetThumb,
+            ],
+            () => resolve()
+          );
+        });
+      } catch (thumbErr) {}
     }
 
     // Read PDF buffer for ClickUp attachment before unlinking
@@ -754,7 +804,6 @@ async function processSingleJob(jobId) {
     job.inAiPipeline = false;
     job.aiEnriched = true;
     job.aiPipelineCompletedAt = new Date().toISOString();
-    sortedName.localThumbnail = localThumbBase64;
     job.result = sortedName;
     job.invoiceNumber = sortedName.invoiceNumber;
     job.invoiceAmmount = sortedName.invoiceAmmount;

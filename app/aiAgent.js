@@ -129,19 +129,20 @@ async function getFileDataJSONGemma(pdfText, settings = {}) {
     settings.AI_CATEGORIES ||
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
 
-  const instructionFileName =
-    "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den folgenden Beleg/Text und extrahiere die Informationen als valides JSON.\n" +
-    "Gib AUSSCHLIESSLICH das JSON-Objekt zurück, ohne zusätzlichen Text und ohne Markdown-Codeblöcke (\`\`\`json).\n" +
-    "Regeln:\n" +
-    `1. "company": Ziel-Unternehmen/Organisation. Erlaubte Werte: ${allowedCompanies}. Wenn unklar, "Unbekannt".\n` +
-    `2. "category": Hauptkategorie aus: ${allowedCategories}. Wenn unklar, "Sonstige".\n` +
-    '3. "tags": Array von 3-5 prägnanten Schlagworten zum Inhalt/Absender.\n' +
-    '4. "isInvoice": Boolean (true/false) ob es sich um eine Rechnung/Zahlungsbeleg handelt.\n' +
-    '5. "documentDate": String mit Datum im Format "DD.MM.YYYY" oder "unknown".\n' +
-    '6. "invoiceNumber": String mit Rechnungs-/Belegnummer oder "none".\n' +
-    '7. "invoiceAmmount": Integer in Cent (z.B. 1999 für 19,99€) oder 0.\n' +
-    'JSON Schema:\n' +
-    '{"company":"String","category":"String","tags":["String"],"isInvoice":true,"documentDate":"String","invoiceNumber":"String","invoiceAmmount":0}';
+  var instructionFileName =
+    "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den untenstehenden Text und extrahiere die angeforderten Informationen.\n" +
+    "Gib das Ergebnis AUSSCHLIESSLICH als valides JSON aus.Füge keinen Text vor oder nach dem JSON hinzu.Verwende keine Markdown-Formatierung (kein ```json).\n" +
+    "Regeln für die Datengewinnung:\n" +
+    `1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind: ${allowedCompanies}. Nimm eine dieser Optionen, wenn sie im Dokument genannt werden oder auch wenn du einen starken Verdacht hast. Wenn keine der vorherigen Optionen passt, fülle das Feld mit "Unbekannt".\n` +
+    `2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments. Nutze folgende Kategorien: ${allowedCategories}. Wenn keine dieser passt, vergib die Kategorie "unknown".\n` +
+    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein und sich dadurch wiederholen. Gib diese als Array von Strings zurück.\n' +
+    'WICHTIG: Wenn es keinen passenden Inhalt für Kategorie und Tags gibt, setze "category" auf "unknown" und "tags" auf ["none"].\n' +
+    '4. "isInvoice": Boolean. Setze den Wert auf true, wenn es sich bei dem Dokument um eine Rechnung handelt, wenn eine Zahlung vorgenommen werden muss oder das Dokument irgend einen buchhalterischen Bezug hat. Andernfalls false.\n' +
+    '5. "documentDate": String. Suche nach dem Datum auf dem Dokument (z.B. Rechnungsdatum oder Erstellungsdatum) und gib es im Format "DD.MM.YYYY" aus. Wenn keines abgedruckt ist, setze "unknown".\n' +
+    '6. "invoiceNumber": String. Gibt die Rechnungsnummer oder Belegnummer oder etwas dieser Art aus dem Dokument zurück. Ansonsten gib die "none" zurück, wenn du nichts findest.\n' +
+    '7. "invoiceAmmount": Integer. Wenn es eine Rechnung ist, gibt den Rechnungsbetrag zurück. Entferne das Komma. z.B. 3,45 gibst du als 345 aus. Ansonsten gib 0 zurück\n' +
+    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String", "invoiceNumber": "String", "invoiceAmmount": "Integer"}\n';
+
 
   const targetModel = process.env.LOCAL_AI_MODEL || "gemma4:e2b";
   const textContent = (pdfText && pdfText.trim().length > 0) ? pdfText.slice(0, 4000) : "Kein Text lesbar";
@@ -210,7 +211,7 @@ async function getPdfImageBuffer(pdfPath) {
       ]);
       if (fs.existsSync(outPng)) {
         const buf = await fs.promises.readFile(outPng);
-        await fs.promises.unlink(outPng).catch(() => {});
+        await fs.promises.unlink(outPng).catch(() => { });
         if (buf && buf.length > 100) {
           return buf.toString("base64");
         }
@@ -301,7 +302,7 @@ async function performOcr(base64Image, originalFilePath) {
     } catch (tessErr) {
       console.error("[AI] Tesseract.js OCR Fehler (wird übersprungen):", tessErr.message || tessErr);
       if (globalTesseractWorker) {
-        try { await globalTesseractWorker.terminate(); } catch (e) {}
+        try { await globalTesseractWorker.terminate(); } catch (e) { }
         globalTesseractWorker = null;
       }
       return "";
@@ -355,7 +356,7 @@ module.exports = {
       const result = await convert(1, { responseType: "base64" });
       const tempThumb = path.join(os.tmpdir(), `thumb_${uniqueId}.1.jpeg`);
       if (fs.existsSync(tempThumb)) {
-        fs.promises.unlink(tempThumb).catch(() => {});
+        fs.promises.unlink(tempThumb).catch(() => { });
       }
       if (result && result.base64) {
         return `data:image/jpeg;base64,${result.base64}`;
