@@ -5,6 +5,7 @@ const BUTLER_API_BASE = "https://api.buchhaltungsbutler.de/v1";
 
 /**
  * Validates connection and credentials with BuchhaltungsButler API.
+ * Uses /receipts/get with limit: 1 to verify credentials and Mandant access.
  * @param {Object} params
  * @param {string} params.client API Client (e.g. the_wire_ug)
  * @param {string} params.secret API Secret
@@ -19,20 +20,22 @@ async function verifyConnection({ client, secret, key }) {
   const basicAuth = Buffer.from(`${client.trim()}:${secret.trim()}`).toString("base64");
 
   try {
-    // Send probe request to /receipts/add without type to check authentication
-    const res = await fetch(`${BUTLER_API_BASE}/receipts/add`, {
+    const res = await fetch(`${BUTLER_API_BASE}/receipts/get`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${basicAuth}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ key: key.trim() }),
+      body: JSON.stringify({
+        api_key: key.trim(),
+        list_direction: "inbound",
+        limit: 1,
+      }),
     });
 
     const data = await res.json().catch(() => ({}));
 
-    // error_code 8 means "invalid type specified" -> credentials ARE VALID and authenticated!
-    if (data.error_code === 8 || data.success === true) {
+    if (res.ok && data.success === true) {
       return {
         valid: true,
         organizationName: client,
@@ -42,14 +45,14 @@ async function verifyConnection({ client, secret, key }) {
     if (data.error_code === 4) {
       return {
         valid: false,
-        error: `BuchhaltungsButler Mandanten-Fehler (Code 4): ${data.message || "API Client/Key im BuchhaltungsButler-Portal nicht für Mandanten freigeschaltet."}`,
+        error: "BuchhaltungsButler Mandanten-Fehler (Code 4): Der API-Key ist im Portal nicht für den API-Client ('" + client + "') freigeschaltet.",
       };
     }
 
     if (data.error_code === 3) {
       return {
         valid: false,
-        error: "BuchhaltungsButler Authentifizierungsfehler: API Client oder Secret ungültig.",
+        error: "BuchhaltungsButler Authentifizierungsfehler (Code 3): API Client oder Secret ist ungültig.",
       };
     }
 
@@ -66,7 +69,7 @@ async function verifyConnection({ client, secret, key }) {
 }
 
 /**
- * Uploads a document (PDF) to BuchhaltungsButler as an expense receipt.
+ * Uploads a document (PDF) to BuchhaltungsButler as an expense/income receipt.
  * @param {Object} params
  * @param {Buffer} params.fileBuffer PDF Buffer
  * @param {string} params.fileName PDF Filename
@@ -88,15 +91,18 @@ async function uploadReceipt({ fileBuffer, fileName, client, secret, key, type =
   let sanitizedFileName = fileName || "Dokument.pdf";
   if (!sanitizedFileName.toLowerCase().endsWith(".pdf")) sanitizedFileName += ".pdf";
 
+  // Map type to BuchhaltungsButler swagger specification
+  const bbType = type === "income" ? "invoice outbound" : "invoice inbound";
+
   const payload = {
-    key: key.trim(),
-    type: type || "expense",
+    api_key: key.trim(),
+    type: bbType,
     file_name: sanitizedFileName,
     file: fileBuffer.toString("base64"),
   };
 
   try {
-    const res = await fetch(`${BUTLER_API_BASE}/receipts/add`, {
+    const res = await fetch(`${BUTLER_API_BASE}/receipts/upload`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${basicAuth}`,
@@ -108,7 +114,7 @@ async function uploadReceipt({ fileBuffer, fileName, client, secret, key, type =
     const data = await res.json().catch(() => ({}));
 
     if (res.ok && data.success) {
-      const fileId = data.id || data.receipt_id || `bb_${Date.now()}`;
+      const fileId = data.id_by_customer || data.id || data.receipt_id || `bb_${Date.now()}`;
       return {
         success: true,
         fileId: fileId.toString(),

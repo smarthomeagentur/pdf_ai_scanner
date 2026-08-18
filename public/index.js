@@ -379,34 +379,9 @@ const jobListContainer = document.getElementById("job-list-container");
 const jobList = document.getElementById("job-list");
 
 const triggerClearJobsBtn = document.getElementById("trigger-clear-jobs-btn");
-const triggerSyncDriveBtn = document.getElementById("trigger-sync-drive-btn");
 const confirmClearModal = document.getElementById("confirm-clear-modal");
 const confirmClearBtn = document.getElementById("confirm-clear-btn");
 const cancelClearBtn = document.getElementById("cancel-clear-btn");
-
-if (triggerSyncDriveBtn) {
-  triggerSyncDriveBtn.addEventListener("click", async () => {
-    triggerSyncDriveBtn.disabled = true;
-    triggerSyncDriveBtn.innerText = "Wiederherstellen...";
-    try {
-      const res = await fetch("/api/drive/sync", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        alert(`${data.restoredCount} Dokument(e) erfolgreich aus Google Drive wiederhergestellt!`);
-        settingsModal.style.display = "none";
-        startPolling();
-        if (typeof loadRechnungenView === "function") loadRechnungenView();
-      } else {
-        alert("Fehler bei der Wiederherstellung: " + (data.error || "Unbekannter Fehler"));
-      }
-    } catch (e) {
-      alert("Fehler bei der Wiederherstellung: " + e.message);
-    } finally {
-      triggerSyncDriveBtn.disabled = false;
-      triggerSyncDriveBtn.innerText = "Dokumente aus Google Drive wiederherstellen";
-    }
-  });
-}
 
 const downloadBackupBtn = document.getElementById("download-backup-btn");
 const triggerRestoreBtn = document.getElementById("trigger-restore-btn");

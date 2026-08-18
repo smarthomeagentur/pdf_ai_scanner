@@ -512,101 +512,6 @@ app.get("/api/thumbnail/:fileId", async (req, res) => {
   }
 });
 
-async function syncJobsFromDrive() {
-  if (!fs.existsSync(TOKEN_PATH) || !appSettings.FOLDER_ID_SORTED) return 0;
-  try {
-    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
-      ? appSettings.FOLDER_ID_SORTED
-      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
-
-    if (!driveFolderId) return 0;
-
-    const drive = await driveApi.getClient();
-    const result = await drive.files.list({
-      q: `'${driveFolderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
-      fields: "files(id, name, description, webViewLink, thumbnailLink, createdTime, appProperties)",
-      pageSize: 200,
-    });
-
-    const files = result.data.files || [];
-    let restoredCount = 0;
-
-    for (const file of files) {
-      let existingJob = Object.values(uploadJobs).find(
-        (j) => j.id === file.id || j.rawDriveId === file.id || (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id))
-      );
-
-      if (!existingJob) {
-        const title = file.name || "Dokument.pdf";
-        const desc = file.description || "";
-
-        let company = "Unbekannt";
-        let category = "Unbekannt";
-        let tags = [];
-        let isInvoice = title.toLowerCase().includes("rechnung") || desc.toLowerCase().includes("rechnung");
-
-        const compMatch = desc.match(/Firma:\s*([^|]+)/i) || title.match(/\(([^)]+)\)$/);
-        if (compMatch) company = compMatch[1].trim();
-
-        const catMatch = desc.match(/Kategorie:\s*([^|]+)/i) || title.match(/-(.*?)-/);
-        if (catMatch) category = catMatch[1].trim();
-
-        const tagsMatch = desc.match(/Tags:\s*([^|]+)/i);
-        if (tagsMatch) tags = tagsMatch[1].split(",").map((t) => t.trim());
-
-        const dateMatch = title.match(/^(\d{2})(\d{2})(\d{2})/);
-        let docDate = "unknown";
-        if (dateMatch) {
-          docDate = `${dateMatch[3]}.${dateMatch[2]}.20${dateMatch[1]}`;
-        }
-
-        const jobId = file.id;
-        uploadJobs[jobId] = {
-          id: jobId,
-          originalName: title,
-          status: "completed",
-          rawDriveId: file.id,
-          uploadDate: file.createdTime || new Date().toISOString(),
-          isPrivate: file.appProperties && file.appProperties.isPrivate === "true",
-          result: {
-            success: true,
-            full: title,
-            date: dateMatch ? dateMatch[0] : "",
-            documentDate: docDate,
-            category: category,
-            tags: tags,
-            company: company,
-            isInvoice: isInvoice,
-            invoiceNumber: "none",
-            invoiceAmmount: 0,
-            webViewLink: file.webViewLink,
-            thumbnailLink: file.thumbnailLink,
-          },
-        };
-
-        if (!processedDriveFiles.includes(file.id)) {
-          processedDriveFiles.push(file.id);
-        }
-        restoredCount++;
-      }
-    }
-
-    if (restoredCount > 0) {
-      saveJobs();
-      console.log(`[DRIVE SYNC] ${restoredCount} Dokumente erfolgreich aus Google Drive wiederhergestellt.`);
-    }
-    return restoredCount;
-  } catch (err) {
-    console.error("[DRIVE SYNC] Fehler beim Wiederherstellen:", err);
-    return 0;
-  }
-}
-
-app.post("/api/drive/sync", async (req, res) => {
-  const restoredCount = await syncJobsFromDrive();
-  res.json({ success: true, restoredCount, totalJobs: Object.keys(uploadJobs).length });
-});
-
 // Job Queue
 let uploadJobs = {};
 let uploadQueue = [];
@@ -957,12 +862,6 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
 });
 
 app.get("/api/status", async (req, res) => {
-  if (Object.keys(uploadJobs).length === 0) {
-    try {
-      await syncJobsFromDrive();
-    } catch (e) {}
-  }
-
   const isAdmin = checkIsAdmin(req);
   let statuses =
     req.query.ids === "all"
