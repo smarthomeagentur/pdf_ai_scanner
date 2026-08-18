@@ -1002,13 +1002,81 @@ app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) 
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
 
-  const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[companyKey]);
-  const transferredInfo = alreadyTransferred ? job.lexofficeTransfers[companyKey] : null;
+  const validCompanies = ["wirewire", "thewire", "polyxo"];
+  const configuredCompanies = {
+    wirewire: !!(appSettings.LEXOFFICE_KEY_WIREWIRE && appSettings.LEXOFFICE_KEY_WIREWIRE.trim()),
+    thewire: !!(appSettings.LEXOFFICE_KEY_THEWIRE && appSettings.LEXOFFICE_KEY_THEWIRE.trim()),
+    polyxo: !!(appSettings.LEXOFFICE_KEY_POLYXO && appSettings.LEXOFFICE_KEY_POLYXO.trim()),
+  };
+
+  // Determine suggested company
+  let suggestedCompany = job.targetCompany;
+  if (!suggestedCompany && job.result && job.result.company) {
+    const c = job.result.company.toLowerCase();
+    if (c.includes("wirewire")) suggestedCompany = "wirewire";
+    else if (c.includes("the wire") || c.includes("thewire")) suggestedCompany = "thewire";
+    else if (c.includes("polyxo")) suggestedCompany = "polyxo";
+  }
+  if (!suggestedCompany || !validCompanies.includes(suggestedCompany)) {
+    suggestedCompany = "wirewire";
+  }
+
+  const targetComp = companyKey && validCompanies.includes(companyKey) ? companyKey : suggestedCompany;
+  const apiKeySettingName = `LEXOFFICE_KEY_${targetComp.toUpperCase()}`;
+  const apiKey = (appSettings[apiKeySettingName] || "").trim();
+
+  let apiValid = false;
+  let apiError = null;
+  let organizationName = null;
+
+  if (apiKey) {
+    try {
+      const apiRes = await fetch("https://api.lexoffice.io/v1/profile", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (apiRes.ok) {
+        apiValid = true;
+        const profData = await apiRes.json().catch(() => ({}));
+        organizationName = profData.companyName || profData.name || null;
+      } else {
+        apiValid = false;
+        apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
+      }
+    } catch (err) {
+      apiValid = false;
+      apiError = `Verbindungsfehler zu Lexoffice: ${err.message}`;
+    }
+  } else {
+    apiError = `Kein API-Key für Lexoffice (${targetComp}) in den Einstellungen hinterlegt.`;
+  }
+
+  const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[targetComp]);
+  const transferredInfo = alreadyTransferred ? job.lexofficeTransfers[targetComp] : null;
 
   res.json({
     success: true,
+    jobId: job.id,
+    selectedCompany: targetComp,
+    suggestedCompany,
+    configuredCompanies,
+    apiValid,
+    apiError,
+    organizationName,
     alreadyTransferred,
     transferredInfo,
+    allTransfers: job.lexofficeTransfers || {},
+    documentDetails: {
+      title: job.result?.full || job.originalName,
+      documentDate: job.result?.documentDate || "-",
+      invoiceNumber: job.result?.invoiceNumber || job.invoiceNumber || "none",
+      invoiceAmmount: job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : (job.invoiceAmmount || 0),
+      company: job.result?.company || "-",
+      category: job.result?.category || "-",
+      localThumbnail: job.result?.localThumbnail,
+      thumbnailLink: job.result?.thumbnailLink,
+      webViewLink: job.result?.webViewLink,
+      rawDriveId: job.rawDriveId,
+    },
   });
 });
 
@@ -1123,6 +1191,7 @@ app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, re
       lexofficeFileId: lexData.id,
       company: companyKey,
     };
+    job.targetCompany = companyKey;
     saveJobs();
 
     console.log(`[LEXOFFICE] Job ${jobId} erfolgreich zu Lexoffice (${companyKey}) übertragen (ID: ${lexData.id})`);
@@ -1130,6 +1199,7 @@ app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, re
       success: true,
       lexofficeFileId: lexData.id,
       transferredAt: job.lexofficeTransfers[companyKey].transferredAt,
+      company: companyKey,
     });
   } catch (err) {
     console.error("[LEXOFFICE] Fehler bei Übertragung:", err);

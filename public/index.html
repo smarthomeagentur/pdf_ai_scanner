@@ -519,19 +519,77 @@
         </div>
       </div>
 
-      <!-- Confirm Lexoffice Re-Transfer Modal -->
-      <div id="confirm-lexoffice-modal" class="modal-overlay" style="z-index: 3000;">
-        <div class="modal-content" style="max-width: 420px; text-align: center;">
-          <h3 style="margin-top: 0; color: #333;">Bereits übertragen</h3>
-          <p id="confirm-lexoffice-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
-            Dieses Dokument wurde bereits an Lexoffice übertragen. Möchtest du es wirklich noch einmal übertragen?
-          </p>
-          <div style="display: flex; gap: 10px; justify-content: center;">
-            <button id="cancel-lexoffice-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
-            <button id="confirm-lexoffice-btn" class="action-button" style="background: #0d6efd; color: white; flex: 1; margin: 0;">Erneut übertragen</button>
+      <!-- Lexoffice Sync Modal -->
+      <div id="lexoffice-sync-modal" class="modal-overlay" style="z-index: 3000;">
+        <div class="modal-content" style="max-width: 520px; width: 95%; text-align: left; padding: 24px; border-radius: 16px;">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 class="m-0 fw-bold d-flex align-items-center gap-2" style="color: #1a1a1a; font-size: 18px;">
+              <span class="material-symbols-outlined" style="color: #0d6efd; font-size: 24px;">sync_alt</span>
+              Lexoffice Synchronisation
+            </h4>
+            <button id="lex-modal-close-btn" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <!-- Document Info Card -->
+          <div class="card p-3 mb-3 border shadow-sm" style="background-color: #f8f9fa; border-radius: 12px;">
+            <div class="d-flex gap-3 align-items-start">
+              <div id="lex-doc-thumb-container" class="flex-shrink-0" style="width: 55px; height: 75px; background: #eee; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #ddd;">
+                <span class="material-symbols-outlined text-muted">description</span>
+              </div>
+              <div class="flex-grow-1" style="min-width: 0;">
+                <div id="lex-doc-title" class="fw-bold text-truncate mb-1" style="font-size: 14px; color: #222;" title="Dokument">Dokument.pdf</div>
+                <div class="d-flex flex-wrap gap-2 small text-muted mb-1">
+                  <span id="lex-doc-date">📅 -</span>
+                  <span id="lex-doc-company">🏢 -</span>
+                </div>
+                <div class="d-flex flex-wrap gap-2 small">
+                  <span id="lex-doc-inv-number" class="badge bg-light text-dark border">Rechnung: -</span>
+                  <span id="lex-doc-amount" class="badge bg-success-subtle text-success border border-success-subtle">Betrag: -</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Target Company Selection -->
+          <div class="mb-3">
+            <label for="lex-modal-company-select" class="form-label fw-bold small text-secondary mb-1">
+              Lexoffice Ziel-Unternehmen:
+            </label>
+            <div class="input-group">
+              <span class="input-group-text bg-white">
+                <span class="material-symbols-outlined" style="font-size: 20px; color: #0d6efd;">domain</span>
+              </span>
+              <select id="lex-modal-company-select" class="form-select" style="font-size: 14px; cursor: pointer;">
+                <option value="wirewire">wirewire GmbH</option>
+                <option value="thewire">The Wire UG</option>
+                <option value="polyxo">Polyxo Studios GmbH</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Status & Validation Box -->
+          <div id="lex-modal-status-container" class="p-3 mb-3 border rounded-3" style="font-size: 13px; min-height: 60px; background-color: #ffffff;">
+            <div class="d-flex align-items-center gap-2 text-muted">
+              <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+              <span>Prüfe Status bei Lexoffice...</span>
+            </div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="d-flex gap-2 justify-content-end pt-3 border-top">
+            <button id="lex-modal-cancel-btn" type="button" class="btn btn-light px-3" style="border: 1px solid #ccc; font-weight: 500; border-radius: 8px;">
+              Abbrechen
+            </button>
+            <button id="lex-modal-submit-btn" type="button" class="btn btn-primary px-4 d-flex align-items-center gap-2" style="font-weight: 500; border-radius: 8px;">
+              <span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span>
+              <span id="lex-modal-submit-text">Upload starten</span>
+            </button>
           </div>
         </div>
       </div>
+
       <div id="duplicate-check-modal" class="modal-overlay" style="z-index: 3000;">
         <div class="modal-content" style="max-width: 400px; text-align: center;">
           <h3 style="margin-top: 0; color: #333;">Mögliches Duplikat</h3>
@@ -591,20 +649,6 @@
             <button id="fb-select-btn" class="action-button" style="margin: 0; padding: 8px 15px; background: #28a745">
               Auswählen
             </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Confirm Lexoffice Re-Transfer Modal -->
-      <div id="confirm-lexoffice-modal" class="modal-overlay" style="z-index: 3000;">
-        <div class="modal-content" style="max-width: 420px; text-align: center;">
-          <h3 style="margin-top: 0; color: #333;">Bereits übertragen</h3>
-          <p id="confirm-lexoffice-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
-            Dieses Dokument wurde bereits an Lexoffice übertragen. Möchtest du es wirklich noch einmal übertragen?
-          </p>
-          <div style="display: flex; gap: 10px; justify-content: center;">
-            <button id="cancel-lexoffice-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
-            <button id="confirm-lexoffice-btn" class="action-button" style="background: #0d6efd; color: white; flex: 1; margin: 0;">Erneut übertragen</button>
           </div>
         </div>
       </div>
