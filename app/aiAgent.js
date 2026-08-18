@@ -1,10 +1,13 @@
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const { Ollama } = require("ollama");
 const dotenv = require("dotenv");
 dotenv.config();
-var debug = false;
+
+let debug = false;
 const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
 
 let globalTesseractWorker = null;
@@ -23,16 +26,15 @@ const customFetch = async (url, options) => {
 };
 
 const ollama = new Ollama({ host: LOCAL_AI_HOST, fetch: customFetch });
-//const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
 async function generatePdfName(filename, settings = {}) {
   try {
-    var pdfFileName = "";
-    var pdfDate = setFileDate();
-    var rawText = await extractTextFromPdf(filename);
-    var cleanText = (rawText || "").replace(/[\s\r\n\t]+/g, " ").trim();
-    var pdfData = cleanText;
-    var pdfImageBuffer = false;
+    let pdfFileName = "";
+    const pdfDate = setFileDate(filename);
+    const rawText = await extractTextFromPdf(filename);
+    const cleanText = (rawText || "").replace(/[\s\r\n\t]+/g, " ").trim();
+    let pdfData = cleanText;
+    let pdfImageBuffer = false;
 
     if (cleanText.length >= 40) {
       console.log(`[AI] Vorhandene Text-/OCR-Ebene im PDF erkannt (${cleanText.length} Zeichen). Tesseract OCR wird übersprungen.`);
@@ -47,7 +49,7 @@ async function generatePdfName(filename, settings = {}) {
 
         if (pdfImageBuffer) {
           const ocrText = await performOcr(pdfImageBuffer, filename);
-          if (ocrText) {
+          if (ocrText && ocrText.trim().length > 0) {
             pdfData = (pdfData ? pdfData + "\n" : "") + ocrText.trim();
           }
         }
@@ -56,36 +58,38 @@ async function generatePdfName(filename, settings = {}) {
       }
     }
 
-    const pdfContentData = (await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings)) || {
+    const pdfContentData = (await getFileDataJSONGemma(pdfData, settings)) || {
       category: "Unbekannt",
       company: "Unbekannt",
-      tags: ["Fehler", "Scanner", "Unbekannt"],
+      tags: ["Dokument", "Unbekannt"],
       documentDate: "unknown",
       isInvoice: false,
+      invoiceNumber: "none",
+      invoiceAmmount: 0,
     };
 
-    var firstThreeWords =
-      pdfContentData.tags && Array.isArray(pdfContentData.tags)
+    const firstThreeWords =
+      pdfContentData.tags && Array.isArray(pdfContentData.tags) && pdfContentData.tags.length > 0
         ? pdfContentData.tags.slice(0, 3).join(" ")
-        : "Keine Tags";
+        : "Dokument";
 
-    pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
+    pdfFileName = `${pdfDate} -${pdfContentData.category || "Unbekannt"}- ${firstThreeWords} (${pdfContentData.company || "Unbekannt"})`;
 
     return {
       success: true,
       full: pdfFileName,
       date: pdfDate,
-      documentDate: pdfContentData.documentDate,
-      category: pdfContentData.category,
-      tags: pdfContentData.tags,
-      company: pdfContentData.company,
-      isInvoice: pdfContentData.isInvoice,
-      invoiceNumber: pdfContentData.invoiceNumber,
-      invoiceAmmount: pdfContentData.invoiceAmmount,
+      documentDate: pdfContentData.documentDate || "unknown",
+      category: pdfContentData.category || "Unbekannt",
+      tags: pdfContentData.tags || ["Dokument"],
+      company: pdfContentData.company || "Unbekannt",
+      isInvoice: !!pdfContentData.isInvoice,
+      invoiceNumber: pdfContentData.invoiceNumber || "none",
+      invoiceAmmount: pdfContentData.invoiceAmmount || 0,
     };
   } catch (fatalErr) {
     console.error("[AI] Fataler Fehler bei generatePdfName:", fatalErr);
-    const pdfDate = setFileDate();
+    const pdfDate = setFileDate(filename);
     return {
       success: true,
       full: `${pdfDate} -Unbekannt- Dokument (Unbekannt)`,
@@ -102,121 +106,73 @@ async function generatePdfName(filename, settings = {}) {
 }
 
 function setFileDate(fileName) {
-  // Extract the date using a regular expression
-  var dateMatch;
-  if (fileName !== undefined) {
-    dateMatch = fileName.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+  if (fileName) {
+    const dateMatch = fileName.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+    if (dateMatch) {
+      const day = dateMatch[1];
+      const month = dateMatch[2];
+      const year = dateMatch[3].slice(2);
+      return `${year}${month}${day}`;
+    }
   }
 
-  if (dateMatch) {
-    const day = dateMatch[1]; // Extract day (e.g., 20)
-    const month = dateMatch[2]; // Extract month (e.g., 01)
-    const year = dateMatch[3].slice(2); // Extract last 2 digits of year (e.g., 25)
-
-    // Combine into desired format
-    const formattedDate = `${year}${month}${day}`;
-    return formattedDate;
-    // Output: "200125"
-  } else {
-    const today = new Date();
-
-    // Extract the day, month, and year
-    const day = String(today.getDate()).padStart(2, "0"); // Ensure 2 digits
-    const month = String(today.getMonth() + 1).padStart(2, "0"); // Months are 0-based
-    const year = String(today.getFullYear()).slice(2); // Get last 2 digits of year
-
-    // Combine into the desired format
-    const formattedDate = `${year}${month}${day}`;
-
-    return formattedDate;
-  }
+  const today = new Date();
+  const day = String(today.getDate()).padStart(2, "0");
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const year = String(today.getFullYear()).slice(2);
+  return `${year}${month}${day}`;
 }
 
-async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {}) {
-  if (pdfText.length < 100 && imageBuffer == false) {
-    console.log("[AI] PDF Text too short for analysis and no image buffer available");
-    return false;
-  }
-
+async function getFileDataJSONGemma(pdfText, settings = {}) {
   const allowedCompanies = settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
   const allowedCategories =
     settings.AI_CATEGORIES ||
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
 
-  var instructionFileName =
-    "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den untenstehenden Text und extrahiere die angeforderten Informationen.\n" +
-    "Gib das Ergebnis AUSSCHLIESSLICH als valides JSON aus.Füge keinen Text vor oder nach dem JSON hinzu.Verwende keine Markdown-Formatierung (kein ```json).\n" +
-    "Regeln für die Datengewinnung:\n" +
-    `1. "company": An wen ist das Dokument gerichtet? Erlaubte Werte sind: ${allowedCompanies}. Nimm eine dieser Optionen, wenn sie im Dokument genannt werden oder auch wenn du einen starken Verdacht hast. Wenn keine der vorherigen Optionen passt, fülle das Feld mit "Unbekannt".\n` +
-    `2. "category": Finde ein einzelnes Wort als Hauptkategorie des Dokuments. Nutze folgende Kategorien: ${allowedCategories}. Wenn keine dieser passt, vergib die Kategorie "unknown".\n` +
-    '3. "tags": Finde bis zu 3 weitere beschreibende Wörter zum Inhalt. Versuche vor allem auch den Absender mit als Wort zu nennen. Das Wort im Feld "company" bzw "category" oder ein ähnliches Wort darf nicht bei tags dabei sein und sich dadurch wiederholen. Gib diese als Array von Strings zurück.\n' +
-    'WICHTIG: Wenn es keinen passenden Inhalt für Kategorie und Tags gibt, setze "category" auf "unknown" und "tags" auf ["none"].\n' +
-    '4. "isInvoice": Boolean. Setze den Wert auf true, wenn es sich bei dem Dokument um eine Rechnung handelt, wenn eine Zahlung vorgenommen werden muss oder das Dokument irgend einen buchhalterischen Bezug hat. Andernfalls false.\n' +
-    '5. "documentDate": String. Suche nach dem Datum auf dem Dokument (z.B. Rechnungsdatum oder Erstellungsdatum) und gib es im Format "DD.MM.YYYY" aus. Wenn keines abgedruckt ist, setze "unknown".\n' +
-    '6. "invoiceNumber": String. Gibt die Rechnungsnummer oder Belegnummer oder etwas dieser Art aus dem Dokument zurück. Ansonsten gib die "none" zurück, wenn du nichts findest.\n' +
-    '7. "invoiceAmmount": Integer. Wenn es eine Rechnung ist, gibt den Rechnungsbetrag zurück. Entferne das Komma. z.B. 3,45 gibst du als 345 aus. Ansonsten gib 0 zurück\n' +
-    'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String", "invoiceNumber": "String", "invoiceAmmount": "Integer"}\n';
+  const instructionFileName =
+    "Du bist ein Assistent zur Dokumentenanalyse. Analysiere den folgenden Beleg/Text und extrahiere die Informationen als valides JSON.\n" +
+    "Gib AUSSCHLIESSLICH das JSON-Objekt zurück, ohne zusätzlichen Text und ohne Markdown-Codeblöcke (\`\`\`json).\n" +
+    "Regeln:\n" +
+    `1. "company": Ziel-Unternehmen/Organisation. Erlaubte Werte: ${allowedCompanies}. Wenn unklar, "Unbekannt".\n` +
+    `2. "category": Hauptkategorie aus: ${allowedCategories}. Wenn unklar, "Sonstige".\n` +
+    '3. "tags": Array von 3-5 prägnanten Schlagworten zum Inhalt/Absender.\n' +
+    '4. "isInvoice": Boolean (true/false) ob es sich um eine Rechnung/Zahlungsbeleg handelt.\n' +
+    '5. "documentDate": String mit Datum im Format "DD.MM.YYYY" oder "unknown".\n' +
+    '6. "invoiceNumber": String mit Rechnungs-/Belegnummer oder "none".\n' +
+    '7. "invoiceAmmount": Integer in Cent (z.B. 1999 für 19,99€) oder 0.\n' +
+    'JSON Schema:\n' +
+    '{"company":"String","category":"String","tags":["String"],"isInvoice":true,"documentDate":"String","invoiceNumber":"String","invoiceAmmount":0}';
 
+  const targetModel = process.env.LOCAL_AI_MODEL || "gemma2:2b";
+  const textContent = (pdfText && pdfText.trim().length > 0) ? pdfText.slice(0, 4000) : "Kein Text lesbar";
 
-
-  var aiSettings = {
-    model: "gemma4:e2b",
+  const aiSettings = {
+    model: targetModel,
     messages: [
       {
         role: "user",
-        content: instructionFileName,
+        content: instructionFileName + "\n\nDokumententext:\n--- START ---\n" + textContent + "\n--- END ---",
       },
     ],
+    options: { temperature: 0.1 },
   };
-  if (imageBuffer != false && pdfText.length < 100) {
-    console.log("[AI] use PDF image Buffer");
-    aiSettings.messages[0].images = [imageBuffer];
-    aiSettings.messages[0].content = aiSettings.messages[0].content + "Hier ist der Inhalt eines Dokuments als Bild";
-  } else {
-    aiSettings.messages[0].content =
-      aiSettings.messages[0].content +
-      "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
-      pdfText +
-      "\n--- END DOKUMENT ---";
-  }
+
   try {
     const response = await ollama.chat(aiSettings);
-    if (debug) console.log("[AI] Response: " + response.message.content);
-    try {
-      var chatString = JSON.parse(response.message.content);
-      chatString.documentDate = checkFileDate(chatString.documentDate);
-      return chatString;
-    } catch (error) {
-      console.log("[ERROR] No JSON response from AI. Response was: " + response.message.content);
-      return false;
-    }
+    let raw = (response?.message?.content || "").trim();
+    if (raw.startsWith("```json")) raw = raw.replace(/^```json/, "").replace(/```$/, "").trim();
+    if (raw.startsWith("```")) raw = raw.replace(/^```/, "").replace(/```$/, "").trim();
+    const chatString = JSON.parse(raw);
+    chatString.documentDate = checkFileDate(chatString.documentDate);
+    return chatString;
   } catch (error) {
-    console.log("Es gab einen Fehler:", error);
-    console.log("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
+    console.error("[AI] Fehler bei Ollama JSON-Analyse:", error.message || error);
     return false;
   }
 }
 
-async function checkCompanyName(companyNameIn) {
-  console.log(companyNameIn);
-
-  const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
-  const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
-  const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
-  const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
-
-  var companyName = false;
-
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsDaniel, "daniel");
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsTheWire, "the wire");
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsPolyxo, "polyxo");
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsWireWire, "wirewire");
-  return companyName;
-}
-
-checkFileDate = (text) => {
+function checkFileDate(text) {
   if (text) {
-    // Falls the AI ein Dokumentendatum gefunden hat, dieses im Format DD.MM.YYYY zurückgeben
     const match = text.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
     if (match) {
       const day = match[1];
@@ -225,26 +181,22 @@ checkFileDate = (text) => {
       return `${day}.${month}.${year}`;
     }
   }
-  return false;
-};
+  return "unknown";
+}
 
 async function getPdfImageBuffer(pdfPath) {
   try {
-    const os = require("os");
-    const path = require("path");
     const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
-
     const options = {
       density: 150,
       saveFilename: `pdfPic_${uniqueId}`,
-      savePath: os.tmpdir(), // In den temporären Ordner legen, um Hauptverzeichnis nicht vollzumüllen
+      savePath: os.tmpdir(),
       format: "png",
     };
 
     const convert = fromPath(pdfPath, options);
     const result = await convert(1, { responseType: "base64" });
 
-    // Temp-Datei asynchron löschen, falls pd2pic sie trotzdem anlegt
     const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
     if (fs.existsSync(tempFileCheck)) {
       fs.promises.unlink(tempFileCheck).catch(() => { });
@@ -264,7 +216,6 @@ async function getPdfImageBuffer(pdfPath) {
 async function performOcr(base64Image, originalFilePath) {
   if (!base64Image) return "";
   try {
-    const fs = require("fs");
     const { execFile } = require("child_process");
     const util = require("util");
     const execFileAsync = util.promisify(execFile);
@@ -276,16 +227,33 @@ async function performOcr(base64Image, originalFilePath) {
       try {
         await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath]);
         console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar.");
+        const reReadText = await extractTextFromPdf(originalFilePath);
+        if (reReadText && reReadText.trim().length > 20) {
+          return reReadText.trim();
+        }
       } catch (err) {
-        // Nicht fatal, fallback auf Tesseract
+        // Fallback
       }
     }
 
     // VERSUCH 2: Fallback (Tesseract.js)
     try {
+      if (typeof base64Image === "string" && (base64Image.startsWith("JVBERi0") || base64Image.startsWith("%PDF"))) {
+        console.log("[AI] Base64 ist ein PDF-Header, überspringe Tesseract.js (nur Bild-Raster unterstützt).");
+        return "";
+      }
+
       const Tesseract = require("tesseract.js");
       const bufferToOcr = Buffer.from(base64Image, "base64");
       if (!bufferToOcr || bufferToOcr.length < 50) {
+        return "";
+      }
+
+      // Validierung PNG oder JPEG
+      const isPng = bufferToOcr[0] === 0x89 && bufferToOcr[1] === 0x50;
+      const isJpg = bufferToOcr[0] === 0xff && bufferToOcr[1] === 0xd8;
+      if (!isPng && !isJpg) {
+        console.log("[AI] Buffer ist kein valides PNG/JPEG. Überspringe Tesseract.");
         return "";
       }
 
@@ -316,7 +284,6 @@ async function extractTextFromPdf(pdfPath) {
     if (!pdfPath.toLowerCase().endsWith(".pdf")) return "";
     const dataBuffer = fs.readFileSync(pdfPath);
     const data = await pdf(dataBuffer);
-
     return data.text || "";
   } catch (err) {
     console.error("[AI] Error parsing PDF:", err.message || err);
@@ -344,8 +311,6 @@ module.exports = {
   generateThumbnail: async function (pdfPath) {
     try {
       if (!pdfPath.toLowerCase().endsWith(".pdf")) return null;
-      const os = require("os");
-      const path = require("path");
       const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
       const options = {
         density: 150,

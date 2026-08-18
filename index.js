@@ -10,6 +10,7 @@ console.log = (...args) => {
 
 const fs = require("fs");
 const path = require("path");
+const { pipeline } = require("stream/promises");
 const dotenv = require("dotenv");
 const express = require("express");
 const rateLimit = require("express-rate-limit");
@@ -478,7 +479,7 @@ app.get("/api/thumbnail/:fileId", async (req, res) => {
       try {
         const dest = fs.createWriteStream(pdfTemp);
         const downloadRes = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "stream" });
-        await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+        await pipeline(downloadRes.data, dest);
 
         const jpgTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.jpg`);
         await new Promise((resolve, reject) => {
@@ -818,7 +819,7 @@ async function checkDriveForNewFiles() {
           try {
             const dest = fs.createWriteStream(localPath);
             const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
-            await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+            await pipeline(downloadRes.data, dest);
 
             const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
             uploadJobs[jobId] = {
@@ -1068,7 +1069,7 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
           const localPath = path.join(localDownloadFolder, `${Date.now()}-${item.name}`);
           const dest = fs.createWriteStream(localPath);
           const downloadRes = await drive.files.get({ fileId: item.id, alt: "media" }, { responseType: "stream" });
-          await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+          await pipeline(downloadRes.data, dest);
 
           let jobId = item.existingJobId;
           if (!jobId || !uploadJobs[jobId]) {
