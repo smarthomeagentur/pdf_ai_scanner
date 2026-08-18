@@ -864,7 +864,8 @@ async function checkDriveForNewFiles() {
           processedDriveFiles.push(file.id);
           saveJobs();
 
-          const localPath = path.join(localDownloadFolder, `${Date.now()}-${file.name}`);
+          const safeName = file.name.toLowerCase().endsWith(".pdf") ? file.name : `${file.name}.pdf`;
+          const localPath = path.join(localDownloadFolder, `${Date.now()}-${safeName}`);
           try {
             const dest = fs.createWriteStream(localPath);
             const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
@@ -1115,7 +1116,8 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
           driveSyncState.currentFileName = item.name;
           console.log(`[DRIVE SYNC] [${i + 1}/${items.length}] Lade herunter: ${item.name}`);
 
-          const localPath = path.join(localDownloadFolder, `${Date.now()}-${item.name}`);
+          const safeName = item.name.toLowerCase().endsWith(".pdf") ? item.name : `${item.name}.pdf`;
+          const localPath = path.join(localDownloadFolder, `${Date.now()}-${safeName}`);
           const dest = fs.createWriteStream(localPath);
           const downloadRes = await drive.files.get({ fileId: item.id, alt: "media" }, { responseType: "stream" });
           await pipeline(downloadRes.data, dest);

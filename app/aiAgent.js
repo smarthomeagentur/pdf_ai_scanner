@@ -41,7 +41,7 @@ async function generatePdfName(filename, settings = {}) {
     } else {
       console.log(`[AI] Kein ausreichender nativer Text im Dokument (${cleanText.length} Zeichen). Starte Bild-Konvertierung & Fallback-OCR...`);
       try {
-        if (filename.toLowerCase().endsWith(".pdf")) {
+        if (isPdf(filename)) {
           pdfImageBuffer = await getPdfImageBuffer(filename);
         } else {
           pdfImageBuffer = await fs.promises.readFile(filename).then((buf) => buf.toString("base64")).catch(() => false);
@@ -123,6 +123,20 @@ function setFileDate(fileName) {
   return `${year}${month}${day}`;
 }
 
+function isPdf(filePath) {
+  if (typeof filePath !== "string") return false;
+  if (filePath.toLowerCase().endsWith(".pdf")) return true;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
+  } catch (e) {
+    return false;
+  }
+}
+
 async function getFileDataJSONGemma(pdfText, settings = {}) {
   const allowedCompanies = settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
   const allowedCategories =
@@ -143,19 +157,18 @@ async function getFileDataJSONGemma(pdfText, settings = {}) {
     '7. "invoiceAmmount": Integer. Wenn es eine Rechnung ist, gibt den Rechnungsbetrag zurück. Entferne das Komma. z.B. 3,45 gibst du als 345 aus. Ansonsten gib 0 zurück\n' +
     'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String", "invoiceNumber": "String", "invoiceAmmount": "Integer"}\n';
 
-
-  const targetModel = process.env.LOCAL_AI_MODEL || "gemma4:e2b";
-  const textContent = (pdfText && pdfText.trim().length > 0) ? pdfText.slice(0, 4000) : "Kein Text lesbar";
-
-  const aiSettings = {
-    model: targetModel,
+  var aiSettings = {
+    model: process.env.LOCAL_AI_MODEL || "gemma4:e2b",
     messages: [
       {
         role: "user",
-        content: instructionFileName + "\n\nDokumententext:\n--- START ---\n" + textContent + "\n--- END ---",
+        content:
+          instructionFileName +
+          "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
+          (pdfText || "") +
+          "\n--- END DOKUMENT ---",
       },
     ],
-    options: { temperature: 0.1 },
   };
 
   try {
@@ -315,7 +328,7 @@ async function performOcr(base64Image, originalFilePath) {
 
 async function extractTextFromPdf(pdfPath) {
   try {
-    if (!pdfPath.toLowerCase().endsWith(".pdf")) return "";
+    if (!isPdf(pdfPath)) return "";
     const dataBuffer = fs.readFileSync(pdfPath);
     const data = await pdf(dataBuffer);
     return data.text || "";
