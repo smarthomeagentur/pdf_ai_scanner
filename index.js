@@ -127,6 +127,8 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => cb(null, Date.now() + "-" + path.basename(file.originalname)),
 });
+const upload = multer({ storage });
+
 app.use(cookieParser());
 app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ limit: "100mb", extended: true }));
