@@ -999,6 +999,13 @@ function renderJobs() {
         duplicateBadgeHtml = '<span style="background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Verdacht auf Duplikat">⚠️ DUPLIKAT VERDACHT</span>';
     }
 
+    let aiPipelineBadgeHtml = '';
+    if (job.inAiPipeline || job.status === "pending" || job.status === "processing") {
+      aiPipelineBadgeHtml = `<span style="background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white; padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-left: 6px; vertical-align: middle; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 3px rgba(79, 70, 229, 0.3);" title="Wird aktuell durch die KI-Pipeline verarbeitet"><span class="material-symbols-outlined" style="font-size: 12px;">auto_awesome</span> ⚡ In KI-Pipeline</span>`;
+    } else if (job.aiEnriched) {
+      aiPipelineBadgeHtml = `<span style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 2px 7px; border-radius: 12px; font-size: 10px; margin-left: 6px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px;" title="Metadaten durch KI analysiert & angereichert"><span class="material-symbols-outlined" style="font-size: 11px;">auto_awesome</span> KI-optimiert</span>`;
+    }
+
     let statusText =
       job.status === "pending"
         ? "In der Warteschlange..."
@@ -1130,8 +1137,9 @@ ${lexofficeDetailsHtml}
                 <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
                     <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
                         <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                            <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center;">
+                            <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center; flex-wrap: wrap;">
                                 ${job.originalName}
+                                ${aiPipelineBadgeHtml}
                                 ${privateBadgeHtml}
                                 ${lexofficeBadgeHtml}
                                 ${duplicateBadgeHtml}
@@ -2597,18 +2605,9 @@ async function openDriveSyncModal() {
   }
 }
 
-function renderDriveSyncModal() {
-  if (!driveSyncData) return;
-  const { toImport = [], needsEnrichment = [], existingComplete = [], totalDriveFiles = 0 } = driveSyncData;
-
-  if (driveCountNew) driveCountNew.innerText = toImport.length;
-  if (driveCountEnrich) driveCountEnrich.innerText = needsEnrichment.length;
-  if (driveCountExisting) driveCountExisting.innerText = existingComplete.length;
-  if (driveCountTotal) driveCountTotal.innerText = totalDriveFiles;
-
-  if (driveSyncLoading) driveSyncLoading.style.display = "none";
-  if (driveSyncList) driveSyncList.style.display = "block";
-
+function getVisibleDriveItems() {
+  if (!driveSyncData) return [];
+  const { toImport = [], needsEnrichment = [], existingComplete = [] } = driveSyncData;
   let items = [];
   if (currentDriveFilter === "all") {
     toImport.forEach(i => items.push({ ...i, categoryType: "new" }));
@@ -2621,10 +2620,33 @@ function renderDriveSyncModal() {
   } else if (currentDriveFilter === "complete") {
     existingComplete.forEach(i => items.push({ ...i, categoryType: "complete" }));
   }
+  return items;
+}
+
+function renderDriveSyncModal() {
+  if (!driveSyncData) return;
+  const { toImport = [], needsEnrichment = [], existingComplete = [], totalDriveFiles = 0 } = driveSyncData;
+
+  if (driveCountNew) driveCountNew.innerText = toImport.length;
+  if (driveCountEnrich) driveCountEnrich.innerText = needsEnrichment.length;
+  if (driveCountExisting) driveCountExisting.innerText = existingComplete.length;
+  if (driveCountTotal) driveCountTotal.innerText = totalDriveFiles;
+
+  if (driveSyncLoading) driveSyncLoading.style.display = "none";
+  if (driveSyncList) driveSyncList.style.display = "block";
+
+  const items = getVisibleDriveItems();
+
+  // Update Select All Checkbox state for visible items
+  if (driveSyncSelectAll) {
+    const visibleSelectedCount = items.filter(i => driveSelectedIds.has(i.id)).length;
+    driveSyncSelectAll.checked = items.length > 0 && visibleSelectedCount === items.length;
+    driveSyncSelectAll.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < items.length;
+  }
 
   if (items.length === 0) {
     driveSyncList.innerHTML = '<div class="text-center text-muted py-4">Keine Dateien in dieser Ansicht.</div>';
-    if (driveSyncSubmitBtn) driveSyncSubmitBtn.disabled = true;
+    updateDriveSubmitButton();
     return;
   }
 
@@ -2644,7 +2666,7 @@ function renderDriveSyncModal() {
     const sizeStr = item.size ? `${(parseInt(item.size, 10) / 1024).toFixed(0)} KB` : "";
 
     html += `
-      <div class="d-flex align-items-center justify-content-between p-2 mb-1 bg-white rounded border gap-2 drive-sync-item-row" data-id="${item.id}" style="font-size: 13px;">
+      <div class="d-flex align-items-center justify-content-between p-2 mb-1 bg-white rounded border gap-2 drive-sync-item-row" data-id="${item.id}" style="font-size: 13px; cursor: pointer;">
         <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
           <input type="checkbox" class="form-check-input drive-item-checkbox m-0" data-id="${item.id}" ${isChecked ? 'checked' : ''} />
           <div class="text-truncate" style="max-width: 450px;">
@@ -2668,14 +2690,34 @@ function renderDriveSyncModal() {
 
   // Checkbox listeners
   driveSyncList.querySelectorAll(".drive-item-checkbox").forEach(cb => {
-    cb.addEventListener("change", () => {
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
       const id = cb.getAttribute("data-id");
       if (cb.checked) {
         driveSelectedIds.add(id);
       } else {
         driveSelectedIds.delete(id);
       }
+      // Re-evaluate select all state
+      const visibleItems = getVisibleDriveItems();
+      const visibleSelectedCount = visibleItems.filter(i => driveSelectedIds.has(i.id)).length;
+      if (driveSyncSelectAll) {
+        driveSyncSelectAll.checked = visibleItems.length > 0 && visibleSelectedCount === visibleItems.length;
+        driveSyncSelectAll.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleItems.length;
+      }
       updateDriveSubmitButton();
+    });
+  });
+
+  // Row click listener to toggle checkbox
+  driveSyncList.querySelectorAll(".drive-sync-item-row").forEach(row => {
+    row.addEventListener("click", (e) => {
+      if (e.target.tagName === "INPUT") return;
+      const cb = row.querySelector(".drive-item-checkbox");
+      if (cb) {
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event("change"));
+      }
     });
   });
 
@@ -2684,10 +2726,25 @@ function renderDriveSyncModal() {
 
 function updateDriveSubmitButton() {
   if (!driveSyncSubmitBtn) return;
-  const count = driveSelectedIds.size;
+  const items = getVisibleDriveItems();
+  const visibleSelectedCount = items.filter(i => driveSelectedIds.has(i.id)).length;
+  const totalSelectedCount = driveSelectedIds.size;
+
+  const count = currentDriveFilter === "all" ? totalSelectedCount : visibleSelectedCount;
   driveSyncSubmitBtn.disabled = count === 0;
+
   if (driveSyncSubmitText) {
-    driveSyncSubmitText.innerText = count > 0 ? `${count} Belege nachladen & anreichern` : "Keine Belege ausgewählt";
+    if (count === 0) {
+      driveSyncSubmitText.innerText = "Keine Belege ausgewählt";
+    } else if (currentDriveFilter === "new") {
+      driveSyncSubmitText.innerText = `${count} neue Belege nachladen`;
+    } else if (currentDriveFilter === "enrich") {
+      driveSyncSubmitText.innerText = `${count} Belege mit KI anreichern`;
+    } else if (currentDriveFilter === "complete") {
+      driveSyncSubmitText.innerText = `${count} Belege neu synchronisieren`;
+    } else {
+      driveSyncSubmitText.innerText = `${count} Belege synchronisieren & anreichern`;
+    }
   }
 }
 
@@ -2704,15 +2761,18 @@ document.querySelectorAll(".drive-filter-tab").forEach(tab => {
 if (driveSyncSelectAll) {
   driveSyncSelectAll.addEventListener("change", () => {
     const isChecked = driveSyncSelectAll.checked;
-    driveSyncList.querySelectorAll(".drive-item-checkbox").forEach(cb => {
-      cb.checked = isChecked;
-      const id = cb.getAttribute("data-id");
+    const visibleItems = getVisibleDriveItems();
+    visibleItems.forEach(item => {
       if (isChecked) {
-        driveSelectedIds.add(id);
+        driveSelectedIds.add(item.id);
       } else {
-        driveSelectedIds.delete(id);
+        driveSelectedIds.delete(item.id);
       }
     });
+    driveSyncList.querySelectorAll(".drive-item-checkbox").forEach(cb => {
+      cb.checked = isChecked;
+    });
+    driveSyncSelectAll.indeterminate = false;
     updateDriveSubmitButton();
   });
 }

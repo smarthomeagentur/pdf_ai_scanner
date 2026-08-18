@@ -737,6 +737,9 @@ async function processQueue() {
       job.suspectedDuplicate = isDuplicate;
 
       job.status = "completed";
+      job.inAiPipeline = false;
+      job.aiEnriched = true;
+      job.aiPipelineCompletedAt = new Date().toISOString();
       sortedName.localThumbnail = localThumbBase64;
       job.result = sortedName;
       job.invoiceNumber = sortedName.invoiceNumber;
@@ -752,6 +755,7 @@ async function processQueue() {
     } catch (error) {
       console.error(`[WEB] Error processing job ${jobId}:`, error);
       job.status = "error";
+      job.inAiPipeline = false;
       job.error = error.message;
       saveJobs();
 
@@ -812,6 +816,8 @@ async function checkDriveForNewFiles() {
               id: jobId,
               originalName: file.name,
               status: "pending",
+              inAiPipeline: true,
+              aiPipelineStartedAt: new Date().toISOString(),
               result: null,
               error: null,
               filePath: localPath,
@@ -846,6 +852,8 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
       id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
       originalName: file.originalname,
       status: "pending",
+      inAiPipeline: true,
+      aiPipelineStartedAt: new Date().toISOString(),
       result: null,
       error: null,
       filePath: file.path,
@@ -1057,6 +1065,8 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
               id: jobId,
               originalName: item.name,
               status: "pending",
+              inAiPipeline: true,
+              aiPipelineStartedAt: new Date().toISOString(),
               result: null,
               error: null,
               filePath: localPath,
@@ -1065,6 +1075,8 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
             };
           } else {
             uploadJobs[jobId].status = "pending";
+            uploadJobs[jobId].inAiPipeline = true;
+            uploadJobs[jobId].aiPipelineStartedAt = new Date().toISOString();
             uploadJobs[jobId].filePath = localPath;
             uploadJobs[jobId].error = null;
             if (!uploadJobs[jobId].rawDriveId) uploadJobs[jobId].rawDriveId = item.id;
