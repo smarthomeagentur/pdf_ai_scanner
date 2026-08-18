@@ -8,16 +8,8 @@ console.log = (...args) => {
   if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleLog(...args);
 };
 
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("[SYSTEM] Unhandled Rejection abgefangen:", reason);
-});
-process.on("uncaughtException", (error) => {
-  console.error("[SYSTEM] Uncaught Exception abgefangen:", error);
-});
-
 const fs = require("fs");
 const path = require("path");
-const process = require("process");
 const dotenv = require("dotenv");
 const express = require("express");
 const rateLimit = require("express-rate-limit");
@@ -27,6 +19,13 @@ const { PDFDocument } = require("pdf-lib");
 const { exiftool } = require("exiftool-vendored");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[SYSTEM] Unhandled Rejection abgefangen:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[SYSTEM] Uncaught Exception abgefangen:", error);
+});
 
 const aiAgent = require("./app/aiAgent.js");
 const DriveAPI = require("./app/driveApi.js");
