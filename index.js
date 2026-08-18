@@ -1828,6 +1828,15 @@ app.post("/api/clickup/sync-all", requireAdmin, express.json(), async (req, res)
 
         // Wenn keine spezifische Auswahl vorliegt und Task bereits aktuell ist, überspringen
         if (!selectedJobIds && matchingTask && clickupApi.isTaskUpToDate(job, matchingTask)) {
+          if (!job.clickup || !job.clickup.taskId) {
+            job.clickup = {
+              taskId: matchingTask.id,
+              taskUrl: matchingTask.url || `https://app.clickup.com/t/${matchingTask.id}`,
+              taskName: matchingTask.name,
+              status: matchingTask.status?.status || "offen",
+              transferredAt: new Date().toISOString(),
+            };
+          }
           skippedCount++;
           continue;
         }
