@@ -551,25 +551,30 @@
 
           <!-- Summary Pills -->
           <div style="display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
-            <div id="clickup-pill-create" style="flex: 1; min-width: 120px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 10px; text-align: center;">
+            <div id="clickup-pill-create" style="flex: 1; min-width: 110px; background: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 10px; text-align: center;">
               <div style="font-size: 20px; font-weight: bold; color: #2e7d32;" id="clickup-count-create">0</div>
               <div style="font-size: 12px; color: #388e3c; font-weight: 500;">Neu erstellen</div>
             </div>
-            <div id="clickup-pill-update" style="flex: 1; min-width: 120px; background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 10px; text-align: center;">
+            <div id="clickup-pill-update" style="flex: 1; min-width: 110px; background: #e3f2fd; border: 1px solid #bbdefb; border-radius: 8px; padding: 10px; text-align: center;">
               <div style="font-size: 20px; font-weight: bold; color: #1565c0;" id="clickup-count-update">0</div>
               <div style="font-size: 12px; color: #1976d2; font-weight: 500;">Aktualisieren</div>
             </div>
-            <div id="clickup-pill-skip" style="flex: 1; min-width: 120px; background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 8px; padding: 10px; text-align: center;">
+            <div id="clickup-pill-uptodate" style="flex: 1; min-width: 110px; background: #f3e5f5; border: 1px solid #e1bee7; border-radius: 8px; padding: 10px; text-align: center;">
+              <div style="font-size: 20px; font-weight: bold; color: #7b1fa2;" id="clickup-count-uptodate">0</div>
+              <div style="font-size: 12px; color: #8e24aa; font-weight: 500;">Bereits aktuell</div>
+            </div>
+            <div id="clickup-pill-skip" style="flex: 1; min-width: 110px; background: #fff3e0; border: 1px solid #ffe0b2; border-radius: 8px; padding: 10px; text-align: center;">
               <div style="font-size: 20px; font-weight: bold; color: #e65100;" id="clickup-count-skip">0</div>
               <div style="font-size: 12px; color: #f57c00; font-weight: 500;">Überspringen (Privat)</div>
             </div>
           </div>
 
           <!-- Tab Selection & Search -->
-          <div style="display: flex; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+          <div style="display: flex; gap: 8px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 8px; flex-wrap: wrap;">
             <button id="clickup-tab-all" class="btn btn-sm btn-outline-primary active" style="border-radius: 16px;">Alle anzeigen</button>
             <button id="clickup-tab-create" class="btn btn-sm btn-outline-success" style="border-radius: 16px;">Nur Neue</button>
             <button id="clickup-tab-update" class="btn btn-sm btn-outline-info" style="border-radius: 16px;">Nur Updates</button>
+            <button id="clickup-tab-uptodate" class="btn btn-sm btn-outline-secondary" style="border-radius: 16px; border-color: #ba68c8; color: #7b1fa2;">Bereits aktuell</button>
             <button id="clickup-tab-skip" class="btn btn-sm btn-outline-warning" style="border-radius: 16px;">Nur Private</button>
           </div>
 
@@ -863,7 +868,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260818_7"></script>
+      <script src="/index.js?v=20260818_8"></script>
     </div>
   </body>
 </html>

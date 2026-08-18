@@ -2256,6 +2256,7 @@ const confirmSyncModalBtn = document.getElementById("confirm-clickup-sync-btn");
 
 const countCreateSpan = document.getElementById("clickup-count-create");
 const countUpdateSpan = document.getElementById("clickup-count-update");
+const countUptodateSpan = document.getElementById("clickup-count-uptodate");
 const countSkipSpan = document.getElementById("clickup-count-skip");
 const syncItemsList = document.getElementById("clickup-sync-items-list");
 const syncProgressContainer = document.getElementById("clickup-sync-progress-container");
@@ -2268,11 +2269,12 @@ let currentSyncFilter = "all";
 
 function renderSyncPreviewItems() {
   if (!currentSyncPreviewData) return;
-  const { toCreate = [], toUpdate = [], toSkip = [] } = currentSyncPreviewData;
+  const { toCreate = [], toUpdate = [], upToDate = [], toSkip = [] } = currentSyncPreviewData;
 
-  countCreateSpan.innerText = toCreate.length;
-  countUpdateSpan.innerText = toUpdate.length;
-  countSkipSpan.innerText = toSkip.length;
+  if (countCreateSpan) countCreateSpan.innerText = toCreate.length;
+  if (countUpdateSpan) countUpdateSpan.innerText = toUpdate.length;
+  if (countUptodateSpan) countUptodateSpan.innerText = upToDate.length;
+  if (countSkipSpan) countSkipSpan.innerText = toSkip.length;
 
   let itemsToRender = [];
   if (currentSyncFilter === "all" || currentSyncFilter === "create") {
@@ -2280,6 +2282,9 @@ function renderSyncPreviewItems() {
   }
   if (currentSyncFilter === "all" || currentSyncFilter === "update") {
     toUpdate.forEach((item) => itemsToRender.push({ ...item, type: "update" }));
+  }
+  if (currentSyncFilter === "all" || currentSyncFilter === "uptodate") {
+    upToDate.forEach((item) => itemsToRender.push({ ...item, type: "uptodate" }));
   }
   if (currentSyncFilter === "all" || currentSyncFilter === "skip") {
     toSkip.forEach((item) => itemsToRender.push({ ...item, type: "skip" }));
@@ -2301,6 +2306,9 @@ function renderSyncPreviewItems() {
     } else if (item.type === "update") {
       badgeHtml = `<span style="background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">↻ Aktualisieren</span>`;
       actionInfoHtml = `<span style="color: #666; font-size: 12px;">Aktualisiert Task: <a href="${item.existingTaskUrl}" target="_blank" style="color: #1976d2; font-weight: 500;">#${item.existingTaskId} (${item.existingTaskName})</a></span>`;
+    } else if (item.type === "uptodate") {
+      badgeHtml = `<span style="background: #f3e5f5; color: #7b1fa2; border: 1px solid #e1bee7; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">✓ Bereits aktuell</span>`;
+      actionInfoHtml = `<span style="color: #7b1fa2; font-size: 12px;">Task ist synchron: <a href="${item.existingTaskUrl}" target="_blank" style="color: #7b1fa2; font-weight: 500;">#${item.existingTaskId} (${item.existingTaskName})</a> <span style="color: #888;">[Status: ${item.existingTaskStatus || 'offen'}]</span></span>`;
     } else if (item.type === "skip") {
       badgeHtml = `<span style="background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⊘ Überspringen</span>`;
       actionInfoHtml = `<span style="color: #e65100; font-size: 12px;">${item.reason || "Privat"}</span>`;
@@ -2355,7 +2363,7 @@ if (triggerSyncModalBtn) {
 }
 
 // Modal tab listeners
-["all", "create", "update", "skip"].forEach((tabKey) => {
+["all", "create", "update", "uptodate", "skip"].forEach((tabKey) => {
   const tabBtn = document.getElementById(`clickup-tab-${tabKey}`);
   if (tabBtn) {
     tabBtn.addEventListener("click", () => {

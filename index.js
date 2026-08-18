@@ -1703,8 +1703,7 @@ app.post("/api/clickup/transfer", requireAdmin, express.json(), async (req, res)
       transferredAt: new Date().toISOString(),
     };
     saveJobs();
-
-    console.log(`[CLICKUP] Job ${jobId} manuell zu ClickUp übertragen (Task ${clickupRes.taskId})`);
+          console.log(`[CLICKUP] Job ${jobId} manuell zu ClickUp übertragen (Task ${clickupRes.taskId})`);
     res.json({ success: true, clickup: job.clickup, isUpdated: clickupRes.isUpdated });
   } catch (err) {
     console.error("[CLICKUP] Fehler bei manueller Übertragung:", err);
@@ -1723,6 +1722,7 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
 
     const toCreate = [];
     const toUpdate = [];
+    const upToDate = [];
     const toSkip = [];
 
     for (const job of jobsList) {
@@ -1744,7 +1744,8 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
 
       const matchingTask = clickupApi.findMatchingTask(job, clickupTasks);
       if (matchingTask) {
-        toUpdate.push({
+        const isCurrent = clickupApi.isTaskUpToDate(job, matchingTask);
+        const itemInfo = {
           jobId: job.id,
           fileName: job.result.full || job.originalName,
           company: job.result.company || "Unbekannt",
@@ -1753,8 +1754,15 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
           amount: job.result.invoiceAmmount ? clickupApi.formatAmount(job.result.invoiceAmmount) : "",
           existingTaskId: matchingTask.id,
           existingTaskName: matchingTask.name,
+          existingTaskStatus: matchingTask.status?.status || "offen",
           existingTaskUrl: matchingTask.url || `https://app.clickup.com/t/${matchingTask.id}`,
-        });
+        };
+
+        if (isCurrent) {
+          upToDate.push(itemInfo);
+        } else {
+          toUpdate.push(itemInfo);
+        }
       } else {
         toCreate.push({
           jobId: job.id,
@@ -1774,6 +1782,7 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
       totalClickupTasks: clickupTasks.length,
       toCreate,
       toUpdate,
+      upToDate,
       toSkip,
     });
   } catch (err) {
@@ -1816,6 +1825,13 @@ app.post("/api/clickup/sync-all", requireAdmin, express.json(), async (req, res)
 
       try {
         const matchingTask = clickupApi.findMatchingTask(job, clickupTasks);
+
+        // Wenn keine spezifische Auswahl vorliegt und Task bereits aktuell ist, überspringen
+        if (!selectedJobIds && matchingTask && clickupApi.isTaskUpToDate(job, matchingTask)) {
+          skippedCount++;
+          continue;
+        }
+
         const fileBuffer = await getJobPdfBuffer(job);
         const fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
         const safeFileName = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
@@ -1843,7 +1859,7 @@ app.post("/api/clickup/sync-all", requireAdmin, express.json(), async (req, res)
           createdCount++;
         }
       } catch (err) {
-        console.error(`[CLICKUP] Fehler beim Synchronisieren von Job ${job.id}:`, err);
+        console.error(`[CLICKUP] Fehler bei Sync für Job ${job.id}:`, err);
         errors.push({ jobId: job.id, error: err.message });
       }
     }
@@ -1856,11 +1872,10 @@ app.post("/api/clickup/sync-all", requireAdmin, express.json(), async (req, res)
       createdCount,
       updatedCount,
       skippedCount,
-      totalProcessed: jobsList.length,
       errors,
     });
   } catch (err) {
-    console.error("[CLICKUP] Fehler bei Sync All:", err);
+    console.error("[CLICKUP] Fehler bei Gesamtsynchronisation:", err);
     res.status(500).json({ success: false, error: err.message || "Fehler bei der Gesamtsynchronisation." });
   }
 });

@@ -376,6 +376,84 @@ class ClickUpAPI {
   }
 
   /**
+   * Check if a matching ClickUp task is already up-to-date with the job's AI data
+   */
+  isTaskUpToDate(job, matchingTask) {
+    if (!job || !matchingTask) return false;
+
+    // 1. If job was already transferred to this task and no new AI analysis ran since
+    if (job.clickup && job.clickup.taskId === matchingTask.id && job.clickup.transferredAt) {
+      if (job.aiPipelineCompletedAt) {
+        const transferredTime = new Date(job.clickup.transferredAt).getTime();
+        const enrichedTime = new Date(job.aiPipelineCompletedAt).getTime();
+        if (transferredTime >= enrichedTime) {
+          return true;
+        }
+      } else {
+        return true;
+      }
+    }
+
+    // 2. If task is already closed / done / bezahlt / erledigt
+    const statusStr = (matchingTask.status?.status || "").toLowerCase();
+    if (matchingTask.status?.type === "closed" || ["closed", "erledigt", "bezahlt", "done", "abgeschlossen"].includes(statusStr)) {
+      return true;
+    }
+
+    const aiResult = job.result || {};
+
+    // 3. Name check
+    const expectedName = this.generateTaskName(aiResult).toLowerCase().trim();
+    const currentName = (matchingTask.name || "").toLowerCase().trim();
+    if (expectedName && currentName && expectedName !== currentName && expectedName !== "(dokument) dokument") {
+      return false;
+    }
+
+    // 4. Custom fields check (if custom fields are returned in task)
+    if (matchingTask.custom_fields && Array.isArray(matchingTask.custom_fields)) {
+      const getFieldValue = (fieldId) => {
+        const f = matchingTask.custom_fields.find((cf) => cf.id === fieldId);
+        return f ? f.value : null;
+      };
+
+      // Check invoice number
+      if (aiResult.invoiceNumber && aiResult.invoiceNumber !== "none") {
+        const currInv = getFieldValue(this.customFields.invoiceNumber);
+        if (currInv && String(currInv).trim() !== String(aiResult.invoiceNumber).trim()) {
+          return false;
+        }
+      }
+
+      // Check invoice amount
+      if (aiResult.invoiceAmmount && aiResult.invoiceAmmount > 0) {
+        const currAmount = getFieldValue(this.customFields.invoiceAmount);
+        const expectedFloat = aiResult.invoiceAmmount / 100;
+        if (currAmount !== null && currAmount !== undefined) {
+          const parsedCurr = parseFloat(currAmount);
+          if (!isNaN(parsedCurr) && Math.abs(parsedCurr - expectedFloat) > 0.01) {
+            return false;
+          }
+        }
+      }
+
+      // Check company
+      if (aiResult.company && aiResult.company !== "Unbekannt") {
+        const currComp = getFieldValue(this.customFields.company);
+        if (currComp && String(currComp).trim().toLowerCase() !== String(aiResult.company).trim().toLowerCase()) {
+          return false;
+        }
+      }
+    }
+
+    // If matchingTask already exists, has matching name and no conflicting fields
+    if (currentName && expectedName && (currentName === expectedName || currentName.includes(expectedName) || expectedName.includes(currentName))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Build array of custom field values for task creation/update
    */
   buildCustomFieldsPayload(aiResult = {}, driveLink = "") {
