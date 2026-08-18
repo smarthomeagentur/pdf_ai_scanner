@@ -164,6 +164,8 @@ async function loadFolders() {
         document.getElementById("clickup-filter-private").checked = window.currentSettings.CLICKUP_FILTER_PRIVATE !== false;
 
         document.getElementById("admin-backup-container").style.display = "block";
+        const driveSyncContainer = document.getElementById("drive-sync-settings-container");
+        if (driveSyncContainer) driveSyncContainer.style.display = "block";
 
         const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
         if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
@@ -686,6 +688,255 @@ function startPolling() {
 // Initialisiere Polling / Laden aller Jobs beim Seitenstart
 startPolling();
 
+// Startseite Filter & Paginierung State
+let startSearchQuery = "";
+let startDateFilter = "alle";
+let startCompanyFilter = "alle";
+let startSelectedCategories = new Set();
+let startCurrentPage = 1;
+const START_PAGE_SIZE = 50;
+
+function renderStartCategoryBubbles() {
+  const container = document.getElementById("start-filter-category-bubbles");
+  if (!container) return;
+
+  const defaultCats = [
+    "Rechnungen", "Dokumente", "Administration", "Personal",
+    "Projekte", "Verträge", "Marketing", "Förderung",
+    "Buchhaltung", "Vertrieb", "Privat", "Sonstige"
+  ];
+
+  const dynamicCatsStr = window.currentSettings?.AI_CATEGORIES;
+  let allCats = [...defaultCats];
+  if (dynamicCatsStr) {
+    dynamicCatsStr.split(",").forEach(c => {
+      const trimmed = c.trim();
+      if (trimmed && !allCats.some(ac => ac.toLowerCase() === trimmed.toLowerCase())) {
+        allCats.push(trimmed);
+      }
+    });
+  }
+
+  container.innerHTML = "";
+  allCats.forEach(cat => {
+    const isSelected = startSelectedCategories.has(cat.toLowerCase());
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
+    btn.style.cssText = "border-radius: 16px; font-size: 12px; padding: 2px 10px; transition: all 0.15s ease;";
+    btn.innerHTML = `${cat}${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
+    
+    btn.addEventListener("click", () => {
+      const key = cat.toLowerCase();
+      if (startSelectedCategories.has(key)) {
+        startSelectedCategories.delete(key);
+      } else {
+        startSelectedCategories.add(key);
+      }
+      startCurrentPage = 1;
+      renderStartCategoryBubbles();
+      renderJobs();
+    });
+
+    container.appendChild(btn);
+  });
+
+  const resetBtn = document.getElementById("start-reset-filters-btn");
+  if (resetBtn) {
+    const hasFilters = startSearchQuery || startDateFilter !== "alle" || startCompanyFilter !== "alle" || startSelectedCategories.size > 0;
+    resetBtn.style.display = hasFilters ? "inline-block" : "none";
+  }
+}
+
+function filterActiveJobs(jobs) {
+  return jobs.filter((job) => {
+    const res = job.result || {};
+
+    // 1. Search Query
+    if (startSearchQuery) {
+      const q = startSearchQuery.toLowerCase();
+      const title = (res.full || job.originalName || "").toLowerCase();
+      const comp = (res.company || "").toLowerCase();
+      const targetComp = (job.targetCompany || "").toLowerCase();
+      const invNum = (res.invoiceNumber || job.invoiceNumber || "").toLowerCase();
+      const cat = (res.category || "").toLowerCase();
+      const tags = (res.tags && Array.isArray(res.tags) ? res.tags.join(" ") : "").toLowerCase();
+      const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
+
+      const matches =
+        title.includes(q) ||
+        comp.includes(q) ||
+        targetComp.includes(q) ||
+        invNum.includes(q) ||
+        cat.includes(q) ||
+        tags.includes(q) ||
+        amtStr.includes(q);
+
+      if (!matches) return false;
+    }
+
+    // 2. Company Filter
+    if (startCompanyFilter !== "alle") {
+      const compName = (res.company || "").toLowerCase();
+      const targetComp = (job.targetCompany || "").toLowerCase();
+      const isWirewire = compName.includes("wirewire") || targetComp === "wirewire";
+      const isThewire = compName.includes("the wire") || compName.includes("thewire") || targetComp === "thewire";
+      const isPolyxo = compName.includes("polyxo") || targetComp === "polyxo";
+      const isDaniel = compName.includes("daniel") || targetComp === "daniel";
+
+      if (startCompanyFilter === "wirewire" && !isWirewire) return false;
+      if (startCompanyFilter === "thewire" && !isThewire) return false;
+      if (startCompanyFilter === "polyxo" && !isPolyxo) return false;
+      if (startCompanyFilter === "daniel" && !isDaniel) return false;
+      if (startCompanyFilter === "andere" && (isWirewire || isThewire || isPolyxo || isDaniel)) return false;
+    }
+
+    // 3. Date Filter
+    if (startDateFilter !== "alle") {
+      const dateVal = res.documentDate && res.documentDate !== "unknown" ? new Date(res.documentDate) : (job.uploadDate ? new Date(job.uploadDate) : null);
+      if (dateVal && !isNaN(dateVal.getTime())) {
+        const now = new Date();
+        const diffDays = (now - dateVal) / (1000 * 60 * 60 * 24);
+        const year = dateVal.getFullYear();
+
+        if (startDateFilter === "7days" && diffDays > 7) return false;
+        if (startDateFilter === "30days" && diffDays > 30) return false;
+        if (startDateFilter === "month" && (dateVal.getMonth() !== now.getMonth() || dateVal.getFullYear() !== now.getFullYear())) return false;
+        if (startDateFilter === "year2026" && year !== 2026) return false;
+        if (startDateFilter === "year2025" && year !== 2025) return false;
+        if (startDateFilter === "older" && year >= 2025) return false;
+      }
+    }
+
+    // 4. Multi-Select Category Bubbles
+    if (startSelectedCategories.size > 0) {
+      const jobCat = (res.category || "").toLowerCase();
+      const isInvoice = res.isInvoice === true || jobCat.includes("rechnung");
+      const isPrivat = job.isPrivate === true || jobCat.includes("privat");
+
+      let catMatch = false;
+      for (const selCat of startSelectedCategories) {
+        if (selCat === "rechnungen" || selCat === "rechnung") {
+          if (isInvoice) { catMatch = true; break; }
+        } else if (selCat === "dokumente" || selCat === "dokument") {
+          if (!isInvoice) { catMatch = true; break; }
+        } else if (selCat === "privat") {
+          if (isPrivat) { catMatch = true; break; }
+        } else if (jobCat.includes(selCat)) {
+          catMatch = true;
+          break;
+        }
+      }
+      if (!catMatch) return false;
+    }
+
+    return true;
+  });
+}
+
+function renderStartPagination(totalItems, totalPages) {
+  const container = document.getElementById("start-pagination-container");
+  const info = document.getElementById("start-page-info");
+  const nav = document.getElementById("start-pagination-nav");
+  if (!container || !info || !nav) return;
+
+  if (totalItems <= START_PAGE_SIZE) {
+    container.style.setProperty("display", "none", "important");
+    return;
+  }
+
+  container.style.setProperty("display", "flex", "important");
+  const startDisplay = (startCurrentPage - 1) * START_PAGE_SIZE + 1;
+  const endDisplay = Math.min(startCurrentPage * START_PAGE_SIZE, totalItems);
+  info.innerText = `Zeige ${startDisplay} - ${endDisplay} von ${totalItems} Belegen (Seite ${startCurrentPage} von ${totalPages})`;
+
+  nav.innerHTML = "";
+
+  // Previous
+  const prevLi = document.createElement("li");
+  prevLi.className = `page-item ${startCurrentPage === 1 ? 'disabled' : ''}`;
+  prevLi.innerHTML = `<a class="page-link" href="#" aria-label="Vorherige">«</a>`;
+  prevLi.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (startCurrentPage > 1) {
+      startCurrentPage--;
+      renderJobs();
+      const listEl = document.getElementById("job-list-container");
+      if (listEl) window.scrollTo({ top: listEl.offsetTop - 80, behavior: "smooth" });
+    }
+  });
+  nav.appendChild(prevLi);
+
+  // Page numbers (smart window around current page)
+  let startP = Math.max(1, startCurrentPage - 2);
+  let endP = Math.min(totalPages, startCurrentPage + 2);
+  if (startP > 1) {
+    const p1 = document.createElement("li");
+    p1.className = "page-item";
+    p1.innerHTML = `<a class="page-link" href="#">1</a>`;
+    p1.addEventListener("click", (e) => {
+      e.preventDefault();
+      startCurrentPage = 1;
+      renderJobs();
+    });
+    nav.appendChild(p1);
+    if (startP > 2) {
+      const dots = document.createElement("li");
+      dots.className = "page-item disabled";
+      dots.innerHTML = `<span class="page-link">...</span>`;
+      nav.appendChild(dots);
+    }
+  }
+
+  for (let p = startP; p <= endP; p++) {
+    const pLi = document.createElement("li");
+    pLi.className = `page-item ${p === startCurrentPage ? 'active' : ''}`;
+    pLi.innerHTML = `<a class="page-link" href="#">${p}</a>`;
+    const targetP = p;
+    pLi.addEventListener("click", (e) => {
+      e.preventDefault();
+      startCurrentPage = targetP;
+      renderJobs();
+      const listEl = document.getElementById("job-list-container");
+      if (listEl) window.scrollTo({ top: listEl.offsetTop - 80, behavior: "smooth" });
+    });
+    nav.appendChild(pLi);
+  }
+
+  if (endP < totalPages) {
+    if (endP < totalPages - 1) {
+      const dots = document.createElement("li");
+      dots.className = "page-item disabled";
+      dots.innerHTML = `<span class="page-link">...</span>`;
+      nav.appendChild(dots);
+    }
+    const pLast = document.createElement("li");
+    pLast.className = "page-item";
+    pLast.innerHTML = `<a class="page-link" href="#">${totalPages}</a>`;
+    pLast.addEventListener("click", (e) => {
+      e.preventDefault();
+      startCurrentPage = totalPages;
+      renderJobs();
+    });
+    nav.appendChild(pLast);
+  }
+
+  // Next
+  const nextLi = document.createElement("li");
+  nextLi.className = `page-item ${startCurrentPage === totalPages ? 'disabled' : ''}`;
+  nextLi.innerHTML = `<a class="page-link" href="#" aria-label="Nächste">»</a>`;
+  nextLi.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (startCurrentPage < totalPages) {
+      startCurrentPage++;
+      renderJobs();
+      const listEl = document.getElementById("job-list-container");
+      if (listEl) window.scrollTo({ top: listEl.offsetTop - 80, behavior: "smooth" });
+    }
+  });
+  nav.appendChild(nextLi);
+}
+
 function renderJobs() {
   if (document.querySelector('.category-picker-box')) {
     // Ein Picker ist offen, wir überspringen das Neu-Zeichnen,
@@ -693,10 +944,20 @@ function renderJobs() {
     return;
   }
 
+  renderStartCategoryBubbles();
+
+  const filteredJobs = filterActiveJobs(activeJobs);
+  const totalFiltered = filteredJobs.length;
+  const totalPages = Math.ceil(totalFiltered / START_PAGE_SIZE) || 1;
+  if (startCurrentPage > totalPages) startCurrentPage = totalPages;
+  if (startCurrentPage < 1) startCurrentPage = 1;
+
   const countSpan = document.getElementById("active-job-count");
   if (countSpan) {
     const activeCount = activeJobs.filter((j) => j.status === "pending" || j.status === "processing").length;
-    countSpan.innerHTML = activeCount > 0 ? `(${activeCount} in Arbeit)` : "";
+    let label = `${totalFiltered} Belege`;
+    if (activeCount > 0) label += ` (${activeCount} in Arbeit)`;
+    countSpan.innerText = label;
   }
 
   // Offene Details-Boxen merken, damit sie beim Polling-Refresh nicht zuklappen
@@ -707,11 +968,22 @@ function renderJobs() {
   });
 
   jobList.innerHTML = "";
-  if (activeJobs.length === 0) {
+  if (filteredJobs.length === 0) {
+    jobList.innerHTML = `
+      <div class="text-center p-4 text-muted bg-white rounded shadow-sm border">
+        <span class="material-symbols-outlined mb-2" style="font-size: 40px; color: #ccc;">search_off</span>
+        <div>Keine Belege entsprechen den gewählten Filtern.</div>
+      </div>
+    `;
+    renderStartPagination(0, 1);
     return;
   }
 
-  activeJobs.forEach((job) => {
+  const startIndex = (startCurrentPage - 1) * START_PAGE_SIZE;
+  const endIndex = Math.min(startIndex + START_PAGE_SIZE, totalFiltered);
+  const pageJobs = filteredJobs.slice(startIndex, endIndex);
+
+  pageJobs.forEach((job) => {
     const div = document.createElement("div");
     div.className = `job-item ${job.status}`;
     if (job.isPrivate) {
@@ -899,6 +1171,8 @@ ${lexofficeDetailsHtml}
             `;
     jobList.appendChild(div);
   });
+
+  renderStartPagination(totalFiltered, totalPages);
 }
 
 // Update progress bars periodically based on time elapsed
@@ -2192,4 +2466,330 @@ if (confirmSyncModalBtn) {
     }
   });
 }
+
+// ==========================================
+// --- Startseite Filter Event Listeners ---
+// ==========================================
+
+const startSearchInput = document.getElementById("start-search-input");
+const startFilterDate = document.getElementById("start-filter-date");
+const startFilterCompany = document.getElementById("start-filter-company");
+const startResetFiltersBtn = document.getElementById("start-reset-filters-btn");
+
+if (startSearchInput) {
+  startSearchInput.addEventListener("input", (e) => {
+    startSearchQuery = e.target.value.trim();
+    startCurrentPage = 1;
+    renderJobs();
+  });
+}
+
+if (startFilterDate) {
+  startFilterDate.addEventListener("change", (e) => {
+    startDateFilter = e.target.value;
+    startCurrentPage = 1;
+    renderJobs();
+  });
+}
+
+if (startFilterCompany) {
+  startFilterCompany.addEventListener("change", (e) => {
+    startCompanyFilter = e.target.value;
+    startCurrentPage = 1;
+    renderJobs();
+  });
+}
+
+if (startResetFiltersBtn) {
+  startResetFiltersBtn.addEventListener("click", () => {
+    startSearchQuery = "";
+    startDateFilter = "alle";
+    startCompanyFilter = "alle";
+    startSelectedCategories.clear();
+    startCurrentPage = 1;
+
+    if (startSearchInput) startSearchInput.value = "";
+    if (startFilterDate) startFilterDate.value = "alle";
+    if (startFilterCompany) startFilterCompany.value = "alle";
+
+    renderStartCategoryBubbles();
+    renderJobs();
+  });
+}
+
+// ==========================================
+// --- Google Drive Sync Review Modal ---
+// ==========================================
+
+const openDriveSyncBtn = document.getElementById("openDriveSyncBtn");
+const driveSyncModal = document.getElementById("drive-sync-modal");
+const driveSyncCloseXBtn = document.getElementById("drive-sync-close-x-btn");
+const driveSyncCloseBtn = document.getElementById("drive-sync-close-btn");
+const driveSyncSubmitBtn = document.getElementById("drive-sync-submit-btn");
+const driveSyncSubmitText = document.getElementById("drive-sync-submit-text");
+const driveSyncSelectAll = document.getElementById("drive-sync-select-all");
+
+const driveCountNew = document.getElementById("drive-count-new");
+const driveCountEnrich = document.getElementById("drive-count-enrich");
+const driveCountExisting = document.getElementById("drive-count-existing");
+const driveCountTotal = document.getElementById("drive-count-total");
+const driveSyncList = document.getElementById("drive-sync-list");
+const driveSyncLoading = document.getElementById("drive-sync-loading");
+
+const driveSyncProgressBox = document.getElementById("drive-sync-progress-box");
+const driveSyncProgressBar = document.getElementById("drive-sync-progress-bar");
+const driveSyncProgressStatus = document.getElementById("drive-sync-progress-status");
+const driveSyncProgressCounter = document.getElementById("drive-sync-progress-counter");
+
+let driveSyncData = null;
+let currentDriveFilter = "all";
+let driveSelectedIds = new Set();
+let driveBackgroundPoller = null;
+
+function closeDriveSyncModal() {
+  if (driveSyncModal) driveSyncModal.style.display = "none";
+}
+
+if (openDriveSyncBtn) openDriveSyncBtn.addEventListener("click", () => openDriveSyncModal());
+if (driveSyncCloseXBtn) driveSyncCloseXBtn.addEventListener("click", closeDriveSyncModal);
+if (driveSyncCloseBtn) driveSyncCloseBtn.addEventListener("click", closeDriveSyncModal);
+
+async function openDriveSyncModal() {
+  if (!driveSyncModal) return;
+  driveSyncModal.style.display = "flex";
+  if (driveSyncLoading) driveSyncLoading.style.display = "block";
+  if (driveSyncList) driveSyncList.style.display = "none";
+  if (driveSyncProgressBox) driveSyncProgressBox.style.display = "none";
+  if (driveSyncSubmitBtn) driveSyncSubmitBtn.disabled = true;
+
+  try {
+    const res = await fetch("/api/drive/sync-preview");
+    const data = await res.json();
+    if (!data.success) {
+      alert("Fehler bei Drive-Vorschau: " + (data.error || "Unbekannter Fehler"));
+      closeDriveSyncModal();
+      return;
+    }
+
+    driveSyncData = data;
+    currentDriveFilter = "all";
+
+    // Auto-select all new & needsEnrichment by default
+    driveSelectedIds = new Set([
+      ...(data.toImport || []).map(i => i.id),
+      ...(data.needsEnrichment || []).map(i => i.id)
+    ]);
+
+    renderDriveSyncModal();
+  } catch (err) {
+    alert("Fehler beim Laden der Google Drive Daten: " + err.message);
+    closeDriveSyncModal();
+  }
+}
+
+function renderDriveSyncModal() {
+  if (!driveSyncData) return;
+  const { toImport = [], needsEnrichment = [], existingComplete = [], totalDriveFiles = 0 } = driveSyncData;
+
+  if (driveCountNew) driveCountNew.innerText = toImport.length;
+  if (driveCountEnrich) driveCountEnrich.innerText = needsEnrichment.length;
+  if (driveCountExisting) driveCountExisting.innerText = existingComplete.length;
+  if (driveCountTotal) driveCountTotal.innerText = totalDriveFiles;
+
+  if (driveSyncLoading) driveSyncLoading.style.display = "none";
+  if (driveSyncList) driveSyncList.style.display = "block";
+
+  let items = [];
+  if (currentDriveFilter === "all") {
+    toImport.forEach(i => items.push({ ...i, categoryType: "new" }));
+    needsEnrichment.forEach(i => items.push({ ...i, categoryType: "enrich" }));
+    existingComplete.forEach(i => items.push({ ...i, categoryType: "complete" }));
+  } else if (currentDriveFilter === "new") {
+    toImport.forEach(i => items.push({ ...i, categoryType: "new" }));
+  } else if (currentDriveFilter === "enrich") {
+    needsEnrichment.forEach(i => items.push({ ...i, categoryType: "enrich" }));
+  } else if (currentDriveFilter === "complete") {
+    existingComplete.forEach(i => items.push({ ...i, categoryType: "complete" }));
+  }
+
+  if (items.length === 0) {
+    driveSyncList.innerHTML = '<div class="text-center text-muted py-4">Keine Dateien in dieser Ansicht.</div>';
+    if (driveSyncSubmitBtn) driveSyncSubmitBtn.disabled = true;
+    return;
+  }
+
+  let html = "";
+  items.forEach(item => {
+    const isChecked = driveSelectedIds.has(item.id);
+    let badgeHtml = "";
+    if (item.categoryType === "new") {
+      badgeHtml = `<span class="badge bg-success-subtle text-success border border-success-subtle">+ Neu (Fehlt in DB)</span>`;
+    } else if (item.categoryType === "enrich") {
+      badgeHtml = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">⚠️ Metadaten unvollständig</span>`;
+    } else {
+      badgeHtml = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle">✓ Vollständig</span>`;
+    }
+
+    const dateStr = item.createdTime ? new Date(item.createdTime).toLocaleDateString("de-DE") : "-";
+    const sizeStr = item.size ? `${(parseInt(item.size, 10) / 1024).toFixed(0)} KB` : "";
+
+    html += `
+      <div class="d-flex align-items-center justify-content-between p-2 mb-1 bg-white rounded border gap-2 drive-sync-item-row" data-id="${item.id}" style="font-size: 13px;">
+        <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
+          <input type="checkbox" class="form-check-input drive-item-checkbox m-0" data-id="${item.id}" ${isChecked ? 'checked' : ''} />
+          <div class="text-truncate" style="max-width: 450px;">
+            <div class="fw-bold text-dark text-truncate" title="${item.name}">${item.name}</div>
+            <div class="text-muted small d-flex gap-2 flex-wrap">
+              <span>📅 ${dateStr}</span>
+              ${sizeStr ? `<span>💾 ${sizeStr}</span>` : ''}
+              ${item.currentCompany ? `<span>🏢 ${item.currentCompany}</span>` : ''}
+              ${item.currentCategory ? `<span>📁 ${item.currentCategory}</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <div>
+          ${badgeHtml}
+        </div>
+      </div>
+    `;
+  });
+
+  driveSyncList.innerHTML = html;
+
+  // Checkbox listeners
+  driveSyncList.querySelectorAll(".drive-item-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const id = cb.getAttribute("data-id");
+      if (cb.checked) {
+        driveSelectedIds.add(id);
+      } else {
+        driveSelectedIds.delete(id);
+      }
+      updateDriveSubmitButton();
+    });
+  });
+
+  updateDriveSubmitButton();
+}
+
+function updateDriveSubmitButton() {
+  if (!driveSyncSubmitBtn) return;
+  const count = driveSelectedIds.size;
+  driveSyncSubmitBtn.disabled = count === 0;
+  if (driveSyncSubmitText) {
+    driveSyncSubmitText.innerText = count > 0 ? `${count} Belege nachladen & anreichern` : "Keine Belege ausgewählt";
+  }
+}
+
+// Drive Sync Tabs Listener
+document.querySelectorAll(".drive-filter-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".drive-filter-tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    currentDriveFilter = tab.getAttribute("data-filter") || "all";
+    renderDriveSyncModal();
+  });
+});
+
+if (driveSyncSelectAll) {
+  driveSyncSelectAll.addEventListener("change", () => {
+    const isChecked = driveSyncSelectAll.checked;
+    driveSyncList.querySelectorAll(".drive-item-checkbox").forEach(cb => {
+      cb.checked = isChecked;
+      const id = cb.getAttribute("data-id");
+      if (isChecked) {
+        driveSelectedIds.add(id);
+      } else {
+        driveSelectedIds.delete(id);
+      }
+    });
+    updateDriveSubmitButton();
+  });
+}
+
+// Drive Sync Execute
+if (driveSyncSubmitBtn) {
+  driveSyncSubmitBtn.addEventListener("click", async () => {
+    if (!driveSyncData || driveSelectedIds.size === 0) return;
+
+    const allItems = [...(driveSyncData.toImport || []), ...(driveSyncData.needsEnrichment || []), ...(driveSyncData.existingComplete || [])];
+    const selectedItems = allItems.filter(i => driveSelectedIds.has(i.id));
+
+    driveSyncSubmitBtn.disabled = true;
+    if (driveSyncCloseBtn) driveSyncCloseBtn.disabled = true;
+    if (driveSyncProgressBox) driveSyncProgressBox.style.display = "block";
+    if (driveSyncProgressStatus) driveSyncProgressStatus.innerText = "Initialisiere Hintergrund-Synchronisation...";
+
+    try {
+      const res = await fetch("/api/drive/sync-execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: selectedItems }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        startDriveBackgroundPoller();
+        setTimeout(() => {
+          closeDriveSyncModal();
+        }, 1000);
+      } else {
+        alert("Fehler beim Starten: " + (data.error || "Unbekannt"));
+        driveSyncSubmitBtn.disabled = false;
+        if (driveSyncCloseBtn) driveSyncCloseBtn.disabled = false;
+      }
+    } catch (err) {
+      alert("Netzwerkfehler: " + err.message);
+      driveSyncSubmitBtn.disabled = false;
+      if (driveSyncCloseBtn) driveSyncCloseBtn.disabled = false;
+    }
+  });
+}
+
+// Background poller for Drive Sync State
+function startDriveBackgroundPoller() {
+  if (driveBackgroundPoller) return;
+  driveBackgroundPoller = setInterval(checkDriveSyncStatus, 2500);
+  checkDriveSyncStatus();
+}
+
+async function checkDriveSyncStatus() {
+  try {
+    const res = await fetch("/api/drive/sync-status");
+    const data = await res.json();
+    if (!data.success) return;
+
+    const syncState = data.syncState;
+    const banner = document.getElementById("drive-background-sync-banner");
+    const bannerTitle = document.getElementById("drive-banner-title");
+    const bannerSub = document.getElementById("drive-banner-sub");
+    const bannerProgress = document.getElementById("drive-banner-progress-bar");
+
+    if (syncState && syncState.running) {
+      if (banner) banner.style.setProperty("display", "flex", "important");
+      const percent = syncState.total > 0 ? Math.round((syncState.processed / syncState.total) * 100) : 0;
+      if (bannerTitle) bannerTitle.innerText = `Google Drive Sync: ${syncState.processed} / ${syncState.total} Belege`;
+      if (bannerSub) bannerSub.innerText = syncState.currentFileName ? `Verarbeite: ${syncState.currentFileName}` : "KI-Analyse läuft...";
+      if (bannerProgress) bannerProgress.style.width = `${percent}%`;
+
+      // Update modal if open
+      if (driveSyncProgressBox && driveSyncProgressBox.style.display !== "none") {
+        if (driveSyncProgressStatus) driveSyncProgressStatus.innerText = syncState.currentFileName || "Verarbeite...";
+        if (driveSyncProgressCounter) driveSyncProgressCounter.innerText = `${syncState.processed} / ${syncState.total}`;
+        if (driveSyncProgressBar) driveSyncProgressBar.style.width = `${percent}%`;
+      }
+    } else {
+      if (banner) banner.style.setProperty("display", "none", "important");
+      if (driveBackgroundPoller) {
+        clearInterval(driveBackgroundPoller);
+        driveBackgroundPoller = null;
+      }
+      fetchStatus();
+    }
+  } catch (e) {}
+}
+
+// Check background status on initial load
+startDriveBackgroundPoller();
+
 

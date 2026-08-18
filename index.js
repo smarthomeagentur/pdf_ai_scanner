@@ -644,6 +644,28 @@ function saveJobs() {
 }
 loadJobs();
 
+let driveSyncState = {
+  running: false,
+  total: 0,
+  processed: 0,
+  currentFileName: "",
+  startedAt: null,
+  finishedAt: null,
+  errors: [],
+};
+
+function checkJobNeedsEnrichment(job) {
+  if (!job || !job.result) return true;
+  const res = job.result;
+  const company = (res.company || "").toLowerCase();
+  const isMissingCompany = !company || company === "unbekannt" || company === "unknown" || company === "-";
+  const date = (res.documentDate || "").toLowerCase();
+  const isMissingDate = !date || date === "unknown" || date === "-" || date === "none";
+  const category = (res.category || "").toLowerCase();
+  const isMissingCategory = !category || category === "sonstige" || category === "-" || category === "unknown";
+  return isMissingCompany || isMissingDate || isMissingCategory;
+}
+
 // Process core queue
 async function processQueue() {
   if (isProcessingQueue) return;
@@ -815,12 +837,24 @@ async function processQueue() {
       job.invoiceNumber = sortedName.invoiceNumber;
       job.invoiceAmmount = sortedName.invoiceAmmount;
       saveJobs();
+
+      if (driveSyncState.running) {
+        driveSyncState.processed++;
+        driveSyncState.currentFileName = job.originalName || sortedName.full || "";
+      }
+
       console.log(`[WEB] Job ${jobId} finished.`);
     } catch (error) {
       console.error(`[WEB] Error processing job ${jobId}:`, error);
       job.status = "error";
       job.error = error.message;
       saveJobs();
+
+      if (driveSyncState.running) {
+        driveSyncState.processed++;
+        driveSyncState.errors.push({ jobId, fileName: job.originalName, error: error.message });
+      }
+
       try {
         if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
         const jpgPath = job.filePath.replace(".pdf", ".jpg");
@@ -830,6 +864,10 @@ async function processQueue() {
   }
 
   isProcessingQueue = false;
+  if (driveSyncState.running && uploadQueue.length === 0) {
+    driveSyncState.running = false;
+    driveSyncState.finishedAt = new Date().toISOString();
+  }
 }
 
 // Check Drive Folder Loop
@@ -943,6 +981,220 @@ app.delete("/api/jobs", requireAdmin, (req, res) => {
   uploadQueue = [];
   saveJobs();
   res.json({ success: true });
+});
+
+// Google Drive Sync Endpoints
+app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
+  try {
+    if (!fs.existsSync(TOKEN_PATH)) {
+      return res.status(400).json({ success: false, error: "Google Drive ist nicht authentifiziert." });
+    }
+
+    const drive = await driveApi.getClient();
+    let folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+    if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+      folderId = await driveApi.findFolderId(folderId);
+    }
+
+    if (!folderId) {
+      return res.status(400).json({ success: false, error: "Kein Google Drive Ordner in den Einstellungen hinterlegt." });
+    }
+
+    const driveFiles = [];
+    let nextPageToken = null;
+
+    do {
+      const listRes = await drive.files.list({
+        q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and '${folderId}' in parents`,
+        fields: "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description)",
+        pageSize: 1000,
+        pageToken: nextPageToken,
+      });
+
+      if (listRes.data.files) {
+        driveFiles.push(...listRes.data.files);
+      }
+      nextPageToken = listRes.data.nextPageToken;
+    } while (nextPageToken);
+
+    const toImport = [];
+    const needsEnrichment = [];
+    const existingComplete = [];
+    const skipped = [];
+
+    const existingJobsList = Object.values(uploadJobs);
+
+    for (const file of driveFiles) {
+      if (!file.name.toLowerCase().endsWith(".pdf") && file.mimeType !== "application/pdf") {
+        skipped.push({
+          id: file.id,
+          name: file.name,
+          reason: "Keine PDF-Datei",
+          size: file.size,
+        });
+        continue;
+      }
+
+      // Check if matching job in database
+      const matchingJob = existingJobsList.find((j) => {
+        if (j.rawDriveId === file.id || j.driveFileId === file.id) return true;
+        if (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id)) return true;
+        if (j.originalName === file.name) return true;
+        if (j.result && j.result.full && (j.result.full === file.name || j.result.full + ".pdf" === file.name)) return true;
+        return false;
+      });
+
+      if (matchingJob) {
+        if (checkJobNeedsEnrichment(matchingJob)) {
+          needsEnrichment.push({
+            id: file.id,
+            name: file.name,
+            size: file.size,
+            createdTime: file.createdTime,
+            modifiedTime: file.modifiedTime,
+            webViewLink: file.webViewLink,
+            thumbnailLink: file.thumbnailLink,
+            existingJobId: matchingJob.id,
+            reason: "Metadaten unvollständig (Firma/Datum/Kategorie)",
+            currentCompany: matchingJob.result?.company || "Unbekannt",
+            currentCategory: matchingJob.result?.category || "-",
+            currentDate: matchingJob.result?.documentDate || "-",
+          });
+        } else {
+          existingComplete.push({
+            id: file.id,
+            name: file.name,
+            size: file.size,
+            createdTime: file.createdTime,
+            modifiedTime: file.modifiedTime,
+            webViewLink: file.webViewLink,
+            thumbnailLink: file.thumbnailLink,
+            existingJobId: matchingJob.id,
+            company: matchingJob.result?.company || "-",
+            category: matchingJob.result?.category || "-",
+            documentDate: matchingJob.result?.documentDate || "-",
+          });
+        }
+      } else {
+        // Not in DB -> Needs to be imported
+        toImport.push({
+          id: file.id,
+          name: file.name,
+          size: file.size,
+          createdTime: file.createdTime,
+          modifiedTime: file.modifiedTime,
+          webViewLink: file.webViewLink,
+          thumbnailLink: file.thumbnailLink,
+          reason: "Nicht in lokaler Datenbank",
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      folderId,
+      totalDriveFiles: driveFiles.length,
+      toImport,
+      needsEnrichment,
+      existingComplete,
+      skipped,
+      syncState: driveSyncState,
+    });
+  } catch (err) {
+    console.error("[DRIVE SYNC PREVIEW] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Laden der Drive-Vorschau." });
+  }
+});
+
+app.get("/api/drive/sync-status", (req, res) => {
+  res.json({
+    success: true,
+    syncState: driveSyncState,
+    queueLength: uploadQueue.length,
+    isProcessing: isProcessingQueue,
+  });
+});
+
+app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, res) => {
+  if (driveSyncState.running) {
+    return res.status(400).json({ success: false, error: "Synchronisation läuft bereits im Hintergrund." });
+  }
+
+  const { items } = req.body; // Array of { id, name, existingJobId }
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, error: "Keine Belege zur Synchronisation ausgewählt." });
+  }
+
+  try {
+    const drive = await driveApi.getClient();
+
+    driveSyncState = {
+      running: true,
+      total: items.length,
+      processed: 0,
+      currentFileName: items[0]?.name || "",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      errors: [],
+    };
+
+    res.json({ success: true, message: "Hintergrund-Synchronisation gestartet.", total: items.length });
+
+    // Background processing loop
+    (async () => {
+      console.log(`[DRIVE SYNC] Starte Hintergrund-Synchronisation für ${items.length} Belege...`);
+      for (const item of items) {
+        try {
+          driveSyncState.currentFileName = item.name;
+          const localPath = path.join(localDownloadFolder, `${Date.now()}-${item.name}`);
+          const dest = fs.createWriteStream(localPath);
+          const downloadRes = await drive.files.get({ fileId: item.id, alt: "media" }, { responseType: "stream" });
+          await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+
+          let jobId = item.existingJobId;
+          if (!jobId || !uploadJobs[jobId]) {
+            jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+            uploadJobs[jobId] = {
+              id: jobId,
+              originalName: item.name,
+              status: "pending",
+              result: null,
+              error: null,
+              filePath: localPath,
+              rawDriveId: item.id,
+              uploadDate: new Date().toISOString(),
+            };
+          } else {
+            uploadJobs[jobId].status = "pending";
+            uploadJobs[jobId].filePath = localPath;
+            uploadJobs[jobId].error = null;
+            if (!uploadJobs[jobId].rawDriveId) uploadJobs[jobId].rawDriveId = item.id;
+          }
+
+          if (!processedDriveFiles.includes(item.id)) {
+            processedDriveFiles.push(item.id);
+          }
+
+          uploadQueue.push(jobId);
+          saveJobs();
+        } catch (downloadErr) {
+          console.error(`[DRIVE SYNC] Fehler beim Vorbereiten von ${item.name}:`, downloadErr);
+          driveSyncState.errors.push({ id: item.id, name: item.name, error: downloadErr.message });
+          driveSyncState.processed++;
+        }
+      }
+
+      console.log(`[DRIVE SYNC] Alle ${items.length} Belege in Warteschlange gestellt. Starte AI-Verarbeitung...`);
+      processQueue();
+    })().catch((err) => {
+      console.error("[DRIVE SYNC] Unerwarteter Fehler im Hintergrund:", err);
+      driveSyncState.running = false;
+      driveSyncState.finishedAt = new Date().toISOString();
+    });
+  } catch (err) {
+    console.error("[DRIVE SYNC EXECUTE] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Starten der Synchronisation." });
+  }
 });
 
 app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res) => {
