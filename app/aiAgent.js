@@ -209,13 +209,30 @@ function getPythonPath() {
 async function getPdfImageBuffer(pdfPath) {
   try {
     const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
-    const outPng = path.join(os.tmpdir(), `pdfPic_${uniqueId}.png`);
 
-    // 1. Primär: PyMuPDF (fitz) - schnell & zuverlässig
+    // 1. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
     try {
       const { execFile } = require("child_process");
       const util = require("util");
       const execFileAsync = util.promisify(execFile);
+      const prefix = path.join(os.tmpdir(), `pdfPic_${uniqueId}`);
+      await execFileAsync("pdftoppm", ["-png", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+      const pngFile = `${prefix}.png`;
+      if (fs.existsSync(pngFile)) {
+        const buf = await fs.promises.readFile(pngFile);
+        await fs.promises.unlink(pngFile).catch(() => {});
+        if (buf && buf.length > 100) {
+          return buf.toString("base64");
+        }
+      }
+    } catch (e) {}
+
+    // 2. PyMuPDF (fitz) - falls installiert
+    try {
+      const { execFile } = require("child_process");
+      const util = require("util");
+      const execFileAsync = util.promisify(execFile);
+      const outPng = path.join(os.tmpdir(), `pdfPic_${uniqueId}.png`);
       await execFileAsync(getPythonPath(), [
         "-c",
         "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
@@ -224,36 +241,33 @@ async function getPdfImageBuffer(pdfPath) {
       ]);
       if (fs.existsSync(outPng)) {
         const buf = await fs.promises.readFile(outPng);
-        await fs.promises.unlink(outPng).catch(() => { });
+        await fs.promises.unlink(outPng).catch(() => {});
         if (buf && buf.length > 100) {
           return buf.toString("base64");
         }
       }
-    } catch (fitzErr) {
-      // Fallback
-    }
+    } catch (fitzErr) {}
 
-    // 2. Fallback: pdf2pic
-    const options = {
-      density: 150,
-      saveFilename: `pdfPic_${uniqueId}`,
-      savePath: os.tmpdir(),
-      format: "png",
-    };
+    // 3. Fallback: pdf2pic
+    try {
+      const options = {
+        density: 150,
+        saveFilename: `pdfPic_${uniqueId}`,
+        savePath: os.tmpdir(),
+        format: "png",
+      };
+      const convert = fromPath(pdfPath, options);
+      const result = await convert(1, { responseType: "base64" });
+      const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
+      if (fs.existsSync(tempFileCheck)) {
+        fs.promises.unlink(tempFileCheck).catch(() => {});
+      }
+      if (result && result.base64) {
+        return result.base64;
+      }
+    } catch (p2pErr) {}
 
-    const convert = fromPath(pdfPath, options);
-    const result = await convert(1, { responseType: "base64" });
-
-    const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
-    if (fs.existsSync(tempFileCheck)) {
-      fs.promises.unlink(tempFileCheck).catch(() => { });
-    }
-
-    if (!result || !result.base64) {
-      return false;
-    }
-
-    return result.base64;
+    return false;
   } catch (err) {
     console.error("[AI] Fehler bei der PDF-Bild-Extraktion:", err.message || err);
     return false;

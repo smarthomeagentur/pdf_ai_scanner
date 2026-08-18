@@ -445,6 +445,65 @@ app.get("/api/drive/search", async (req, res) => {
   }
 });
 
+async function renderPdfToJpeg(pdfPath, targetThumbPath) {
+  if (!fs.existsSync(pdfPath)) return false;
+
+  // 1. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    const prefix = targetThumbPath.replace(/\.jpe?g$/i, "");
+    await execFileAsync("pdftoppm", ["-jpeg", "-r", "120", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+    if (fs.existsSync(targetThumbPath)) return true;
+    if (fs.existsSync(`${prefix}.jpg`)) {
+      if (`${prefix}.jpg` !== targetThumbPath) await fs.promises.rename(`${prefix}.jpg`, targetThumbPath).catch(() => {});
+      return true;
+    }
+  } catch (e) {}
+
+  // 2. PyMuPDF (fitz) - falls installiert
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    await execFileAsync(getPythonPath(), [
+      "-c",
+      "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+      pdfPath,
+      targetThumbPath,
+    ]);
+    if (fs.existsSync(targetThumbPath)) return true;
+  } catch (fitzErr) {}
+
+  // 3. Fallback: pdf2pic
+  try {
+    const { fromPath } = require("pdf2pic");
+    const dir = path.dirname(targetThumbPath);
+    const baseName = path.basename(targetThumbPath, path.extname(targetThumbPath));
+    const convert = fromPath(pdfPath, {
+      density: 120,
+      saveFilename: baseName,
+      savePath: dir,
+      format: "jpeg",
+    });
+    const res = await convert(1);
+    const possible = [
+      path.join(dir, `${baseName}.1.jpeg`),
+      path.join(dir, `${baseName}.1.jpg`),
+      res?.path,
+    ];
+    for (const p of possible) {
+      if (p && fs.existsSync(p)) {
+        if (p !== targetThumbPath) {
+          await fs.promises.rename(p, targetThumbPath).catch(() => {});
+        }
+        return true;
+      }
+    }
+  } catch (p2pErr) {}
+
+  return false;
+}
+
 async function getOrGenerateThumbnailPath(identifier) {
   if (!identifier) return null;
 
@@ -464,38 +523,23 @@ async function getOrGenerateThumbnailPath(identifier) {
   const job = uploadJobs[identifier];
   const targetThumbPath = path.join(localDownloadFolder, `thumb_${identifier}.jpg`);
 
-  // 2a. If local PDF file exists on disk, render directly with PyMuPDF fitz
+  // 2a. If local PDF file exists on disk, render directly
   if (job && job.filePath && fs.existsSync(job.filePath)) {
-    try {
-      await new Promise((resolve, reject) => {
-        execFile(
-          getPythonPath(),
-          [
-            "-c",
-            "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
-            job.filePath,
-            targetThumbPath,
-          ],
-          (err) => (err ? reject(err) : resolve())
-        );
-      });
-      if (fs.existsSync(targetThumbPath)) return targetThumbPath;
-    } catch (e) {
-      console.error(`[THUMBNAIL] Fehler beim Rendern des lokalen PDFs für Job ${identifier}:`, e.message);
-    }
+    const rendered = await renderPdfToJpeg(job.filePath, targetThumbPath);
+    if (rendered && fs.existsSync(targetThumbPath)) return targetThumbPath;
   }
 
   // 3. Fallback: Google Drive Download
-  const driveFileId =
-    job?.rawDriveId ||
-    (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null) ||
-    identifier;
+  let driveFileId = job?.rawDriveId || (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null);
+  if (!driveFileId && typeof identifier === "string" && !identifier.includes("-") && identifier.length >= 10) {
+    driveFileId = identifier;
+  }
 
-  if (fs.existsSync(TOKEN_PATH)) {
+  if (driveFileId && fs.existsSync(TOKEN_PATH)) {
     try {
       const drive = await driveApi.getClient();
 
-      // 3a. Try thumbnailLink from Google Drive
+      // 3a. Try thumbnailLink from Google Drive (Zero CPU, instant)
       try {
         const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
         if (fileInfo.data && fileInfo.data.thumbnailLink) {
@@ -511,26 +555,15 @@ async function getOrGenerateThumbnailPath(identifier) {
         }
       } catch (e) {}
 
-      // 3b. Download first page/file and render with PyMuPDF fitz
+      // 3b. Download first page/file and render
       const pdfTemp = path.join(localDownloadFolder, `temp_thumb_${identifier}.pdf`);
       try {
         const dest = fs.createWriteStream(pdfTemp);
         const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
         await pipeline(downloadRes.data, dest);
 
-        await new Promise((resolve, reject) => {
-          execFile(
-            getPythonPath(),
-            [
-              "-c",
-              "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
-              pdfTemp,
-              targetThumbPath,
-            ],
-            (err) => (err ? reject(err) : resolve())
-          );
-        });
-        if (fs.existsSync(targetThumbPath)) return targetThumbPath;
+        const rendered = await renderPdfToJpeg(pdfTemp, targetThumbPath);
+        if (rendered && fs.existsSync(targetThumbPath)) return targetThumbPath;
       } catch (e) {
         console.error(`[THUMBNAIL] Fehler beim Rendern des Drive-PDFs für ${identifier}:`, e.message);
       } finally {
@@ -542,6 +575,40 @@ async function getOrGenerateThumbnailPath(identifier) {
   }
 
   return null;
+}
+
+async function syncClickupStatusForJobs(targetJobs = null) {
+  if (!appSettings.CLICKUP_API_KEY || !appSettings.CLICKUP_LIST_ID) {
+    return { success: false, error: "Keine ClickUp Zugangsdaten konfiguriert." };
+  }
+
+  try {
+    console.log("[CLICKUP] Lade Aufgaben aus ClickUp zur Statusprüfung...");
+    const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+    const jobsToEvaluate = targetJobs || Object.values(uploadJobs);
+    let matchedCount = 0;
+
+    for (const job of jobsToEvaluate) {
+      const match = clickupApi.findMatchingTask(job, clickupTasks);
+      if (match) {
+        job.clickup = {
+          taskId: match.id,
+          taskUrl: match.url || `https://app.clickup.com/t/${match.id}`,
+          taskName: match.name,
+          status: match.status?.status || "offen",
+          transferredAt: job.clickup?.transferredAt || new Date().toISOString(),
+        };
+        matchedCount++;
+      }
+    }
+
+    saveJobs();
+    console.log(`[CLICKUP] Statusprüfung abgeschlossen: ${matchedCount} / ${jobsToEvaluate.length} Belege in ClickUp verknüpft.`);
+    return { success: true, matchedCount, total: jobsToEvaluate.length, totalClickupTasks: clickupTasks.length };
+  } catch (err) {
+    console.error("[CLICKUP] Fehler bei ClickUp Statusprüfung:", err.message || err);
+    return { success: false, error: err.message };
+  }
 }
 
 app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
@@ -558,6 +625,11 @@ app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
     console.error("[THUMBNAIL] Fehler beim Ausliefern des Thumbnails:", err);
     return res.status(500).send("Error generating thumbnail");
   }
+});
+
+app.post("/api/clickup/sync-status", requireAdmin, async (req, res) => {
+  const result = await syncClickupStatusForJobs();
+  res.json(result);
 });
 
 // Job Queue
@@ -1166,6 +1238,14 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
       console.log(`[DRIVE SYNC] Alle ${items.length} Belege erfolgreich sequenziell verarbeitet.`);
       driveSyncState.running = false;
       driveSyncState.finishedAt = new Date().toISOString();
+
+      // Prüfe direkt den ClickUp-Status für alle Belege
+      try {
+        console.log("[DRIVE SYNC] Führe automatische ClickUp-Statusprüfung durch...");
+        await syncClickupStatusForJobs();
+      } catch (cuErr) {
+        console.error("[DRIVE SYNC] Fehler bei ClickUp-Statusprüfung:", cuErr.message);
+      }
     })().catch((err) => {
       console.error("[DRIVE SYNC] Unerwarteter Fehler im Hintergrund:", err);
       driveSyncState.running = false;
