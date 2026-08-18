@@ -999,13 +999,6 @@ function renderJobs() {
         duplicateBadgeHtml = '<span style="background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Verdacht auf Duplikat">⚠️ DUPLIKAT VERDACHT</span>';
     }
 
-    let aiPipelineBadgeHtml = '';
-    if (job.inAiPipeline || job.status === "pending" || job.status === "processing") {
-      aiPipelineBadgeHtml = `<span style="background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white; padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-left: 6px; vertical-align: middle; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 3px rgba(79, 70, 229, 0.3);" title="Wird aktuell durch die KI-Pipeline verarbeitet"><span class="material-symbols-outlined" style="font-size: 12px;">auto_awesome</span> ⚡ In KI-Pipeline</span>`;
-    } else if (job.aiEnriched) {
-      aiPipelineBadgeHtml = `<span style="background: #eef2ff; color: #4f46e5; border: 1px solid #c7d2fe; padding: 2px 7px; border-radius: 12px; font-size: 10px; margin-left: 6px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px;" title="Metadaten durch KI analysiert & angereichert"><span class="material-symbols-outlined" style="font-size: 11px;">auto_awesome</span> KI-optimiert</span>`;
-    }
-
     let statusText =
       job.status === "pending"
         ? "In der Warteschlange..."
@@ -1139,7 +1132,6 @@ ${lexofficeDetailsHtml}
                         <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
                             <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center; flex-wrap: wrap;">
                                 ${job.originalName}
-                                ${aiPipelineBadgeHtml}
                                 ${privateBadgeHtml}
                                 ${lexofficeBadgeHtml}
                                 ${duplicateBadgeHtml}
@@ -2654,10 +2646,13 @@ function renderDriveSyncModal() {
   items.forEach(item => {
     const isChecked = driveSelectedIds.has(item.id);
     let badgeHtml = "";
+    let pipelineBadgeHtml = "";
     if (item.categoryType === "new") {
       badgeHtml = `<span class="badge bg-success-subtle text-success border border-success-subtle">+ Neu (Fehlt in DB)</span>`;
+      pipelineBadgeHtml = `<span class="badge text-white" style="background: linear-gradient(135deg, #4f46e5, #7c3aed); border-radius: 12px; font-size: 11px; padding: 2px 8px; display: inline-flex; align-items: center; gap: 3px;" title="Wird nach Sync durch die KI-Pipeline analysiert & angereichert"><span class="material-symbols-outlined" style="font-size: 12px;">auto_awesome</span> In KI-Pipeline</span>`;
     } else if (item.categoryType === "enrich") {
       badgeHtml = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">⚠️ Metadaten unvollständig</span>`;
+      pipelineBadgeHtml = `<span class="badge text-white" style="background: linear-gradient(135deg, #4f46e5, #7c3aed); border-radius: 12px; font-size: 11px; padding: 2px 8px; display: inline-flex; align-items: center; gap: 3px;" title="Wird nach Sync durch die KI-Pipeline analysiert & angereichert"><span class="material-symbols-outlined" style="font-size: 12px;">auto_awesome</span> In KI-Pipeline</span>`;
     } else {
       badgeHtml = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle">✓ Vollständig</span>`;
     }
@@ -2679,8 +2674,9 @@ function renderDriveSyncModal() {
             </div>
           </div>
         </div>
-        <div>
+        <div class="d-flex align-items-center gap-1 flex-wrap justify-content-end">
           ${badgeHtml}
+          ${pipelineBadgeHtml}
         </div>
       </div>
     `;
@@ -2780,15 +2776,23 @@ if (driveSyncSelectAll) {
 // Drive Sync Execute
 if (driveSyncSubmitBtn) {
   driveSyncSubmitBtn.addEventListener("click", async () => {
-    if (!driveSyncData || driveSelectedIds.size === 0) return;
+    if (!driveSyncData) return;
 
     const allItems = [...(driveSyncData.toImport || []), ...(driveSyncData.needsEnrichment || []), ...(driveSyncData.existingComplete || [])];
-    const selectedItems = allItems.filter(i => driveSelectedIds.has(i.id));
+    const visibleItems = getVisibleDriveItems();
+    // Use visible pool if a specific filter tab is active, or allItems if "all"
+    const targetPool = currentDriveFilter === "all" ? allItems : visibleItems;
+    const selectedItems = targetPool.filter(i => driveSelectedIds.has(i.id));
+
+    if (selectedItems.length === 0) {
+      alert("Bitte wähle mindestens einen Beleg zur Synchronisation aus.");
+      return;
+    }
 
     driveSyncSubmitBtn.disabled = true;
     if (driveSyncCloseBtn) driveSyncCloseBtn.disabled = true;
     if (driveSyncProgressBox) driveSyncProgressBox.style.display = "block";
-    if (driveSyncProgressStatus) driveSyncProgressStatus.innerText = "Initialisiere Hintergrund-Synchronisation...";
+    if (driveSyncProgressStatus) driveSyncProgressStatus.innerText = "Initialisiere synchrone Hintergrund-Verarbeitung...";
 
     try {
       const res = await fetch("/api/drive/sync-execute", {

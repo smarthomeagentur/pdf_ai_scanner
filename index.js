@@ -572,211 +572,202 @@ function checkJobNeedsEnrichment(job) {
 }
 
 // Process core queue
+async function processSingleJob(jobId) {
+  const job = uploadJobs[jobId];
+  if (!job) return;
+
+  job.status = "processing";
+  job.processingStartedAt = Date.now();
+  saveJobs();
+
+  try {
+    console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
+    let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
+      ? appSettings.FOLDER_ID
+      : await driveApi.findFolderId(appSettings.FOLDER_ID);
+
+    // Sofortiger Roh-Upload in Google Drive (Backup vor KI) falls noch nicht vorhanden
+    let defaultDriveFile = null;
+    if (!job.rawDriveId) {
+      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: 'true' } } : undefined;
+      defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions, debug);
+      if (defaultDriveFile) {
+        processedDriveFiles.push(defaultDriveFile.id);
+        job.rawDriveId = defaultDriveFile.id;
+      }
+    }
+
+    const aiStartTime = Date.now();
+    const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
+    sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
+
+    if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+
+    const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
+    if (sortedName.isInvoice) tagsArr.push("Rechnung");
+    if (sortedName.documentDate && sortedName.documentDate !== "unknown")
+      tagsArr.push(`Datum:${sortedName.documentDate}`);
+    if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
+    if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none") tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
+    if (sortedName.invoiceAmmount !== undefined) tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
+
+    try {
+      await exiftool.write(job.filePath, {
+        Title: sortedName.full || "Dokument",
+        Author: sortedName.company || "Unbekannt",
+        Subject: sortedName.category || "",
+        Creator: "AI Document Scanner",
+        Keywords: tagsArr,
+      });
+
+      if (fs.existsSync(job.filePath + "_original")) {
+        await fs.promises.unlink(job.filePath + "_original");
+      }
+      if (debug) console.log(`[WEB] ExifTool Metadaten geschrieben für ${jobId}`);
+    } catch (metaErr) {
+      console.error(`[WEB] Fehler beim Schreiben der Metadaten mit ExifTool für ${jobId}:`, metaErr);
+    }
+
+    const searchDescription = [
+      sortedName.company ? `Firma: ${sortedName.company}` : "",
+      sortedName.category ? `Kategorie: ${sortedName.category}` : "",
+      tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    let driveFile = appSettings.FOLDER_ID_SORTED
+      ? await driveApi.uploadFile(
+        job.filePath,
+        appSettings.FOLDER_ID_SORTED,
+        {
+          name: sortedName.full,
+          description: searchDescription,
+          appProperties: job.isPrivate ? { isPrivate: 'true' } : undefined,
+        },
+        debug,
+      )
+      : null;
+
+    driveFile = driveFile || defaultDriveFile;
+
+    if (driveFile) {
+      sortedName.webViewLink = driveFile.webViewLink;
+      sortedName.thumbnailLink = driveFile.thumbnailLink;
+      sortedName.webContentLink = driveFile.webContentLink;
+    }
+
+    const jpgPath = job.filePath.replace(".pdf", ".jpg");
+    let localThumbBase64 = null;
+    if (fs.existsSync(jpgPath)) {
+      try {
+        localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
+      } catch (e) { }
+      await fs.promises.unlink(jpgPath).catch(() => { });
+    }
+
+    // Fallback: Falls kein Thumbnail existiert
+    if (!localThumbBase64 && typeof aiAgent.generateThumbnail === "function") {
+      try {
+        localThumbBase64 = await aiAgent.generateThumbnail(job.filePath);
+      } catch (e) {
+        console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
+      }
+    }
+
+    // Read PDF buffer for ClickUp attachment before unlinking
+    let pdfBuffer = null;
+    if (fs.existsSync(job.filePath)) {
+      try {
+        pdfBuffer = await fs.promises.readFile(job.filePath);
+      } catch (e) {}
+    }
+
+    // ClickUp Integration
+    if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
+      const isPrivateDoc =
+        job.isPrivate ||
+        (sortedName.company && sortedName.company.toLowerCase().includes("daniel")) ||
+        (sortedName.category && sortedName.category.toLowerCase() === "privat");
+
+      if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivateDoc) {
+        console.log(`[CLICKUP] Job ${jobId} als privat eingestuft. ClickUp-Upload wird übersprungen.`);
+      } else {
+        try {
+          const fileName = sortedName.full
+            ? (sortedName.full.endsWith(".pdf") ? sortedName.full : `${sortedName.full}.pdf`)
+            : (job.originalName || "Dokument.pdf");
+
+          const clickupResult = await clickupApi.createOrUpdateDocumentTask({
+            fileBuffer: pdfBuffer,
+            fileName: fileName,
+            aiResult: sortedName,
+            driveFile: driveFile,
+            listId: appSettings.CLICKUP_LIST_ID,
+            uploadAttachment: !!pdfBuffer,
+          });
+
+          if (clickupResult && clickupResult.success) {
+            job.clickup = {
+              taskId: clickupResult.taskId,
+              taskUrl: clickupResult.taskUrl,
+              taskName: clickupResult.taskName,
+              status: clickupResult.status,
+              transferredAt: new Date().toISOString(),
+            };
+          }
+        } catch (clickupErr) {
+          console.error(`[CLICKUP] Fehler bei ClickUp-Verarbeitung für Job ${jobId}:`, clickupErr.message);
+        }
+      }
+    }
+
+    await fs.promises.unlink(job.filePath).catch(() => { });
+
+    const isDuplicate = Object.values(uploadJobs).some(j => 
+      j.id !== jobId && 
+      j.status === 'completed' &&
+      (j.originalName === job.originalName || (j.result && j.result.full === sortedName.full))
+    );
+    job.suspectedDuplicate = isDuplicate;
+
+    job.status = "completed";
+    job.inAiPipeline = false;
+    job.aiEnriched = true;
+    job.aiPipelineCompletedAt = new Date().toISOString();
+    sortedName.localThumbnail = localThumbBase64;
+    job.result = sortedName;
+    job.invoiceNumber = sortedName.invoiceNumber;
+    job.invoiceAmmount = sortedName.invoiceAmmount;
+    saveJobs();
+
+    console.log(`[WEB] Job ${jobId} finished.`);
+  } catch (error) {
+    console.error(`[WEB] Error processing job ${jobId}:`, error);
+    job.status = "error";
+    job.inAiPipeline = false;
+    job.error = error.message;
+    saveJobs();
+
+    try {
+      if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
+      const jpgPath = job.filePath.replace(".pdf", ".jpg");
+      if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => { });
+    } catch (e) { }
+  }
+}
+
+// Process core queue sequentially
 async function processQueue() {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
 
   while (uploadQueue.length > 0) {
     const jobId = uploadQueue.shift();
-    const job = uploadJobs[jobId];
-    if (!job) continue;
-
-    job.status = "processing";
-    job.processingStartedAt = Date.now();
-    saveJobs();
-
-    try {
-      console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
-      let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
-        ? appSettings.FOLDER_ID
-        : await driveApi.findFolderId(appSettings.FOLDER_ID);
-
-      // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
-      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: 'true' } } : undefined;
-      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions, debug);
-      if (defaultDriveFile) {
-        processedDriveFiles.push(defaultDriveFile.id);
-        job.rawDriveId = defaultDriveFile.id;
-      }
-
-      const aiStartTime = Date.now();
-      const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
-      sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
-
-      if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
-
-      const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
-      if (sortedName.isInvoice) tagsArr.push("Rechnung");
-      if (sortedName.documentDate && sortedName.documentDate !== "unknown")
-        tagsArr.push(`Datum:${sortedName.documentDate}`);
-      if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
-      if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none") tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
-      if (sortedName.invoiceAmmount !== undefined) tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
-
-      try {
-        await exiftool.write(job.filePath, {
-          Title: sortedName.full || "Dokument",
-          Author: sortedName.company || "Unbekannt",
-          Subject: sortedName.category || "",
-          Creator: "AI Document Scanner",
-          Keywords: tagsArr,
-        });
-
-        // Exiftool creates an _original backup file. We ensure to remove it.
-        if (fs.existsSync(job.filePath + "_original")) {
-          await fs.promises.unlink(job.filePath + "_original");
-        }
-        if (debug) console.log(`[WEB] ExifTool Metadaten geschrieben für ${jobId}`);
-      } catch (metaErr) {
-        console.error(`[WEB] Fehler beim Schreiben der Metadaten mit ExifTool für ${jobId}:`, metaErr);
-      }
-
-      const searchDescription = [
-        sortedName.company ? `Firma: ${sortedName.company}` : "",
-        sortedName.category ? `Kategorie: ${sortedName.category}` : "",
-        tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
-      ]
-        .filter(Boolean)
-        .join(" | ");
-
-      let driveFile = appSettings.FOLDER_ID_SORTED
-        ? await driveApi.uploadFile(
-          job.filePath,
-          appSettings.FOLDER_ID_SORTED,
-          {
-            name: sortedName.full,
-            description: searchDescription,
-            appProperties: job.isPrivate ? { isPrivate: 'true' } : undefined,
-          },
-          debug,
-        )
-        : null;
-
-      driveFile = driveFile || defaultDriveFile;
-
-      if (driveFile) {
-        sortedName.webViewLink = driveFile.webViewLink;
-        sortedName.thumbnailLink = driveFile.thumbnailLink;
-        sortedName.webContentLink = driveFile.webContentLink;
-      }
-
-      const jpgPath = job.filePath.replace(".pdf", ".jpg");
-      let localThumbBase64 = null;
-      if (fs.existsSync(jpgPath)) {
-        try {
-          localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
-        } catch (e) { }
-        await fs.promises.unlink(jpgPath).catch(() => { });
-      }
-
-      // Fallback: Falls kein Thumbnail existiert (z.B. reiner Google Drive Upload)
-      if (!localThumbBase64 && typeof aiAgent.generateThumbnail === "function") {
-        try {
-          localThumbBase64 = await aiAgent.generateThumbnail(job.filePath);
-        } catch (e) {
-          console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
-        }
-      }
-
-      // Read PDF buffer for ClickUp attachment before unlinking
-      let pdfBuffer = null;
-      if (fs.existsSync(job.filePath)) {
-        try {
-          pdfBuffer = await fs.promises.readFile(job.filePath);
-        } catch (e) {}
-      }
-
-      // ClickUp Integration: Auto-create task if enabled
-      if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
-        const isPrivateDoc =
-          job.isPrivate ||
-          (sortedName.company && sortedName.company.toLowerCase().includes("daniel")) ||
-          (sortedName.category && sortedName.category.toLowerCase() === "privat");
-
-        if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivateDoc) {
-          console.log(`[CLICKUP] Job ${jobId} als privat eingestuft. ClickUp-Upload wird übersprungen.`);
-        } else {
-          try {
-            console.log(`[CLICKUP] Erstelle ClickUp-Task für Job ${jobId} (${sortedName.full})...`);
-            const fileName = sortedName.full
-              ? (sortedName.full.endsWith(".pdf") ? sortedName.full : `${sortedName.full}.pdf`)
-              : (job.originalName || "Dokument.pdf");
-
-            const clickupResult = await clickupApi.createOrUpdateDocumentTask({
-              fileBuffer: pdfBuffer,
-              fileName: fileName,
-              aiResult: sortedName,
-              driveFile: driveFile,
-              listId: appSettings.CLICKUP_LIST_ID,
-              uploadAttachment: !!pdfBuffer,
-            });
-
-            if (clickupResult && clickupResult.success) {
-              job.clickup = {
-                taskId: clickupResult.taskId,
-                taskUrl: clickupResult.taskUrl,
-                taskName: clickupResult.taskName,
-                status: clickupResult.status,
-                transferredAt: new Date().toISOString(),
-              };
-              console.log(`[CLICKUP] Task ${clickupResult.taskId} erfolgreich erstellt für Job ${jobId}`);
-            }
-          } catch (clickupErr) {
-            console.error(`[CLICKUP] Fehler bei automatischer ClickUp-Verarbeitung für Job ${jobId}:`, clickupErr.message);
-          }
-        }
-      }
-
-      await fs.promises.unlink(job.filePath).catch(() => { });
-
-      const isDuplicate = Object.values(uploadJobs).some(j => 
-        j.id !== jobId && 
-        j.status === 'completed' &&
-        (j.originalName === job.originalName || (j.result && j.result.full === sortedName.full))
-      );
-      job.suspectedDuplicate = isDuplicate;
-
-      job.status = "completed";
-      job.inAiPipeline = false;
-      job.aiEnriched = true;
-      job.aiPipelineCompletedAt = new Date().toISOString();
-      sortedName.localThumbnail = localThumbBase64;
-      job.result = sortedName;
-      job.invoiceNumber = sortedName.invoiceNumber;
-      job.invoiceAmmount = sortedName.invoiceAmmount;
-      saveJobs();
-
-      if (driveSyncState.running) {
-        driveSyncState.processed++;
-        driveSyncState.currentFileName = job.originalName || sortedName.full || "";
-      }
-
-      console.log(`[WEB] Job ${jobId} finished.`);
-    } catch (error) {
-      console.error(`[WEB] Error processing job ${jobId}:`, error);
-      job.status = "error";
-      job.inAiPipeline = false;
-      job.error = error.message;
-      saveJobs();
-
-      if (driveSyncState.running) {
-        driveSyncState.processed++;
-        driveSyncState.errors.push({ jobId, fileName: job.originalName, error: error.message });
-      }
-
-      try {
-        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
-        const jpgPath = job.filePath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => { });
-      } catch (e) { }
-    }
+    await processSingleJob(jobId);
   }
 
   isProcessingQueue = false;
-  if (driveSyncState.running && uploadQueue.length === 0) {
-    driveSyncState.running = false;
-    driveSyncState.finishedAt = new Date().toISOString();
-  }
 }
 
 // Check Drive Folder Loop
@@ -1047,12 +1038,15 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
 
     res.json({ success: true, message: "Hintergrund-Synchronisation gestartet.", total: items.length });
 
-    // Background processing loop
+    // Strictly sequential background processing loop for Drive Sync
     (async () => {
-      console.log(`[DRIVE SYNC] Starte Hintergrund-Synchronisation für ${items.length} Belege...`);
-      for (const item of items) {
+      console.log(`[DRIVE SYNC] Starte streng sequenzielle Synchronisation für ${items.length} Belege...`);
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
         try {
           driveSyncState.currentFileName = item.name;
+          console.log(`[DRIVE SYNC] [${i + 1}/${items.length}] Lade herunter: ${item.name}`);
+
           const localPath = path.join(localDownloadFolder, `${Date.now()}-${item.name}`);
           const dest = fs.createWriteStream(localPath);
           const downloadRes = await drive.files.get({ fileId: item.id, alt: "media" }, { responseType: "stream" });
@@ -1085,18 +1079,23 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
           if (!processedDriveFiles.includes(item.id)) {
             processedDriveFiles.push(item.id);
           }
-
-          uploadQueue.push(jobId);
           saveJobs();
-        } catch (downloadErr) {
-          console.error(`[DRIVE SYNC] Fehler beim Vorbereiten von ${item.name}:`, downloadErr);
-          driveSyncState.errors.push({ id: item.id, name: item.name, error: downloadErr.message });
+
+          // Process this single job immediately and wait for its completion before downloading next
+          console.log(`[DRIVE SYNC] [${i + 1}/${items.length}] Verarbeite mit KI: ${item.name}`);
+          await processSingleJob(jobId);
+
+          driveSyncState.processed++;
+        } catch (itemErr) {
+          console.error(`[DRIVE SYNC] Fehler bei ${item.name}:`, itemErr);
+          driveSyncState.errors.push({ id: item.id, name: item.name, error: itemErr.message });
           driveSyncState.processed++;
         }
       }
 
-      console.log(`[DRIVE SYNC] Alle ${items.length} Belege in Warteschlange gestellt. Starte AI-Verarbeitung...`);
-      processQueue();
+      console.log(`[DRIVE SYNC] Alle ${items.length} Belege erfolgreich sequenziell verarbeitet.`);
+      driveSyncState.running = false;
+      driveSyncState.finishedAt = new Date().toISOString();
     })().catch((err) => {
       console.error("[DRIVE SYNC] Unerwarteter Fehler im Hintergrund:", err);
       driveSyncState.running = false;
