@@ -127,9 +127,9 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => cb(null, Date.now() + "-" + path.basename(file.originalname)),
 });
-const upload = multer({ storage });
-
 app.use(cookieParser());
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 Minuten
@@ -150,7 +150,7 @@ const requireAdmin = (req, res, next) => {
   return res.status(403).json({ error: "Admin-Rechte erforderlich" });
 };
 
-app.post("/api/admin-login", express.json(), loginLimiter, (req, res) => {
+app.post("/api/admin-login", loginLimiter, (req, res) => {
   if (req.body.password === ADMIN_PASSWORD) {
     const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "30d" });
     res.cookie("admin_token", token, {
@@ -208,7 +208,7 @@ app.get("/api/admin/backup", requireAdmin, (req, res) => {
   }
 });
 
-app.post("/api/admin/restore", requireAdmin, express.json({ limit: "50mb" }), async (req, res) => {
+app.post("/api/admin/restore", requireAdmin, async (req, res) => {
   try {
     const backup = req.body;
     if (!backup || typeof backup !== "object") {
@@ -255,7 +255,7 @@ app.post("/api/admin/restore", requireAdmin, express.json({ limit: "50mb" }), as
   }
 });
 
-app.post("/api/login", express.json(), loginLimiter, (req, res) => {
+app.post("/api/login", loginLimiter, (req, res) => {
   if (req.body.password === APP_PASSWORD) {
     const token = jwt.sign({ authenticated: true }, JWT_SECRET, { expiresIn: "30d" });
     res.cookie("auth_token", token, {
@@ -319,7 +319,7 @@ app.get("/api/config", async (req, res) => {
 
 app.get("/api/settings", (req, res) => res.json({ success: true, settings: appSettings }));
 
-app.post("/api/settings", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/settings", requireAdmin, async (req, res) => {
   [
     "FOLDER_ID",
     "FOLDER_ID_SORTED",
@@ -353,7 +353,7 @@ app.post("/api/settings", requireAdmin, express.json(), async (req, res) => {
 });
 
 // Drive Auth Workflow
-app.post("/api/auth/code", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/auth/code", requireAdmin, async (req, res) => {
   try {
     const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH));
     const key = keys.installed || keys.web;
@@ -1178,7 +1178,7 @@ app.get("/api/drive/sync-status", (req, res) => {
   });
 });
 
-app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/drive/sync-execute", requireAdmin, async (req, res) => {
   if (driveSyncState.running) {
     return res.status(400).json({ success: false, error: "Synchronisation läuft bereits im Hintergrund." });
   }
@@ -1283,7 +1283,7 @@ app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, re
   }
 });
 
-app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/jobs/:id/private", requireAdmin, async (req, res) => {
   const jobId = req.params.id;
   const isPrivate = req.body.isPrivate;
   const job = uploadJobs[jobId];
@@ -1317,7 +1317,7 @@ app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res)
   }
 });
 
-app.post("/api/jobs/:id/category", express.json(), (req, res) => {
+app.post("/api/jobs/:id/category", (req, res) => {
   const jobId = req.params.id;
   const newCategory = req.body.category;
   if (uploadJobs[jobId] && uploadJobs[jobId].result) {
@@ -1329,7 +1329,7 @@ app.post("/api/jobs/:id/category", express.json(), (req, res) => {
   }
 });
 
-app.post("/api/jobs/:id/target-company", requireAdmin, express.json(), (req, res) => {
+app.post("/api/jobs/:id/target-company", requireAdmin, (req, res) => {
   const jobId = req.params.id;
   const targetCompany = req.body.targetCompany;
   if (uploadJobs[jobId]) {
@@ -1342,7 +1342,7 @@ app.post("/api/jobs/:id/target-company", requireAdmin, express.json(), (req, res
 });
 
 // Accounting Endpoints (Lexoffice & BuchhaltungsButler) - Admin only
-app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, express.json(), async (req, res) => {
+app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async (req, res) => {
   const { jobId, companyKey } = req.body;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
@@ -1458,7 +1458,7 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, expres
   });
 });
 
-app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, express.json(), async (req, res) => {
+app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, async (req, res) => {
   const { jobId, companyKey, force } = req.body;
   const validCompanies = ["wirewire", "thewire", "polyxo"];
   if (!validCompanies.includes(companyKey)) {
@@ -1655,7 +1655,7 @@ async function getJobPdfBuffer(job) {
 }
 
 // ClickUp Endpoints (Admin only)
-app.post("/api/clickup/verify", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/clickup/verify", requireAdmin, async (req, res) => {
   try {
     const apiKey = (req.body.apiKey !== undefined ? req.body.apiKey : appSettings.CLICKUP_API_KEY) || process.env.CLICKUP_API_KEY;
     const listId = (req.body.listId !== undefined ? req.body.listId : appSettings.CLICKUP_LIST_ID) || process.env.CLICKUP_LIST_ID || "";
@@ -1667,7 +1667,7 @@ app.post("/api/clickup/verify", requireAdmin, express.json(), async (req, res) =
   }
 });
 
-app.post("/api/clickup/transfer", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/clickup/transfer", requireAdmin, async (req, res) => {
   const { jobId, force } = req.body;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
@@ -1791,7 +1791,7 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/clickup/sync-all", requireAdmin, express.json(), async (req, res) => {
+app.post("/api/clickup/sync-all", requireAdmin, async (req, res) => {
   try {
     if (!appSettings.CLICKUP_API_KEY) {
       return res.status(400).json({ success: false, error: "Kein ClickUp API-Key hinterlegt." });
