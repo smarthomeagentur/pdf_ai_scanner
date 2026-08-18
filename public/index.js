@@ -2531,24 +2531,48 @@ let driveSelectedIds = new Set();
 let driveBackgroundPoller = null;
 
 function closeDriveSyncModal() {
+  console.log("[DRIVE SYNC] closeDriveSyncModal called");
   if (driveSyncModal) driveSyncModal.style.display = "none";
 }
 
-if (openDriveSyncBtn) openDriveSyncBtn.addEventListener("click", () => openDriveSyncModal());
+if (openDriveSyncBtn) {
+  openDriveSyncBtn.addEventListener("click", () => {
+    console.log("[DRIVE SYNC] Button 'openDriveSyncBtn' clicked!");
+    openDriveSyncModal();
+  });
+} else {
+  console.warn("[DRIVE SYNC] openDriveSyncBtn element NOT found in DOM!");
+}
+
 if (driveSyncCloseXBtn) driveSyncCloseXBtn.addEventListener("click", closeDriveSyncModal);
 if (driveSyncCloseBtn) driveSyncCloseBtn.addEventListener("click", closeDriveSyncModal);
 
 async function openDriveSyncModal() {
-  if (!driveSyncModal) return;
-  driveSyncModal.style.display = "flex";
+  console.log("[DRIVE SYNC] openDriveSyncModal() invoked. Modal element:", driveSyncModal);
+  if (!driveSyncModal) {
+    alert("Fehler: drive-sync-modal wurde im DOM nicht gefunden.");
+    return;
+  }
+
+  // Schließe Einstellungen-Modal, falls geöffnet
+  const settingsModalEl = document.getElementById("settings-modal");
+  if (settingsModalEl) settingsModalEl.style.display = "none";
+
+  driveSyncModal.style.setProperty("display", "flex", "important");
+  driveSyncModal.style.setProperty("z-index", "2500", "important");
+
   if (driveSyncLoading) driveSyncLoading.style.display = "block";
   if (driveSyncList) driveSyncList.style.display = "none";
   if (driveSyncProgressBox) driveSyncProgressBox.style.display = "none";
   if (driveSyncSubmitBtn) driveSyncSubmitBtn.disabled = true;
 
   try {
+    console.log("[DRIVE SYNC] Fetching /api/drive/sync-preview ...");
     const res = await fetch("/api/drive/sync-preview");
+    console.log("[DRIVE SYNC] Preview fetch status:", res.status);
     const data = await res.json();
+    console.log("[DRIVE SYNC] Preview data received:", data);
+
     if (!data.success) {
       alert("Fehler bei Drive-Vorschau: " + (data.error || "Unbekannter Fehler"));
       closeDriveSyncModal();
@@ -2564,8 +2588,10 @@ async function openDriveSyncModal() {
       ...(data.needsEnrichment || []).map(i => i.id)
     ]);
 
+    console.log(`[DRIVE SYNC] Rendering modal with ${driveSelectedIds.size} pre-selected items.`);
     renderDriveSyncModal();
   } catch (err) {
+    console.error("[DRIVE SYNC] Error in openDriveSyncModal:", err);
     alert("Fehler beim Laden der Google Drive Daten: " + err.message);
     closeDriveSyncModal();
   }
