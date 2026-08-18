@@ -726,6 +726,17 @@ function renderJobs() {
         privateBadgeHtml = '<span style="background: #f44336; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;">🔒 PRIVAT</span>';
     }
 
+    const lexTransfers = job.lexofficeTransfers || {};
+    const transferredCompanies = Object.keys(lexTransfers);
+    const isLexTransferred = transferredCompanies.length > 0;
+    const defaultTargetComp = job.targetCompany || detectDefaultTargetCompany(job.result?.company) || "wirewire";
+    const lexTransferredCompany = isLexTransferred ? (lexTransfers[defaultTargetComp] ? defaultTargetComp : transferredCompanies[0]) : defaultTargetComp;
+
+    let lexofficeBadgeHtml = '';
+    if (window.isAdmin && isLexTransferred) {
+        lexofficeBadgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Zu Lexoffice übertragen">✓ Lexoffice (${lexTransferredCompany})</span>`;
+    }
+
     let duplicateBadgeHtml = '';
     if (job.suspectedDuplicate) {
         duplicateBadgeHtml = '<span style="background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Verdacht auf Duplikat">⚠️ DUPLIKAT VERDACHT</span>';
@@ -791,6 +802,25 @@ function renderJobs() {
         </div>
       `;
 
+      let lexofficeDetailsHtml = "";
+      if (window.isAdmin) {
+        lexofficeDetailsHtml = `
+          <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div>
+              <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Lexoffice:</strong> 
+              ${isLexTransferred
+                ? `<span style="color: #2e7d32; font-weight: 500;">✓ In Lexoffice (${lexTransferredCompany})</span>`
+                : `<span style="color: #888;">Nicht übertragen</span>`
+              }
+            </div>
+            <button class="btn btn-sm ${isLexTransferred ? 'btn-outline-success' : 'btn-outline-primary'} btn-manual-lexoffice-sync" data-job-id="${job.id}" style="border-radius: 12px; font-size: 12px; padding: 2px 10px; display: inline-flex; align-items: center; gap: 4px;">
+              <span class="material-symbols-outlined" style="font-size: 14px;">${isLexTransferred ? 'check_circle' : 'sync'}</span>
+              <span>${isLexTransferred ? `Lexoffice (${lexTransferredCompany})` : 'Lexoffice Sync'}</span>
+            </button>
+          </div>
+        `;
+      }
+
       resultHtml = `
                     <details class="job-result" data-job-id="${
                       job.id
@@ -800,13 +830,13 @@ function renderJobs() {
                         </summary>
                         <div style="margin-top: 12px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dateiname:</strong> ${
-                              job.result.full
+                                job.result.full
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dokumentendatum:</strong> ${
-                              job.result.documentDate || "-"
+                                job.result.documentDate || "-"
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> ${
-                              job.result.company || "-"
+                                job.result.company || "-"
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Kategorie:</strong> 
                             <div style="position: relative; display: inline-block;">
@@ -818,6 +848,7 @@ function renderJobs() {
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
 ${invoiceHtml}                            <strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
 ${clickupDetailsHtml}
+${lexofficeDetailsHtml}
                         </div>
                     </details>
                 `;
@@ -845,6 +876,7 @@ ${clickupDetailsHtml}
                             <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center;">
                                 ${job.originalName}
                                 ${privateBadgeHtml}
+                                ${lexofficeBadgeHtml}
                                 ${duplicateBadgeHtml}
                             </span>
                             <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
@@ -1394,7 +1426,7 @@ function renderRechnungenList() {
 
 function createRechnungCard(job) {
   const res = job.result || {};
-  const defaultTarget = job.targetCompany || detectDefaultTargetCompany(res.company);
+  const defaultTarget = job.targetCompany || detectDefaultTargetCompany(res.company) || "wirewire";
 
   const card = document.createElement("div");
   card.className = "card shadow-sm border-0 mb-2";
@@ -1417,9 +1449,39 @@ function createRechnungCard(job) {
 
   // Lexoffice transfers status
   const lexTransfers = job.lexofficeTransfers || {};
+  const transferredCompanies = Object.keys(lexTransfers);
+  const isLexTransferred = transferredCompanies.length > 0;
+  const targetTransferred = lexTransfers[defaultTarget];
+  const activeTransfer = targetTransferred || (isLexTransferred ? lexTransfers[transferredCompanies[0]] : null);
+  const activeCompany = activeTransfer ? activeTransfer.company : defaultTarget;
+
   const isInvoiceBadge = res.isInvoice
     ? `<span class="badge bg-success-subtle text-success border border-success-subtle me-1">Rechnung</span>`
     : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle me-1">Dokument</span>`;
+
+  let lexStatusBadgeHtml = "";
+  if (activeTransfer) {
+    const dateStr = new Date(activeTransfer.transferredAt).toLocaleString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    lexStatusBadgeHtml = `
+      <span class="badge bg-success text-white d-inline-flex align-items-center gap-1 p-1 px-2" style="font-weight: 500;">
+        <span class="material-symbols-outlined" style="font-size: 14px;">check_circle</span>
+        Übertragen an ${activeCompany} am ${dateStr}
+      </span>
+    `;
+  } else {
+    lexStatusBadgeHtml = `
+      <span class="badge bg-light text-secondary border d-inline-flex align-items-center gap-1 p-1 px-2">
+        <span class="material-symbols-outlined" style="font-size: 14px;">info</span>
+        Nicht an Lexoffice übertragen
+      </span>
+    `;
+  }
 
   card.innerHTML = `
     <div class="card-body p-3">
@@ -1439,7 +1501,7 @@ function createRechnungCard(job) {
             ${res.invoiceNumber && res.invoiceNumber !== "none" ? `<span>Rechnungs-Nr: <strong>${res.invoiceNumber}</strong></span>` : ""}
             ${amountFormatted ? `<span class="text-success font-monospace">Betrag: <strong>${amountFormatted}</strong></span>` : ""}
           </div>
-          <div class="lexoffice-status-area mt-2 small"></div>
+          <div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>
         </div>
       </div>
 
@@ -1451,183 +1513,310 @@ function createRechnungCard(job) {
             : `<span class="badge bg-light text-secondary border">Nicht übertragen</span>`
           }
         </div>
-        <button class="btn btn-sm btn-outline-secondary rechnung-clickup-btn d-flex align-items-center gap-1" style="border-radius: 20px; padding: 4px 12px; font-size: 12px; border-color: #7b68ee; color: #7b68ee;">
+        <button class="btn btn-sm btn-outline-secondary rechnung-clickup-btn d-flex align-items-center gap-1" data-job-id="${job.id}" style="border-radius: 20px; padding: 4px 12px; font-size: 12px; border-color: #7b68ee; color: #7b68ee;">
           <span class="material-symbols-outlined" style="font-size: 15px;">cloud_upload</span>
           <span>${job.clickup && job.clickup.taskId ? "ClickUp aktualisieren" : "Zu ClickUp"}</span>
         </button>
       </div>
 
-      <div class="border-top mt-2 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="text-muted small" style="font-size: 12px; font-weight: 500;">Lexoffice Ziel-Firma:</div>
-        <div class="d-flex align-items-center gap-2 ms-auto">
-          <select class="form-select form-select-sm lexoffice-target-select" style="width: 140px; font-size: 13px;">
-            <option value="" ${!defaultTarget ? "selected" : ""} disabled>Firma wählen...</option>
-            <option value="wirewire" ${defaultTarget === "wirewire" ? "selected" : ""}>wirewire</option>
-            <option value="thewire" ${defaultTarget === "thewire" ? "selected" : ""}>thewire</option>
-            <option value="polyxo" ${defaultTarget === "polyxo" ? "selected" : ""}>polyxo</option>
-          </select>
-          <button class="btn btn-sm btn-primary d-flex align-items-center gap-1 lexoffice-transfer-btn" style="border-radius: 20px; padding: 5px 14px; font-weight: 500; font-size: 13px; white-space: nowrap;">
-            <span class="material-symbols-outlined" style="font-size: 16px;">cloud_upload</span>
-            <span>Zu Lexoffice</span>
+      ${window.isAdmin ? `
+        <div class="border-top mt-2 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2">
+            <span class="text-muted small" style="font-size: 12px; font-weight: 500;">Lexoffice:</span>
+            ${activeTransfer
+              ? `<span class="badge bg-success-subtle text-success border border-success-subtle">${activeCompany} (ID: ${activeTransfer.lexofficeFileId || '-'})</span>`
+              : `<span class="badge bg-light text-secondary border">Offen</span>`
+            }
+          </div>
+          <button class="btn btn-sm ${activeTransfer ? 'btn-outline-success' : 'btn-primary'} rechnung-lexoffice-btn d-flex align-items-center gap-1" data-job-id="${job.id}" style="border-radius: 20px; padding: 4px 14px; font-weight: 500; font-size: 12px; white-space: nowrap;">
+            <span class="material-symbols-outlined" style="font-size: 16px;">${activeTransfer ? 'check_circle' : 'sync'}</span>
+            <span>${activeTransfer ? `Lexoffice (${activeCompany})` : 'Lexoffice Sync'}</span>
           </button>
         </div>
-      </div>
+      ` : ''}
     </div>
   `;
 
-  const targetSelect = card.querySelector(".lexoffice-target-select");
-  const transferBtn = card.querySelector(".lexoffice-transfer-btn");
-  const statusArea = card.querySelector(".lexoffice-status-area");
+  return card;
+}
 
-  function updateCardStatusDisplay() {
-    const selComp = targetSelect.value;
-    if (!selComp) {
-      statusArea.innerHTML = `
-        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle d-inline-flex align-items-center gap-1 p-1 px-2">
-          <span class="material-symbols-outlined" style="font-size: 14px;">warning</span>
-          Firma manuell auswählen
-        </span>
+// ==========================================
+// --- Lexoffice Sync Modal & Handler ---
+// ==========================================
+
+let currentLexJobId = null;
+let currentLexCheckData = null;
+
+const lexSyncModal = document.getElementById("lexoffice-sync-modal");
+const lexModalCloseBtn = document.getElementById("lex-modal-close-btn");
+const lexModalCancelBtn = document.getElementById("lex-modal-cancel-btn");
+const lexModalSubmitBtn = document.getElementById("lex-modal-submit-btn");
+const lexModalSubmitText = document.getElementById("lex-modal-submit-text");
+const lexModalCompanySelect = document.getElementById("lex-modal-company-select");
+const lexModalStatusContainer = document.getElementById("lex-modal-status-container");
+
+const lexDocThumbContainer = document.getElementById("lex-doc-thumb-container");
+const lexDocTitle = document.getElementById("lex-doc-title");
+const lexDocDate = document.getElementById("lex-doc-date");
+const lexDocCompany = document.getElementById("lex-doc-company");
+const lexDocInvNumber = document.getElementById("lex-doc-inv-number");
+const lexDocAmount = document.getElementById("lex-doc-amount");
+
+function closeLexofficeModal() {
+  if (lexSyncModal) lexSyncModal.style.display = "none";
+  currentLexJobId = null;
+  currentLexCheckData = null;
+}
+
+if (lexModalCloseBtn) lexModalCloseBtn.addEventListener("click", closeLexofficeModal);
+if (lexModalCancelBtn) lexModalCancelBtn.addEventListener("click", closeLexofficeModal);
+
+async function openLexofficeSyncModal(jobId) {
+  if (!window.isAdmin) {
+    alert("Diese Funktion erfordert Administrator-Rechte.");
+    return;
+  }
+  const job = (activeJobs && activeJobs.find((j) => j.id === jobId)) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+  if (!job) {
+    alert("Dokument nicht gefunden.");
+    return;
+  }
+
+  currentLexJobId = jobId;
+  if (lexSyncModal) lexSyncModal.style.display = "flex";
+
+  // Pre-fill Document preview info
+  const res = job.result || {};
+  const driveId = job.rawDriveId || job.id;
+  const thumbSrc = res.localThumbnail || (driveId ? `/api/thumbnail/${driveId}` : (res.thumbnailLink || ""));
+
+  if (lexDocThumbContainer) {
+    if (thumbSrc) {
+      lexDocThumbContainer.innerHTML = `<img src="${thumbSrc}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<span class=\\'material-symbols-outlined text-muted\\'>description</span>';" />`;
+    } else {
+      lexDocThumbContainer.innerHTML = `<span class="material-symbols-outlined text-muted">description</span>`;
+    }
+  }
+
+  if (lexDocTitle) {
+    lexDocTitle.innerText = res.full || job.originalName || "Dokument.pdf";
+    lexDocTitle.title = res.full || job.originalName || "";
+  }
+  if (lexDocDate) {
+    lexDocDate.innerText = `📅 ${res.documentDate && res.documentDate !== "unknown" ? res.documentDate : (job.uploadDate ? new Date(job.uploadDate).toLocaleDateString("de-DE") : "-")}`;
+  }
+  if (lexDocCompany) {
+    lexDocCompany.innerText = `🏢 ${res.company || "Unbekannt"}`;
+  }
+
+  const invNum = res.invoiceNumber && res.invoiceNumber !== "none" ? res.invoiceNumber : (job.invoiceNumber && job.invoiceNumber !== "none" ? job.invoiceNumber : "-");
+  if (lexDocInvNumber) {
+    lexDocInvNumber.innerText = `Rechnung: ${invNum}`;
+  }
+
+  let amountStr = "-";
+  const invAmt = res.invoiceAmmount !== undefined ? res.invoiceAmmount : job.invoiceAmmount;
+  if (invAmt && invAmt > 0) {
+    amountStr = (invAmt / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  }
+  if (lexDocAmount) {
+    lexDocAmount.innerText = `Betrag: ${amountStr}`;
+  }
+
+  // Default target company
+  const defaultCompany = job.targetCompany || detectDefaultTargetCompany(res.company) || "wirewire";
+  if (lexModalCompanySelect) {
+    lexModalCompanySelect.value = defaultCompany;
+  }
+
+  await checkLexofficeTarget(jobId, lexModalCompanySelect ? lexModalCompanySelect.value : "wirewire");
+}
+
+if (lexModalCompanySelect) {
+  lexModalCompanySelect.addEventListener("change", async () => {
+    if (currentLexJobId) {
+      await checkLexofficeTarget(currentLexJobId, lexModalCompanySelect.value);
+    }
+  });
+}
+
+async function checkLexofficeTarget(jobId, companyKey) {
+  if (!lexModalSubmitBtn || !lexModalStatusContainer) return;
+
+  lexModalSubmitBtn.disabled = true;
+  lexModalStatusContainer.innerHTML = `
+    <div class="d-flex align-items-center gap-2 text-muted">
+      <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+      <span>Validiere Lexoffice API & prüfe Status für <strong>${companyKey}</strong>...</span>
+    </div>
+  `;
+
+  try {
+    const res = await fetch("/api/lexoffice/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, companyKey }),
+    });
+
+    const data = await res.json();
+    currentLexCheckData = data;
+
+    if (!data.success) {
+      lexModalStatusContainer.innerHTML = `
+        <div class="text-danger d-flex align-items-center gap-2">
+          <span class="material-symbols-outlined">error</span>
+          <span>Fehler bei der Prüfung: ${data.error || "Unbekannt"}</span>
+        </div>
       `;
+      lexModalSubmitBtn.disabled = true;
       return;
     }
-    const transferInfo = lexTransfers[selComp];
 
-    if (transferInfo) {
-      const dateStr = new Date(transferInfo.transferredAt).toLocaleString("de-DE", {
+    // Check API validity
+    if (!data.apiValid) {
+      lexModalStatusContainer.innerHTML = `
+        <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-start gap-2">
+          <span class="material-symbols-outlined flex-shrink-0" style="font-size: 20px;">warning</span>
+          <div>
+            <strong>API-Prüfung fehlgeschlagen:</strong><br>
+            ${data.apiError || `Kein gültiger API-Key für ${companyKey} hinterlegt.`}
+            <div class="small mt-1 text-muted">Bitte hinterlege den API-Key in den Einstellungen.</div>
+          </div>
+        </div>
+      `;
+      lexModalSubmitBtn.disabled = true;
+      lexModalSubmitBtn.className = "btn btn-secondary px-4 d-flex align-items-center gap-2";
+      if (lexModalSubmitText) lexModalSubmitText.innerText = "API-Key erforderlich";
+      return;
+    }
+
+    // API is valid! Now check if already transferred
+    if (data.alreadyTransferred && data.transferredInfo) {
+      const dateFormatted = new Date(data.transferredInfo.transferredAt).toLocaleString("de-DE", {
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
       });
-      statusArea.innerHTML = `
-        <span class="badge bg-success text-white d-inline-flex align-items-center gap-1 p-1 px-2" style="font-weight: 500;">
-          <span class="material-symbols-outlined" style="font-size: 14px;">check_circle</span>
-          Übertragen an ${selComp} am ${dateStr}
-        </span>
+      lexModalStatusContainer.innerHTML = `
+        <div class="p-2 rounded bg-success-subtle text-success-emphasis border border-success-subtle d-flex align-items-start gap-2">
+          <span class="material-symbols-outlined text-success flex-shrink-0" style="font-size: 20px;">check_circle</span>
+          <div style="font-size: 13px;">
+            <strong>Bereits bei Lexoffice vorhanden:</strong><br>
+            Übertragen an <strong>${companyKey}</strong> am <strong>${dateFormatted} Uhr</strong>.<br>
+            <span class="small text-muted font-monospace">Datei-ID: ${data.transferredInfo.lexofficeFileId || '-'}</span>
+          </div>
+        </div>
       `;
+      lexModalSubmitBtn.disabled = false;
+      lexModalSubmitBtn.className = "btn btn-outline-primary px-4 d-flex align-items-center gap-2";
+      if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem erneut übertragen";
     } else {
-      statusArea.innerHTML = `
-        <span class="badge bg-light text-secondary border d-inline-flex align-items-center gap-1 p-1 px-2">
-          <span class="material-symbols-outlined" style="font-size: 14px;">info</span>
-          Nicht an ${selComp} übertragen
-        </span>
+      lexModalStatusContainer.innerHTML = `
+        <div class="p-2 rounded bg-info-subtle text-info-emphasis border border-info-subtle d-flex align-items-start gap-2">
+          <span class="material-symbols-outlined text-primary flex-shrink-0" style="font-size: 20px;">cloud_upload</span>
+          <div style="font-size: 13px;">
+            <strong>Bereit zum Upload:</strong><br>
+            API verbunden mit <strong>${data.organizationName || companyKey}</strong>.<br>
+            Dokument liegt noch nicht bei Lexoffice.
+          </div>
+        </div>
       `;
+      lexModalSubmitBtn.disabled = false;
+      lexModalSubmitBtn.className = "btn btn-primary px-4 d-flex align-items-center gap-2";
+      if (lexModalSubmitText) lexModalSubmitText.innerText = "Upload starten";
     }
+  } catch (err) {
+    lexModalStatusContainer.innerHTML = `
+      <div class="text-danger d-flex align-items-center gap-2">
+        <span class="material-symbols-outlined">wifi_off</span>
+        <span>Verbindungsfehler: ${err.message}</span>
+      </div>
+    `;
+    lexModalSubmitBtn.disabled = true;
   }
-
-  targetSelect.addEventListener("change", async () => {
-    job.targetCompany = targetSelect.value;
-    updateCardStatusDisplay();
-    try {
-      await fetch(`/api/jobs/${job.id}/target-company`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetCompany: targetSelect.value }),
-      });
-    } catch (e) {
-      console.error("Fehler beim Speichern der Ziel-Firma:", e);
-    }
-  });
-
-  updateCardStatusDisplay();
-
-  transferBtn.addEventListener("click", async () => {
-    const selComp = targetSelect.value;
-    if (!selComp) {
-      alert("Bitte wählen Sie zuerst eine Lexoffice Ziel-Firma aus.");
-      return;
-    }
-    transferBtn.disabled = true;
-    transferBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Prüfe...`;
-
-    try {
-      // 1. Check if already transferred
-      const checkRes = await fetch("/api/lexoffice/check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, companyKey: selComp }),
-      });
-      const checkData = await checkRes.json();
-
-      if (checkData.alreadyTransferred) {
-        // Show modal confirmation for re-transfer
-        pendingLexofficeTransferTarget = { jobId: job.id, companyKey: selComp, card, transferBtn };
-        document.getElementById("confirm-lexoffice-text").innerText =
-          `Dieses Dokument wurde am ${new Date(checkData.transferredInfo.transferredAt).toLocaleString("de-DE")} bereits zu Lexoffice (${selComp}) übertragen. Möchtest du es wirklich erneut übertragen?`;
-        document.getElementById("confirm-lexoffice-modal").style.display = "flex";
-        transferBtn.disabled = false;
-        transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
-        return;
-      }
-
-      // 2. Perform transfer
-      await executeLexofficeTransfer(job.id, selComp, false, card, transferBtn);
-    } catch (err) {
-      console.error(err);
-      alert("Fehler bei der Prüfung / Übertragung zu Lexoffice: " + err.message);
-      transferBtn.disabled = false;
-      transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
-    }
-  });
-
-  return card;
 }
 
-async function executeLexofficeTransfer(jobId, companyKey, force, card, transferBtn) {
-  transferBtn.disabled = true;
-  transferBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Übertrag...`;
+if (lexModalSubmitBtn) {
+  lexModalSubmitBtn.addEventListener("click", async () => {
+    if (!currentLexJobId || !lexModalCompanySelect) return;
+    const jobId = currentLexJobId;
+    const companyKey = lexModalCompanySelect.value;
+    const isForce = currentLexCheckData && currentLexCheckData.alreadyTransferred;
 
-  try {
-    const res = await fetch("/api/lexoffice/transfer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId, companyKey, force }),
-    });
+    lexModalSubmitBtn.disabled = true;
+    if (lexModalCancelBtn) lexModalCancelBtn.disabled = true;
+    lexModalSubmitBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Wird übertragen...</span>`;
+    lexModalStatusContainer.innerHTML = `
+      <div class="d-flex align-items-center gap-2 text-primary">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        <span>Lade Beleg zu Lexoffice (<strong>${companyKey}</strong>) hoch...</span>
+      </div>
+    `;
 
-    const data = await res.json();
-    if (data.success) {
-      // Find job in allRechnungenJobs and update lexofficeTransfers
-      const targetJob = allRechnungenJobs.find((j) => j.id === jobId);
-      if (targetJob) {
-        if (!targetJob.lexofficeTransfers) targetJob.lexofficeTransfers = {};
-        targetJob.lexofficeTransfers[companyKey] = {
-          transferredAt: data.transferredAt,
-          lexofficeFileId: data.lexofficeFileId,
-          company: companyKey,
+    try {
+      const res = await fetch("/api/lexoffice/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, companyKey, force: isForce }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        // Update local jobs
+        const updateJobInList = (list) => {
+          if (!list) return;
+          const target = list.find((j) => j.id === jobId);
+          if (target) {
+            if (!target.lexofficeTransfers) target.lexofficeTransfers = {};
+            target.lexofficeTransfers[companyKey] = {
+              transferredAt: data.transferredAt,
+              lexofficeFileId: data.lexofficeFileId,
+              company: companyKey,
+            };
+            target.targetCompany = companyKey;
+          }
         };
+
+        updateJobInList(activeJobs);
+        updateJobInList(allRechnungenJobs);
+
+        lexModalStatusContainer.innerHTML = `
+          <div class="p-2 rounded bg-success text-white d-flex align-items-center gap-2">
+            <span class="material-symbols-outlined" style="font-size: 22px;">task_alt</span>
+            <div><strong>Erfolgreich übertragen!</strong> Lexoffice Datei-ID: ${data.lexofficeFileId}</div>
+          </div>
+        `;
+        lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined">check</span> <span>Erledigt</span>`;
+
+        renderJobs();
+        if (typeof renderRechnungenList === "function") renderRechnungenList();
+
+        setTimeout(() => {
+          closeLexofficeModal();
+        }, 1200);
+      } else {
+        lexModalStatusContainer.innerHTML = `
+          <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-center gap-2">
+            <span class="material-symbols-outlined">error</span>
+            <div><strong>Übertragung fehlgeschlagen:</strong> ${data.error || "Unbekannter Fehler"}</div>
+          </div>
+        `;
+        lexModalSubmitBtn.disabled = false;
+        if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
+        lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Erneut versuchen</span>`;
       }
-      renderRechnungenList();
-    } else {
-      alert("Übertragung fehlgeschlagen: " + (data.error || "Unbekannter Fehler"));
-      transferBtn.disabled = false;
-      transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
-    }
-  } catch (e) {
-    alert("Fehler bei der Übertragung: " + e.message);
-    transferBtn.disabled = false;
-    transferBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Zu Lexoffice</span>`;
-  }
-}
-
-// Modal handlers for Lexoffice re-transfer
-const cancelLexBtn = document.getElementById("cancel-lexoffice-btn");
-const confirmLexBtn = document.getElementById("confirm-lexoffice-btn");
-
-if (cancelLexBtn) {
-  cancelLexBtn.addEventListener("click", () => {
-    document.getElementById("confirm-lexoffice-modal").style.display = "none";
-    pendingLexofficeTransferTarget = null;
-  });
-}
-
-if (confirmLexBtn) {
-  confirmLexBtn.addEventListener("click", async () => {
-    document.getElementById("confirm-lexoffice-modal").style.display = "none";
-    if (pendingLexofficeTransferTarget) {
-      const { jobId, companyKey, card, transferBtn } = pendingLexofficeTransferTarget;
-      pendingLexofficeTransferTarget = null;
-      await executeLexofficeTransfer(jobId, companyKey, true, card, transferBtn);
+    } catch (err) {
+      lexModalStatusContainer.innerHTML = `
+        <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-center gap-2">
+          <span class="material-symbols-outlined">wifi_off</span>
+          <div><strong>Netzwerkfehler:</strong> ${err.message}</div>
+        </div>
+      `;
+      lexModalSubmitBtn.disabled = false;
+      if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
+      lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Erneut versuchen</span>`;
     }
   });
 }
@@ -1763,16 +1952,28 @@ if (confirmClickupBtn) {
   });
 }
 
-// Click listener delegation for manual transfer buttons
+// Click listener delegation for manual transfer buttons (ClickUp & Lexoffice)
 document.addEventListener("click", (e) => {
-  const manualBtn = e.target.closest(".btn-manual-clickup-transfer") || e.target.closest(".rechnung-clickup-btn");
-  if (manualBtn) {
+  const clickupBtn = e.target.closest(".btn-manual-clickup-transfer") || e.target.closest(".rechnung-clickup-btn");
+  if (clickupBtn) {
     e.stopPropagation();
     e.preventDefault();
-    const jobId = manualBtn.getAttribute("data-job-id") || manualBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => manualBtn.closest(".job-item") && manualBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
+    const jobId = clickupBtn.getAttribute("data-job-id") || clickupBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => clickupBtn.closest(".job-item") && clickupBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
     if (jobId) {
-      executeClickupTransfer(jobId, false, manualBtn);
+      executeClickupTransfer(jobId, false, clickupBtn);
     }
+    return;
+  }
+
+  const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync") || e.target.closest(".rechnung-lexoffice-btn");
+  if (lexofficeBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = lexofficeBtn.getAttribute("data-job-id") || lexofficeBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => lexofficeBtn.closest(".job-item") && lexofficeBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
+    if (jobId) {
+      openLexofficeSyncModal(jobId);
+    }
+    return;
   }
 });
 

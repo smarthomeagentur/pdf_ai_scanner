@@ -399,3 +399,16 @@ body {
   box-shadow: 0 2px 4px rgba(13, 110, 253, 0.25);
 }
 
+/* Lexoffice Sync Button & Modal Styles */
+.btn-manual-lexoffice-sync,
+.rechnung-lexoffice-btn {
+  transition: all 0.2s ease-in-out;
+}
+
+.btn-manual-lexoffice-sync:hover,
+.rechnung-lexoffice-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+
