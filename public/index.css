@@ -399,16 +399,42 @@ body {
   box-shadow: 0 2px 4px rgba(13, 110, 253, 0.25);
 }
 
-/* Lexoffice Sync Button & Modal Styles */
-.btn-manual-lexoffice-sync,
-.rechnung-lexoffice-btn {
-  transition: all 0.2s ease-in-out;
+/* Startseite Category Bubbles */
+.start-cat-bubble {
+  border-radius: 16px !important;
+  font-size: 12px !important;
+  padding: 3px 10px !important;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+  user-select: none;
 }
 
-.btn-manual-lexoffice-sync:hover,
-.rechnung-lexoffice-btn:hover {
+.start-cat-bubble:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
+
+/* Drive Sync Item Row */
+.drive-sync-item-row {
+  transition: background-color 0.15s ease;
+}
+
+.drive-sync-item-row:hover {
+  background-color: #f1f3f5 !important;
+}
+
+/* Pagination styles */
+#start-pagination-nav .page-link {
+  border-radius: 6px;
+  margin: 0 2px;
+  color: #0d6efd;
+  font-weight: 500;
+}
+
+#start-pagination-nav .page-item.active .page-link {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+  color: #fff;
+}
+
 
 

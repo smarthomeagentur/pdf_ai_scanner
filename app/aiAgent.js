@@ -1,10 +1,13 @@
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const { Ollama } = require("ollama");
 const dotenv = require("dotenv");
 dotenv.config();
-var debug = false;
+
+let debug = false;
 const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
 
 let globalTesseractWorker = null;
@@ -23,104 +26,118 @@ const customFetch = async (url, options) => {
 };
 
 const ollama = new Ollama({ host: LOCAL_AI_HOST, fetch: customFetch });
-//const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
 async function generatePdfName(filename, settings = {}) {
-  var pdfFileName = "";
-  var pdfDate = setFileDate();
-  var pdfData = await extractTextFromPdf(filename);
-  if (!pdfData) pdfData = "";
-  if (debug) console.log("[AI] Nativ extrahierter Text: " + pdfData.length + " Zeichen");
+  try {
+    let pdfFileName = "";
+    const pdfDate = setFileDate(filename);
+    const rawText = await extractTextFromPdf(filename);
+    const cleanText = (rawText || "").replace(/[\s\r\n\t]+/g, " ").trim();
+    let pdfData = cleanText;
+    let pdfImageBuffer = false;
 
-  var pdfImageBuffer = false;
-  if (pdfData.length < 100) {
-    if (debug) console.log("[AI] Wenig Text. Generiere Bild und nutze OCR...");
-    if (filename.toLowerCase().endsWith(".pdf")) {
-      pdfImageBuffer = await getPdfImageBuffer(filename);
+    if (cleanText.length >= 40) {
+      console.log(`[AI] Vorhandene Text-/OCR-Ebene im PDF erkannt (${cleanText.length} Zeichen). Tesseract OCR wird übersprungen.`);
     } else {
-      pdfImageBuffer = await fs.promises.readFile(filename).then((buf) => buf.toString("base64"));
-    }
+      console.log(`[AI] Kein ausreichender nativer Text im Dokument (${cleanText.length} Zeichen). Starte Bild-Konvertierung & Fallback-OCR...`);
+      try {
+        if (isPdf(filename)) {
+          pdfImageBuffer = await getPdfImageBuffer(filename);
+        } else {
+          pdfImageBuffer = await fs.promises.readFile(filename).then((buf) => buf.toString("base64")).catch(() => false);
+        }
 
-    if (pdfImageBuffer) {
-      const ocrText = await performOcr(pdfImageBuffer, filename);
-      if (ocrText) {
-        pdfData += "\n" + ocrText;
+        if (pdfImageBuffer) {
+          const ocrText = await performOcr(pdfImageBuffer, filename);
+          if (ocrText && ocrText.trim().length > 0) {
+            pdfData = (pdfData ? pdfData + "\n" : "") + ocrText.trim();
+          }
+        }
+      } catch (ocrWrapperErr) {
+        console.error("[AI] Fehler bei OCR Vorbereitung:", ocrWrapperErr.message || ocrWrapperErr);
       }
     }
-  }
 
-  pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
-
-  // FALLBACK einbauen, falls die KI 'false' zurückmeldet (JSON kaputt oder Timeout)
-  if (!pdfContentData) {
-    console.error("[AI] KI Fallback aktiv. Generiere Standard-Daten, um Server-Crash zu verhindern.");
-    pdfContentData = {
+    const pdfContentData = (await getFileDataJSONGemma(pdfData, settings)) || {
       category: "Unbekannt",
       company: "Unbekannt",
-      tags: ["Fehler", "Scanner", "Unbekannt"],
+      tags: ["Dokument", "Unbekannt"],
       documentDate: "unknown",
       isInvoice: false,
+      invoiceNumber: "none",
+      invoiceAmmount: 0,
+    };
+
+    const firstThreeWords =
+      pdfContentData.tags && Array.isArray(pdfContentData.tags) && pdfContentData.tags.length > 0
+        ? pdfContentData.tags.slice(0, 3).join(" ")
+        : "Dokument";
+
+    pdfFileName = `${pdfDate} -${pdfContentData.category || "Unbekannt"}- ${firstThreeWords} (${pdfContentData.company || "Unbekannt"})`;
+
+    return {
+      success: true,
+      full: pdfFileName,
+      date: pdfDate,
+      documentDate: pdfContentData.documentDate || "unknown",
+      category: pdfContentData.category || "Unbekannt",
+      tags: pdfContentData.tags || ["Dokument"],
+      company: pdfContentData.company || "Unbekannt",
+      isInvoice: !!pdfContentData.isInvoice,
+      invoiceNumber: pdfContentData.invoiceNumber || "none",
+      invoiceAmmount: pdfContentData.invoiceAmmount || 0,
+    };
+  } catch (fatalErr) {
+    console.error("[AI] Fataler Fehler bei generatePdfName:", fatalErr);
+    const pdfDate = setFileDate(filename);
+    return {
+      success: true,
+      full: `${pdfDate} -Unbekannt- Dokument (Unbekannt)`,
+      date: pdfDate,
+      documentDate: "unknown",
+      category: "Unbekannt",
+      tags: ["Dokument"],
+      company: "Unbekannt",
+      isInvoice: false,
+      invoiceNumber: "none",
+      invoiceAmmount: 0,
     };
   }
-
-  var firstThreeWords =
-    pdfContentData.tags && Array.isArray(pdfContentData.tags)
-      ? pdfContentData.tags.slice(0, 3).join(" ")
-      : "Keine Tags";
-
-  pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
-
-  return {
-    success: true,
-    full: pdfFileName,
-    date: pdfDate,
-    documentDate: pdfContentData.documentDate,
-    category: pdfContentData.category,
-    tags: pdfContentData.tags,
-    company: pdfContentData.company,
-    isInvoice: pdfContentData.isInvoice,
-    invoiceNumber: pdfContentData.invoiceNumber,
-    invoiceAmmount: pdfContentData.invoiceAmmount,
-  };
 }
 
 function setFileDate(fileName) {
-  // Extract the date using a regular expression
-  var dateMatch;
-  if (fileName !== undefined) {
-    dateMatch = fileName.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+  if (fileName) {
+    const dateMatch = fileName.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+    if (dateMatch) {
+      const day = dateMatch[1];
+      const month = dateMatch[2];
+      const year = dateMatch[3].slice(2);
+      return `${year}${month}${day}`;
+    }
   }
 
-  if (dateMatch) {
-    const day = dateMatch[1]; // Extract day (e.g., 20)
-    const month = dateMatch[2]; // Extract month (e.g., 01)
-    const year = dateMatch[3].slice(2); // Extract last 2 digits of year (e.g., 25)
+  const today = new Date();
+  const day = String(today.getDate()).padStart(2, "0");
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const year = String(today.getFullYear()).slice(2);
+  return `${year}${month}${day}`;
+}
 
-    // Combine into desired format
-    const formattedDate = `${year}${month}${day}`;
-    return formattedDate;
-    // Output: "200125"
-  } else {
-    const today = new Date();
-
-    // Extract the day, month, and year
-    const day = String(today.getDate()).padStart(2, "0"); // Ensure 2 digits
-    const month = String(today.getMonth() + 1).padStart(2, "0"); // Months are 0-based
-    const year = String(today.getFullYear()).slice(2); // Get last 2 digits of year
-
-    // Combine into the desired format
-    const formattedDate = `${year}${month}${day}`;
-
-    return formattedDate;
+function isPdf(filePath) {
+  if (typeof filePath !== "string") return false;
+  if (filePath.toLowerCase().endsWith(".pdf")) return true;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    return buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46; // %PDF
+  } catch (e) {
+    return false;
   }
 }
 
-async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {}) {
-  if (pdfText.length < 100 && imageBuffer == false) {
-    console.log("[AI] PDF Text too short for analysis and no image buffer available");
-    return false;
-  }
-
+async function getFileDataJSONGemma(pdfText, settings = {}) {
   const allowedCompanies = settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
   const allowedCategories =
     settings.AI_CATEGORIES ||
@@ -140,66 +157,36 @@ async function getFileDataJSONGemma(pdfText, imageBuffer = false, settings = {})
     '7. "invoiceAmmount": Integer. Wenn es eine Rechnung ist, gibt den Rechnungsbetrag zurück. Entferne das Komma. z.B. 3,45 gibst du als 345 aus. Ansonsten gib 0 zurück\n' +
     'Verwende strikt dieses JSON-Schema:{"company": "String","category": "String","tags": ["String", "String", "String"],"isInvoice": Boolean, "documentDate": "String", "invoiceNumber": "String", "invoiceAmmount": "Integer"}\n';
 
-
-
   var aiSettings = {
-    model: "gemma4:e2b",
+    model: process.env.LOCAL_AI_MODEL || "gemma4:e2b",
     messages: [
       {
         role: "user",
-        content: instructionFileName,
+        content:
+          instructionFileName +
+          "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
+          (pdfText || "") +
+          "\n--- END DOKUMENT ---",
       },
     ],
   };
-  if (imageBuffer != false && pdfText.length < 100) {
-    console.log("[AI] use PDF image Buffer");
-    aiSettings.messages[0].images = [imageBuffer];
-    aiSettings.messages[0].content = aiSettings.messages[0].content + "Hier ist der Inhalt eines Dokuments als Bild";
-  } else {
-    aiSettings.messages[0].content =
-      aiSettings.messages[0].content +
-      "Hier ist der Inhalt eines Dokuments:\n --- START DOKUMENT ---\n" +
-      pdfText +
-      "\n--- END DOKUMENT ---";
-  }
+
   try {
     const response = await ollama.chat(aiSettings);
-    if (debug) console.log("[AI] Response: " + response.message.content);
-    try {
-      var chatString = JSON.parse(response.message.content);
-      chatString.documentDate = checkFileDate(chatString.documentDate);
-      return chatString;
-    } catch (error) {
-      console.log("[ERROR] No JSON response from AI. Response was: " + response.message.content);
-      return false;
-    }
+    let raw = (response?.message?.content || "").trim();
+    if (raw.startsWith("```json")) raw = raw.replace(/^```json/, "").replace(/```$/, "").trim();
+    if (raw.startsWith("```")) raw = raw.replace(/^```/, "").replace(/```$/, "").trim();
+    const chatString = JSON.parse(raw);
+    chatString.documentDate = checkFileDate(chatString.documentDate);
+    return chatString;
   } catch (error) {
-    console.log("Es gab einen Fehler:", error);
-    console.log("Stelle sicher, dass die Ollama-App im Hintergrund läuft!");
+    console.error("[AI] Fehler bei Ollama JSON-Analyse:", error.message || error);
     return false;
   }
 }
 
-async function checkCompanyName(companyNameIn) {
-  console.log(companyNameIn);
-
-  const searchTermsTheWire = ["the wir", "thewir", "he wire", "ewire"];
-  const searchTermsPolyxo = ["poly", "lyxo", "polyxo", "smarthomeagentur", "home agen", "agentur ug"];
-  const searchTermsWireWire = ["irewire", "wire wire", "ire wir", "wirew", "wire"];
-  const searchTermsDaniel = ["dani", "niel", "boebe", "böbe"];
-
-  var companyName = false;
-
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsDaniel, "daniel");
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsTheWire, "the wire");
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsPolyxo, "polyxo");
-  if (companyName == false) companyName = searchNameInText(companyNameIn, searchTermsWireWire, "wirewire");
-  return companyName;
-}
-
-checkFileDate = (text) => {
+function checkFileDate(text) {
   if (text) {
-    // Falls die AI ein Dokumentendatum gefunden hat, dieses im Format DD.MM.YYYY zurückgeben
     const match = text.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
     if (match) {
       const day = match[1];
@@ -208,42 +195,81 @@ checkFileDate = (text) => {
       return `${day}.${month}.${year}`;
     }
   }
-  return false;
-};
+  return "unknown";
+}
+
+function getPythonPath() {
+  const venvWin = path.join(__dirname, "..", "venv", "Scripts", "python.exe");
+  const venvUnix = path.join(__dirname, "..", "venv", "bin", "python");
+  if (fs.existsSync(venvWin)) return venvWin;
+  if (fs.existsSync(venvUnix)) return venvUnix;
+  return "python";
+}
 
 async function getPdfImageBuffer(pdfPath) {
   try {
-    const os = require("os");
-    const path = require("path");
     const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
 
-    const options = {
-      density: 150,
-      saveFilename: `pdfPic_${uniqueId}`,
-      savePath: os.tmpdir(), // In den temporären Ordner legen, um Hauptverzeichnis nicht vollzumüllen
-      format: "png",
-    };
+    // 1. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
+    try {
+      const { execFile } = require("child_process");
+      const util = require("util");
+      const execFileAsync = util.promisify(execFile);
+      const prefix = path.join(os.tmpdir(), `pdfPic_${uniqueId}`);
+      await execFileAsync("pdftoppm", ["-png", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+      const pngFile = `${prefix}.png`;
+      if (fs.existsSync(pngFile)) {
+        const buf = await fs.promises.readFile(pngFile);
+        await fs.promises.unlink(pngFile).catch(() => {});
+        if (buf && buf.length > 100) {
+          return buf.toString("base64");
+        }
+      }
+    } catch (e) {}
 
-    const convert = fromPath(pdfPath, options);
-    const pageToConvertAsImage = 1;
+    // 2. PyMuPDF (fitz) - falls installiert
+    try {
+      const { execFile } = require("child_process");
+      const util = require("util");
+      const execFileAsync = util.promisify(execFile);
+      const outPng = path.join(os.tmpdir(), `pdfPic_${uniqueId}.png`);
+      await execFileAsync(getPythonPath(), [
+        "-c",
+        "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
+        pdfPath,
+        outPng,
+      ]);
+      if (fs.existsSync(outPng)) {
+        const buf = await fs.promises.readFile(outPng);
+        await fs.promises.unlink(outPng).catch(() => {});
+        if (buf && buf.length > 100) {
+          return buf.toString("base64");
+        }
+      }
+    } catch (fitzErr) {}
 
-    // Lass dir direkt Base64 zurückgeben anstatt eines Buffers
-    const result = await convert(pageToConvertAsImage, { responseType: "base64" });
+    // 3. Fallback: pdf2pic
+    try {
+      const options = {
+        density: 150,
+        saveFilename: `pdfPic_${uniqueId}`,
+        savePath: os.tmpdir(),
+        format: "png",
+      };
+      const convert = fromPath(pdfPath, options);
+      const result = await convert(1, { responseType: "base64" });
+      const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
+      if (fs.existsSync(tempFileCheck)) {
+        fs.promises.unlink(tempFileCheck).catch(() => {});
+      }
+      if (result && result.base64) {
+        return result.base64;
+      }
+    } catch (p2pErr) {}
 
-    // Temp-Datei asynchron löschen, falls pd2pic sie trotzdem anlegt
-    const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
-    if (fs.existsSync(tempFileCheck)) {
-      fs.promises.unlink(tempFileCheck).catch(() => { });
-    }
-
-    if (!result || !result.base64) {
-      console.log("[Fehler] pdf2pic hat kein valides Base64-Ergebnis geliefert.");
-      return false;
-    }
-
-    return result.base64;
+    return false;
   } catch (err) {
-    console.error("Fehler bei der pdf2pic Konvertierung:", err);
+    console.error("[AI] Fehler bei der PDF-Bild-Extraktion:", err.message || err);
     return false;
   }
 }
@@ -251,60 +277,77 @@ async function getPdfImageBuffer(pdfPath) {
 async function performOcr(base64Image, originalFilePath) {
   if (!base64Image) return "";
   try {
-    const fs = require("fs");
     const { execFile } = require("child_process");
     const util = require("util");
     const execFileAsync = util.promisify(execFile);
 
     console.log("[AI] Starte OCR Prozess...");
 
-    // VERSUCH 1: OCRmyPDF (Der Industriestandard, um unsichtbaren Text über das Original zu legen)
-    // Behält die originale Formatierung, Rotation und Seitenverhältnisse perfekt bei!
-    let ocrMyPdfSuccess = false;
+    // VERSUCH 1: OCRmyPDF
     if (originalFilePath && originalFilePath.toLowerCase().endsWith(".pdf")) {
       try {
-        console.log("[AI] Versuche ocrmypdf auf Original-Datei anzuwenden...");
-        // ocrmypdf überschreibt die Datei sicher mit der OCR-Ebene. --force-ocr erzwingt OCR auch bei schlecht erkannten Seiten.
         await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath]);
-        console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar, ohne Verzerrung.");
-        ocrMyPdfSuccess = true;
+        console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar.");
+        const reReadText = await extractTextFromPdf(originalFilePath);
+        if (reReadText && reReadText.trim().length > 20) {
+          return reReadText.trim();
+        }
       } catch (err) {
-        console.log("[AI] ocrmypdf nicht gefunden oder fehlgeschlagen. Nutze reinen Text-Fallback.");
-        // Wir ignorieren den Fehler, da wir als Fallback tesseract.js nutzen.
+        // Fallback
       }
     }
 
     // VERSUCH 2: Fallback (Tesseract.js)
-    // Wir extrahieren immer den Text für die KI-Erkennung (Ollama).
-    const Tesseract = require("tesseract.js");
-    const bufferToOcr = Buffer.from(base64Image, "base64");
+    try {
+      if (typeof base64Image === "string" && (base64Image.startsWith("JVBERi0") || base64Image.startsWith("%PDF"))) {
+        console.log("[AI] Base64 ist ein PDF-Header, überspringe Tesseract.js (nur Bild-Raster unterstützt).");
+        return "";
+      }
 
-    if (!globalTesseractWorker) {
-      globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => { } });
+      const Tesseract = require("tesseract.js");
+      const bufferToOcr = Buffer.from(base64Image, "base64");
+      if (!bufferToOcr || bufferToOcr.length < 50) {
+        return "";
+      }
+
+      // Validierung PNG oder JPEG
+      const isPng = bufferToOcr[0] === 0x89 && bufferToOcr[1] === 0x50;
+      const isJpg = bufferToOcr[0] === 0xff && bufferToOcr[1] === 0xd8;
+      if (!isPng && !isJpg) {
+        console.log("[AI] Buffer ist kein valides PNG/JPEG. Überspringe Tesseract.");
+        return "";
+      }
+
+      if (!globalTesseractWorker) {
+        globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => { } });
+      }
+
+      const res = await globalTesseractWorker.recognize(bufferToOcr);
+      const text = res?.data?.text || "";
+      console.log("[AI] Text für Metadaten extrahiert. Länge: " + (text ? text.length : 0));
+      return text && text.trim().length > 20 ? text : "";
+    } catch (tessErr) {
+      console.error("[AI] Tesseract.js OCR Fehler (wird übersprungen):", tessErr.message || tessErr);
+      if (globalTesseractWorker) {
+        try { await globalTesseractWorker.terminate(); } catch (e) { }
+        globalTesseractWorker = null;
+      }
+      return "";
     }
-
-    const {
-      data: { text },
-    } = await globalTesseractWorker.recognize(bufferToOcr);
-
-    console.log("[AI] Text für Metadaten extrahiert. Länge: " + (text ? text.length : 0));
-    return text && text.trim().length > 20 ? text : "";
   } catch (ocrErr) {
-    console.error("[AI] OCR fehlgeschlagen:", ocrErr);
+    console.error("[AI] OCR fehlgeschlagen:", ocrErr.message || ocrErr);
     return "";
   }
 }
 
 async function extractTextFromPdf(pdfPath) {
   try {
-    if (!pdfPath.toLowerCase().endsWith(".pdf")) return "";
+    if (!isPdf(pdfPath)) return "";
     const dataBuffer = fs.readFileSync(pdfPath);
     const data = await pdf(dataBuffer);
-
     return data.text || "";
-    //console.log(data); // Full data object including metadata
   } catch (err) {
-    console.error("Error parsing PDF:", err);
+    console.error("[AI] Error parsing PDF:", err.message || err);
     return "";
   }
 }
@@ -329,20 +372,25 @@ module.exports = {
   generateThumbnail: async function (pdfPath) {
     try {
       if (!pdfPath.toLowerCase().endsWith(".pdf")) return null;
+      const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
       const options = {
         density: 150,
-        saveFilename: "thumb",
-        savePath: ".",
+        saveFilename: `thumb_${uniqueId}`,
+        savePath: os.tmpdir(),
         format: "jpeg",
       };
       const convert = fromPath(pdfPath, options);
       const result = await convert(1, { responseType: "base64" });
+      const tempThumb = path.join(os.tmpdir(), `thumb_${uniqueId}.1.jpeg`);
+      if (fs.existsSync(tempThumb)) {
+        fs.promises.unlink(tempThumb).catch(() => { });
+      }
       if (result && result.base64) {
         return `data:image/jpeg;base64,${result.base64}`;
       }
       return null;
     } catch (err) {
-      console.error("[AI] Fehler bei Fallback-Vorschaubild:", err);
+      console.error("[AI] Fehler bei Fallback-Vorschaubild:", err.message || err);
       return null;
     }
   },

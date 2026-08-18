@@ -10,7 +10,7 @@ console.log = (...args) => {
 
 const fs = require("fs");
 const path = require("path");
-const process = require("process");
+const { pipeline } = require("stream/promises");
 const dotenv = require("dotenv");
 const express = require("express");
 const rateLimit = require("express-rate-limit");
@@ -20,6 +20,13 @@ const { PDFDocument } = require("pdf-lib");
 const { exiftool } = require("exiftool-vendored");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[SYSTEM] Unhandled Rejection abgefangen:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[SYSTEM] Uncaught Exception abgefangen:", error);
+});
 
 const aiAgent = require("./app/aiAgent.js");
 const DriveAPI = require("./app/driveApi.js");
@@ -438,173 +445,191 @@ app.get("/api/drive/search", async (req, res) => {
   }
 });
 
-app.get("/api/thumbnail/:fileId", async (req, res) => {
-  const fileId = req.params.fileId;
-  const thumbPath = path.join(thumbsFolder, `${fileId}.jpg`);
+async function renderPdfToJpeg(pdfPath, targetThumbPath) {
+  if (!fs.existsSync(pdfPath)) return false;
 
-  if (fs.existsSync(thumbPath)) {
-    return res.sendFile(thumbPath);
+  // 1. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    const prefix = targetThumbPath.replace(/\.jpe?g$/i, "");
+    await execFileAsync("pdftoppm", ["-jpeg", "-r", "120", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+    if (fs.existsSync(targetThumbPath)) return true;
+    if (fs.existsSync(`${prefix}.jpg`)) {
+      if (`${prefix}.jpg` !== targetThumbPath) await fs.promises.rename(`${prefix}.jpg`, targetThumbPath).catch(() => {});
+      return true;
+    }
+  } catch (e) {}
+
+  // 2. PyMuPDF (fitz) - falls installiert
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    await execFileAsync(getPythonPath(), [
+      "-c",
+      "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+      pdfPath,
+      targetThumbPath,
+    ]);
+    if (fs.existsSync(targetThumbPath)) return true;
+  } catch (fitzErr) {}
+
+  // 3. Fallback: pdf2pic
+  try {
+    const { fromPath } = require("pdf2pic");
+    const dir = path.dirname(targetThumbPath);
+    const baseName = path.basename(targetThumbPath, path.extname(targetThumbPath));
+    const convert = fromPath(pdfPath, {
+      density: 120,
+      saveFilename: baseName,
+      savePath: dir,
+      format: "jpeg",
+    });
+    const res = await convert(1);
+    const possible = [
+      path.join(dir, `${baseName}.1.jpeg`),
+      path.join(dir, `${baseName}.1.jpg`),
+      res?.path,
+    ];
+    for (const p of possible) {
+      if (p && fs.existsSync(p)) {
+        if (p !== targetThumbPath) {
+          await fs.promises.rename(p, targetThumbPath).catch(() => {});
+        }
+        return true;
+      }
+    }
+  } catch (p2pErr) {}
+
+  return false;
+}
+
+async function getOrGenerateThumbnailPath(identifier) {
+  if (!identifier) return null;
+
+  // 1. Direct match on disk (downloads/ or store/thumbs/)
+  const candidatePaths = [
+    path.join(localDownloadFolder, `thumb_${identifier}.jpg`),
+    path.join(localDownloadFolder, `thumb_${identifier}.png`),
+    path.join(thumbsFolder, `${identifier}.jpg`),
+    path.join(thumbsFolder, `thumb_${identifier}.jpg`),
+  ];
+
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) return p;
   }
 
-  try {
-    if (!fs.existsSync(TOKEN_PATH)) {
-      return res.status(404).send("Not authenticated with Drive");
-    }
+  // 2. Check if identifier corresponds to a job in uploadJobs
+  const job = uploadJobs[identifier];
+  const targetThumbPath = path.join(localDownloadFolder, `thumb_${identifier}.jpg`);
 
-    const drive = await driveApi.getClient();
-    let imageBuffer = null;
+  // 2a. If local PDF file exists on disk, render directly
+  if (job && job.filePath && fs.existsSync(job.filePath)) {
+    const rendered = await renderPdfToJpeg(job.filePath, targetThumbPath);
+    if (rendered && fs.existsSync(targetThumbPath)) return targetThumbPath;
+  }
 
-    // 1. Try fetching thumbnailLink via backend
+  // 3. Fallback: Google Drive Download
+  let driveFileId = job?.rawDriveId || (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null);
+  if (!driveFileId && typeof identifier === "string" && !identifier.includes("-") && identifier.length >= 10) {
+    driveFileId = identifier;
+  }
+
+  if (driveFileId && fs.existsSync(TOKEN_PATH)) {
     try {
-      const fileInfo = await drive.files.get({ fileId: fileId, fields: "thumbnailLink" });
-      if (fileInfo.data && fileInfo.data.thumbnailLink) {
-        const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s220");
-        const imgRes = await fetch(link);
-        if (imgRes.ok) {
-          imageBuffer = Buffer.from(await imgRes.arrayBuffer());
-        }
-      }
-    } catch (e) {}
+      const drive = await driveApi.getClient();
 
-    // 2. Fallback: Render page 1 as JPEG using PyMuPDF if needed
-    if (!imageBuffer) {
-      const pdfTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.pdf`);
+      // 3a. Try thumbnailLink from Google Drive (Zero CPU, instant)
+      try {
+        const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
+        if (fileInfo.data && fileInfo.data.thumbnailLink) {
+          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s300");
+          const imgRes = await fetch(link);
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            if (buf && buf.length > 100) {
+              await fs.promises.writeFile(targetThumbPath, buf);
+              return targetThumbPath;
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 3b. Download first page/file and render
+      const pdfTemp = path.join(localDownloadFolder, `temp_thumb_${identifier}.pdf`);
       try {
         const dest = fs.createWriteStream(pdfTemp);
-        const downloadRes = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "stream" });
-        await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+        const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
+        await pipeline(downloadRes.data, dest);
 
-        const jpgTemp = path.join(localDownloadFolder, `thumb_temp_${fileId}.jpg`);
-        await new Promise((resolve, reject) => {
-          execFile(
-            getPythonPath(),
-            [
-              "-c",
-              `import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=100); pix.save(sys.argv[2]); doc.close()`,
-              pdfTemp,
-              jpgTemp,
-            ],
-            (error) => (error ? reject(error) : resolve())
-          );
-        });
-
-        if (fs.existsSync(jpgTemp)) {
-          imageBuffer = await fs.promises.readFile(jpgTemp);
-          await fs.promises.unlink(jpgTemp).catch(() => {});
-        }
+        const rendered = await renderPdfToJpeg(pdfTemp, targetThumbPath);
+        if (rendered && fs.existsSync(targetThumbPath)) return targetThumbPath;
       } catch (e) {
+        console.error(`[THUMBNAIL] Fehler beim Rendern des Drive-PDFs für ${identifier}:`, e.message);
       } finally {
         if (fs.existsSync(pdfTemp)) await fs.promises.unlink(pdfTemp).catch(() => {});
       }
+    } catch (driveErr) {
+      console.error(`[THUMBNAIL] Google Drive Fehler für ${identifier}:`, driveErr.message);
     }
-
-    if (imageBuffer) {
-      await fs.promises.writeFile(thumbPath, imageBuffer);
-      res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=864000");
-      return res.send(imageBuffer);
-    }
-
-    res.status(404).send("Thumbnail not found");
-  } catch (err) {
-    console.error("[THUMBNAIL] Error serving thumbnail:", err);
-    res.status(500).send("Error generating thumbnail");
   }
-});
 
-async function syncJobsFromDrive() {
-  if (!fs.existsSync(TOKEN_PATH) || !appSettings.FOLDER_ID_SORTED) return 0;
+  return null;
+}
+
+async function syncClickupStatusForJobs(targetJobs = null) {
+  if (!appSettings.CLICKUP_API_KEY || !appSettings.CLICKUP_LIST_ID) {
+    return { success: false, error: "Keine ClickUp Zugangsdaten konfiguriert." };
+  }
+
   try {
-    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
-      ? appSettings.FOLDER_ID_SORTED
-      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
+    console.log("[CLICKUP] Lade Aufgaben aus ClickUp zur Statusprüfung...");
+    const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+    const jobsToEvaluate = targetJobs || Object.values(uploadJobs);
+    let matchedCount = 0;
 
-    if (!driveFolderId) return 0;
-
-    const drive = await driveApi.getClient();
-    const result = await drive.files.list({
-      q: `'${driveFolderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`,
-      fields: "files(id, name, description, webViewLink, thumbnailLink, createdTime, appProperties)",
-      pageSize: 200,
-    });
-
-    const files = result.data.files || [];
-    let restoredCount = 0;
-
-    for (const file of files) {
-      let existingJob = Object.values(uploadJobs).find(
-        (j) => j.id === file.id || j.rawDriveId === file.id || (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id))
-      );
-
-      if (!existingJob) {
-        const title = file.name || "Dokument.pdf";
-        const desc = file.description || "";
-
-        let company = "Unbekannt";
-        let category = "Unbekannt";
-        let tags = [];
-        let isInvoice = title.toLowerCase().includes("rechnung") || desc.toLowerCase().includes("rechnung");
-
-        const compMatch = desc.match(/Firma:\s*([^|]+)/i) || title.match(/\(([^)]+)\)$/);
-        if (compMatch) company = compMatch[1].trim();
-
-        const catMatch = desc.match(/Kategorie:\s*([^|]+)/i) || title.match(/-(.*?)-/);
-        if (catMatch) category = catMatch[1].trim();
-
-        const tagsMatch = desc.match(/Tags:\s*([^|]+)/i);
-        if (tagsMatch) tags = tagsMatch[1].split(",").map((t) => t.trim());
-
-        const dateMatch = title.match(/^(\d{2})(\d{2})(\d{2})/);
-        let docDate = "unknown";
-        if (dateMatch) {
-          docDate = `${dateMatch[3]}.${dateMatch[2]}.20${dateMatch[1]}`;
-        }
-
-        const jobId = file.id;
-        uploadJobs[jobId] = {
-          id: jobId,
-          originalName: title,
-          status: "completed",
-          rawDriveId: file.id,
-          uploadDate: file.createdTime || new Date().toISOString(),
-          isPrivate: file.appProperties && file.appProperties.isPrivate === "true",
-          result: {
-            success: true,
-            full: title,
-            date: dateMatch ? dateMatch[0] : "",
-            documentDate: docDate,
-            category: category,
-            tags: tags,
-            company: company,
-            isInvoice: isInvoice,
-            invoiceNumber: "none",
-            invoiceAmmount: 0,
-            webViewLink: file.webViewLink,
-            thumbnailLink: file.thumbnailLink,
-          },
+    for (const job of jobsToEvaluate) {
+      const match = clickupApi.findMatchingTask(job, clickupTasks);
+      if (match) {
+        job.clickup = {
+          taskId: match.id,
+          taskUrl: match.url || `https://app.clickup.com/t/${match.id}`,
+          taskName: match.name,
+          status: match.status?.status || "offen",
+          transferredAt: job.clickup?.transferredAt || new Date().toISOString(),
         };
-
-        if (!processedDriveFiles.includes(file.id)) {
-          processedDriveFiles.push(file.id);
-        }
-        restoredCount++;
+        matchedCount++;
       }
     }
 
-    if (restoredCount > 0) {
-      saveJobs();
-      console.log(`[DRIVE SYNC] ${restoredCount} Dokumente erfolgreich aus Google Drive wiederhergestellt.`);
-    }
-    return restoredCount;
+    saveJobs();
+    console.log(`[CLICKUP] Statusprüfung abgeschlossen: ${matchedCount} / ${jobsToEvaluate.length} Belege in ClickUp verknüpft.`);
+    return { success: true, matchedCount, total: jobsToEvaluate.length, totalClickupTasks: clickupTasks.length };
   } catch (err) {
-    console.error("[DRIVE SYNC] Fehler beim Wiederherstellen:", err);
-    return 0;
+    console.error("[CLICKUP] Fehler bei ClickUp Statusprüfung:", err.message || err);
+    return { success: false, error: err.message };
   }
 }
 
-app.post("/api/drive/sync", async (req, res) => {
-  const restoredCount = await syncJobsFromDrive();
-  res.json({ success: true, restoredCount, totalJobs: Object.keys(uploadJobs).length });
+app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
+  try {
+    const id = req.params.id;
+    const thumbPath = await getOrGenerateThumbnailPath(id);
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=864000"); // 10 Tage Browser-Cache
+      return res.sendFile(thumbPath);
+    }
+    return res.status(404).send("Thumbnail not found");
+  } catch (err) {
+    console.error("[THUMBNAIL] Fehler beim Ausliefern des Thumbnails:", err);
+    return res.status(500).send("Error generating thumbnail");
+  }
+});
+
+app.post("/api/clickup/sync-status", requireAdmin, async (req, res) => {
+  const result = await syncClickupStatusForJobs();
+  res.json(result);
 });
 
 // Job Queue
@@ -620,6 +645,26 @@ function loadJobs() {
     if (data.uploadJobs) uploadJobs = data.uploadJobs;
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
+
+    // Entferne alte base64 localThumbnails aus jobs.json & bereinige Crash-Status
+    let changed = false;
+    for (const jobId in uploadJobs) {
+      if (uploadJobs[jobId].result && uploadJobs[jobId].result.localThumbnail) {
+        delete uploadJobs[jobId].result.localThumbnail;
+        changed = true;
+      }
+      if (uploadJobs[jobId].localThumbnail) {
+        delete uploadJobs[jobId].localThumbnail;
+        changed = true;
+      }
+      if (uploadJobs[jobId].status === "processing" || uploadJobs[jobId].status === "pending") {
+        uploadJobs[jobId].status = "error";
+        uploadJobs[jobId].inAiPipeline = false;
+        uploadJobs[jobId].error = uploadJobs[jobId].error || "Verarbeitung durch Server-Neustart unterbrochen.";
+        changed = true;
+      }
+    }
+    if (changed) saveJobs();
   } catch (e) { }
 }
 function saveJobs() {
@@ -644,189 +689,245 @@ function saveJobs() {
 }
 loadJobs();
 
+let driveSyncState = {
+  running: false,
+  total: 0,
+  processed: 0,
+  currentFileName: "",
+  startedAt: null,
+  finishedAt: null,
+  errors: [],
+};
+
+function checkJobNeedsEnrichment(job) {
+  if (!job || !job.result) return true;
+  const res = job.result;
+  const company = (res.company || "").toLowerCase();
+  const isMissingCompany = !company || company === "unbekannt" || company === "unknown" || company === "-";
+  const date = (res.documentDate || "").toLowerCase();
+  const isMissingDate = !date || date === "unknown" || date === "-" || date === "none";
+  const category = (res.category || "").toLowerCase();
+  const isMissingCategory = !category || category === "sonstige" || category === "-" || category === "unknown";
+  return isMissingCompany || isMissingDate || isMissingCategory;
+}
+
 // Process core queue
+async function processSingleJob(jobId) {
+  const job = uploadJobs[jobId];
+  if (!job) return;
+
+  job.status = "processing";
+  job.processingStartedAt = Date.now();
+  saveJobs();
+
+  try {
+    console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
+    let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
+      ? appSettings.FOLDER_ID
+      : await driveApi.findFolderId(appSettings.FOLDER_ID);
+
+    // Sofortiger Roh-Upload in Google Drive (Backup vor KI) falls noch nicht vorhanden
+    let defaultDriveFile = null;
+    if (!job.rawDriveId) {
+      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: 'true' } } : undefined;
+      defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions, debug);
+      if (defaultDriveFile) {
+        processedDriveFiles.push(defaultDriveFile.id);
+        job.rawDriveId = defaultDriveFile.id;
+      }
+    }
+
+    const aiStartTime = Date.now();
+    const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
+    sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
+
+    if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+
+    const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
+    if (sortedName.isInvoice) tagsArr.push("Rechnung");
+    if (sortedName.documentDate && sortedName.documentDate !== "unknown")
+      tagsArr.push(`Datum:${sortedName.documentDate}`);
+    if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
+    if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none") tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
+    if (sortedName.invoiceAmmount !== undefined) tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
+
+    try {
+      await exiftool.write(job.filePath, {
+        Title: sortedName.full || "Dokument",
+        Author: sortedName.company || "Unbekannt",
+        Subject: sortedName.category || "",
+        Creator: "AI Document Scanner",
+        Keywords: tagsArr,
+      });
+
+      if (fs.existsSync(job.filePath + "_original")) {
+        await fs.promises.unlink(job.filePath + "_original");
+      }
+      if (debug) console.log(`[WEB] ExifTool Metadaten geschrieben für ${jobId}`);
+    } catch (metaErr) {
+      console.error(`[WEB] Fehler beim Schreiben der Metadaten mit ExifTool für ${jobId}:`, metaErr);
+    }
+
+    const searchDescription = [
+      sortedName.company ? `Firma: ${sortedName.company}` : "",
+      sortedName.category ? `Kategorie: ${sortedName.category}` : "",
+      tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
+    let driveFile = appSettings.FOLDER_ID_SORTED
+      ? await driveApi.uploadFile(
+        job.filePath,
+        appSettings.FOLDER_ID_SORTED,
+        {
+          name: sortedName.full,
+          description: searchDescription,
+          appProperties: job.isPrivate ? { isPrivate: 'true' } : undefined,
+        },
+        debug,
+      )
+      : null;
+
+    driveFile = driveFile || defaultDriveFile;
+
+    if (driveFile) {
+      sortedName.webViewLink = driveFile.webViewLink;
+      sortedName.thumbnailLink = driveFile.thumbnailLink;
+      sortedName.webContentLink = driveFile.webContentLink;
+    }
+
+    // Dynamisches Thumbnail direkt in downloads/thumb_${jobId}.jpg anlegen
+    const targetThumb = path.join(localDownloadFolder, `thumb_${jobId}.jpg`);
+    if (fs.existsSync(job.filePath) && !fs.existsSync(targetThumb)) {
+      try {
+        await new Promise((resolve) => {
+          execFile(
+            getPythonPath(),
+            [
+              "-c",
+              "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+              job.filePath,
+              targetThumb,
+            ],
+            () => resolve()
+          );
+        });
+      } catch (thumbErr) {}
+    }
+
+    // Read PDF buffer for ClickUp attachment before unlinking
+    let pdfBuffer = null;
+    if (fs.existsSync(job.filePath)) {
+      try {
+        pdfBuffer = await fs.promises.readFile(job.filePath);
+      } catch (e) {}
+    }
+
+    // ClickUp Integration
+    const isDriveSyncJob = job.source === "drive_sync" || job.source === "google_drive" || !!job.rawDriveId;
+
+    if (isDriveSyncJob) {
+      // DRIVE SYNC: Nur lesend prüfen, ob Task in ClickUp bereits existiert (KEIN automatischer Upload!)
+      if (appSettings.CLICKUP_API_KEY && appSettings.CLICKUP_LIST_ID) {
+        try {
+          const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+          const match = clickupApi.findMatchingTask(job, clickupTasks);
+          if (match) {
+            job.clickup = {
+              taskId: match.id,
+              taskUrl: match.url || `https://app.clickup.com/t/${match.id}`,
+              taskName: match.name,
+              status: match.status?.status || "offen",
+              transferredAt: job.clickup?.transferredAt || new Date().toISOString(),
+            };
+            console.log(`[CLICKUP] Drive-Sync Beleg ${jobId} bereits in ClickUp gefunden: Task #${match.id}`);
+          }
+        } catch (cuErr) {
+          console.error(`[CLICKUP] Fehler beim Prüfen von Task für Job ${jobId}:`, cuErr.message);
+        }
+      }
+    } else if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
+      // LIVE SCAN / UPLOAD: Neuer Scan darf automatisch zu ClickUp übertragen werden
+      const isPrivateDoc =
+        job.isPrivate ||
+        (sortedName.company && sortedName.company.toLowerCase().includes("daniel")) ||
+        (sortedName.category && sortedName.category.toLowerCase() === "privat");
+
+      if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivateDoc) {
+        console.log(`[CLICKUP] Job ${jobId} als privat eingestuft. ClickUp-Upload wird übersprungen.`);
+      } else {
+        try {
+          const fileName = sortedName.full
+            ? (sortedName.full.endsWith(".pdf") ? sortedName.full : `${sortedName.full}.pdf`)
+            : (job.originalName || "Dokument.pdf");
+
+          const clickupResult = await clickupApi.createOrUpdateDocumentTask({
+            fileBuffer: pdfBuffer,
+            fileName: fileName,
+            aiResult: sortedName,
+            driveFile: driveFile,
+            listId: appSettings.CLICKUP_LIST_ID,
+            uploadAttachment: !!pdfBuffer,
+          });
+
+          if (clickupResult && clickupResult.success) {
+            job.clickup = {
+              taskId: clickupResult.taskId,
+              taskUrl: clickupResult.taskUrl,
+              taskName: clickupResult.taskName,
+              status: clickupResult.status,
+              transferredAt: new Date().toISOString(),
+            };
+          }
+        } catch (clickupErr) {
+          console.error(`[CLICKUP] Fehler bei ClickUp-Verarbeitung für Job ${jobId}:`, clickupErr.message);
+        }
+      }
+    }
+
+    await fs.promises.unlink(job.filePath).catch(() => { });
+
+    const isDuplicate = Object.values(uploadJobs).some(j => 
+      j.id !== jobId && 
+      j.status === 'completed' &&
+      (j.originalName === job.originalName || (j.result && j.result.full === sortedName.full))
+    );
+    job.suspectedDuplicate = isDuplicate;
+
+    job.status = "completed";
+    job.inAiPipeline = false;
+    job.aiEnriched = true;
+    job.aiPipelineCompletedAt = new Date().toISOString();
+    job.result = sortedName;
+    job.invoiceNumber = sortedName.invoiceNumber;
+    job.invoiceAmmount = sortedName.invoiceAmmount;
+    saveJobs();
+
+    console.log(`[WEB] Job ${jobId} finished.`);
+  } catch (error) {
+    console.error(`[WEB] Error processing job ${jobId}:`, error);
+    job.status = "error";
+    job.inAiPipeline = false;
+    job.error = error.message;
+    saveJobs();
+
+    try {
+      if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
+      const jpgPath = job.filePath.replace(".pdf", ".jpg");
+      if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => { });
+    } catch (e) { }
+  }
+}
+
+// Process core queue sequentially
 async function processQueue() {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
 
   while (uploadQueue.length > 0) {
     const jobId = uploadQueue.shift();
-    const job = uploadJobs[jobId];
-    if (!job) continue;
-
-    job.status = "processing";
-    job.processingStartedAt = Date.now();
-    saveJobs();
-
-    try {
-      console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
-      let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
-        ? appSettings.FOLDER_ID
-        : await driveApi.findFolderId(appSettings.FOLDER_ID);
-
-      // Sofortiger Roh-Upload in Google Drive (Backup vor KI)
-      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: 'true' } } : undefined;
-      let defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions, debug);
-      if (defaultDriveFile) {
-        processedDriveFiles.push(defaultDriveFile.id);
-        job.rawDriveId = defaultDriveFile.id;
-      }
-
-      const aiStartTime = Date.now();
-      const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
-      sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
-
-      if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
-
-      const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
-      if (sortedName.isInvoice) tagsArr.push("Rechnung");
-      if (sortedName.documentDate && sortedName.documentDate !== "unknown")
-        tagsArr.push(`Datum:${sortedName.documentDate}`);
-      if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
-      if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none") tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
-      if (sortedName.invoiceAmmount !== undefined) tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
-
-      try {
-        await exiftool.write(job.filePath, {
-          Title: sortedName.full || "Dokument",
-          Author: sortedName.company || "Unbekannt",
-          Subject: sortedName.category || "",
-          Creator: "AI Document Scanner",
-          Keywords: tagsArr,
-        });
-
-        // Exiftool creates an _original backup file. We ensure to remove it.
-        if (fs.existsSync(job.filePath + "_original")) {
-          await fs.promises.unlink(job.filePath + "_original");
-        }
-        if (debug) console.log(`[WEB] ExifTool Metadaten geschrieben für ${jobId}`);
-      } catch (metaErr) {
-        console.error(`[WEB] Fehler beim Schreiben der Metadaten mit ExifTool für ${jobId}:`, metaErr);
-      }
-
-      const searchDescription = [
-        sortedName.company ? `Firma: ${sortedName.company}` : "",
-        sortedName.category ? `Kategorie: ${sortedName.category}` : "",
-        tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
-      ]
-        .filter(Boolean)
-        .join(" | ");
-
-      let driveFile = appSettings.FOLDER_ID_SORTED
-        ? await driveApi.uploadFile(
-          job.filePath,
-          appSettings.FOLDER_ID_SORTED,
-          {
-            name: sortedName.full,
-            description: searchDescription,
-            appProperties: job.isPrivate ? { isPrivate: 'true' } : undefined,
-          },
-          debug,
-        )
-        : null;
-
-      driveFile = driveFile || defaultDriveFile;
-
-      if (driveFile) {
-        sortedName.webViewLink = driveFile.webViewLink;
-        sortedName.thumbnailLink = driveFile.thumbnailLink;
-        sortedName.webContentLink = driveFile.webContentLink;
-      }
-
-      const jpgPath = job.filePath.replace(".pdf", ".jpg");
-      let localThumbBase64 = null;
-      if (fs.existsSync(jpgPath)) {
-        try {
-          localThumbBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(jpgPath)).toString("base64")}`;
-        } catch (e) { }
-        await fs.promises.unlink(jpgPath).catch(() => { });
-      }
-
-      // Fallback: Falls kein Thumbnail existiert (z.B. reiner Google Drive Upload)
-      if (!localThumbBase64 && typeof aiAgent.generateThumbnail === "function") {
-        try {
-          localThumbBase64 = await aiAgent.generateThumbnail(job.filePath);
-        } catch (e) {
-          console.error("[WEB] Fehler beim Erstellen des Fallback-Thumbnails:", e);
-        }
-      }
-
-      // Read PDF buffer for ClickUp attachment before unlinking
-      let pdfBuffer = null;
-      if (fs.existsSync(job.filePath)) {
-        try {
-          pdfBuffer = await fs.promises.readFile(job.filePath);
-        } catch (e) {}
-      }
-
-      // ClickUp Integration: Auto-create task if enabled
-      if (appSettings.CLICKUP_AUTO_TASK && appSettings.CLICKUP_API_KEY) {
-        const isPrivateDoc =
-          job.isPrivate ||
-          (sortedName.company && sortedName.company.toLowerCase().includes("daniel")) ||
-          (sortedName.category && sortedName.category.toLowerCase() === "privat");
-
-        if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivateDoc) {
-          console.log(`[CLICKUP] Job ${jobId} als privat eingestuft. ClickUp-Upload wird übersprungen.`);
-        } else {
-          try {
-            console.log(`[CLICKUP] Erstelle ClickUp-Task für Job ${jobId} (${sortedName.full})...`);
-            const fileName = sortedName.full
-              ? (sortedName.full.endsWith(".pdf") ? sortedName.full : `${sortedName.full}.pdf`)
-              : (job.originalName || "Dokument.pdf");
-
-            const clickupResult = await clickupApi.createOrUpdateDocumentTask({
-              fileBuffer: pdfBuffer,
-              fileName: fileName,
-              aiResult: sortedName,
-              driveFile: driveFile,
-              listId: appSettings.CLICKUP_LIST_ID,
-              uploadAttachment: !!pdfBuffer,
-            });
-
-            if (clickupResult && clickupResult.success) {
-              job.clickup = {
-                taskId: clickupResult.taskId,
-                taskUrl: clickupResult.taskUrl,
-                taskName: clickupResult.taskName,
-                status: clickupResult.status,
-                transferredAt: new Date().toISOString(),
-              };
-              console.log(`[CLICKUP] Task ${clickupResult.taskId} erfolgreich erstellt für Job ${jobId}`);
-            }
-          } catch (clickupErr) {
-            console.error(`[CLICKUP] Fehler bei automatischer ClickUp-Verarbeitung für Job ${jobId}:`, clickupErr.message);
-          }
-        }
-      }
-
-      await fs.promises.unlink(job.filePath).catch(() => { });
-
-      const isDuplicate = Object.values(uploadJobs).some(j => 
-        j.id !== jobId && 
-        j.status === 'completed' &&
-        (j.originalName === job.originalName || (j.result && j.result.full === sortedName.full))
-      );
-      job.suspectedDuplicate = isDuplicate;
-
-      job.status = "completed";
-      sortedName.localThumbnail = localThumbBase64;
-      job.result = sortedName;
-      job.invoiceNumber = sortedName.invoiceNumber;
-      job.invoiceAmmount = sortedName.invoiceAmmount;
-      saveJobs();
-      console.log(`[WEB] Job ${jobId} finished.`);
-    } catch (error) {
-      console.error(`[WEB] Error processing job ${jobId}:`, error);
-      job.status = "error";
-      job.error = error.message;
-      saveJobs();
-      try {
-        if (fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => { });
-        const jpgPath = job.filePath.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpgPath)) await fs.promises.unlink(jpgPath).catch(() => { });
-      } catch (e) { }
-    }
+    await processSingleJob(jobId);
   }
 
   isProcessingQueue = false;
@@ -858,17 +959,20 @@ async function checkDriveForNewFiles() {
           processedDriveFiles.push(file.id);
           saveJobs();
 
-          const localPath = path.join(localDownloadFolder, `${Date.now()}-${file.name}`);
+          const safeName = file.name.toLowerCase().endsWith(".pdf") ? file.name : `${file.name}.pdf`;
+          const localPath = path.join(localDownloadFolder, `${Date.now()}-${safeName}`);
           try {
             const dest = fs.createWriteStream(localPath);
             const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
-            await new Promise((resolve, reject) => downloadRes.data.on("end", resolve).on("error", reject).pipe(dest));
+            await pipeline(downloadRes.data, dest);
 
             const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
             uploadJobs[jobId] = {
               id: jobId,
               originalName: file.name,
               status: "pending",
+              inAiPipeline: true,
+              aiPipelineStartedAt: new Date().toISOString(),
               result: null,
               error: null,
               filePath: localPath,
@@ -903,6 +1007,9 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
       id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
       originalName: file.originalname,
       status: "pending",
+      source: "upload",
+      inAiPipeline: true,
+      aiPipelineStartedAt: new Date().toISOString(),
       result: null,
       error: null,
       filePath: file.path,
@@ -919,12 +1026,6 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
 });
 
 app.get("/api/status", async (req, res) => {
-  if (Object.keys(uploadJobs).length === 0) {
-    try {
-      await syncJobsFromDrive();
-    } catch (e) {}
-  }
-
   const isAdmin = checkIsAdmin(req);
   let statuses =
     req.query.ids === "all"
@@ -943,6 +1044,243 @@ app.delete("/api/jobs", requireAdmin, (req, res) => {
   uploadQueue = [];
   saveJobs();
   res.json({ success: true });
+});
+
+// Google Drive Sync Endpoints
+app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
+  try {
+    if (!fs.existsSync(TOKEN_PATH)) {
+      return res.status(400).json({ success: false, error: "Google Drive ist nicht authentifiziert." });
+    }
+
+    const drive = await driveApi.getClient();
+    let folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+    if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+      folderId = await driveApi.findFolderId(folderId);
+    }
+
+    if (!folderId) {
+      return res.status(400).json({ success: false, error: "Kein Google Drive Ordner in den Einstellungen hinterlegt." });
+    }
+
+    const driveFiles = [];
+    let nextPageToken = null;
+
+    do {
+      const listRes = await drive.files.list({
+        q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and '${folderId}' in parents`,
+        fields: "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description)",
+        pageSize: 1000,
+        pageToken: nextPageToken,
+      });
+
+      if (listRes.data.files) {
+        driveFiles.push(...listRes.data.files);
+      }
+      nextPageToken = listRes.data.nextPageToken;
+    } while (nextPageToken);
+
+    const toImport = [];
+    const needsEnrichment = [];
+    const existingComplete = [];
+    const skipped = [];
+
+    const existingJobsList = Object.values(uploadJobs);
+
+    for (const file of driveFiles) {
+      if (!file.name.toLowerCase().endsWith(".pdf") && file.mimeType !== "application/pdf") {
+        skipped.push({
+          id: file.id,
+          name: file.name,
+          reason: "Keine PDF-Datei",
+          size: file.size,
+        });
+        continue;
+      }
+
+      // Check if matching job in database
+      const matchingJob = existingJobsList.find((j) => {
+        if (j.rawDriveId === file.id || j.driveFileId === file.id) return true;
+        if (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id)) return true;
+        if (j.originalName === file.name) return true;
+        if (j.result && j.result.full && (j.result.full === file.name || j.result.full + ".pdf" === file.name)) return true;
+        return false;
+      });
+
+      if (matchingJob) {
+        if (checkJobNeedsEnrichment(matchingJob)) {
+          needsEnrichment.push({
+            id: file.id,
+            name: file.name,
+            size: file.size,
+            createdTime: file.createdTime,
+            modifiedTime: file.modifiedTime,
+            webViewLink: file.webViewLink,
+            thumbnailLink: file.thumbnailLink,
+            existingJobId: matchingJob.id,
+            reason: "Metadaten unvollständig (Firma/Datum/Kategorie)",
+            currentCompany: matchingJob.result?.company || "Unbekannt",
+            currentCategory: matchingJob.result?.category || "-",
+            currentDate: matchingJob.result?.documentDate || "-",
+          });
+        } else {
+          existingComplete.push({
+            id: file.id,
+            name: file.name,
+            size: file.size,
+            createdTime: file.createdTime,
+            modifiedTime: file.modifiedTime,
+            webViewLink: file.webViewLink,
+            thumbnailLink: file.thumbnailLink,
+            existingJobId: matchingJob.id,
+            company: matchingJob.result?.company || "-",
+            category: matchingJob.result?.category || "-",
+            documentDate: matchingJob.result?.documentDate || "-",
+          });
+        }
+      } else {
+        // Not in DB -> Needs to be imported
+        toImport.push({
+          id: file.id,
+          name: file.name,
+          size: file.size,
+          createdTime: file.createdTime,
+          modifiedTime: file.modifiedTime,
+          webViewLink: file.webViewLink,
+          thumbnailLink: file.thumbnailLink,
+          reason: "Nicht in lokaler Datenbank",
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      folderId,
+      totalDriveFiles: driveFiles.length,
+      toImport,
+      needsEnrichment,
+      existingComplete,
+      skipped,
+      syncState: driveSyncState,
+    });
+  } catch (err) {
+    console.error("[DRIVE SYNC PREVIEW] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Laden der Drive-Vorschau." });
+  }
+});
+
+app.get("/api/drive/sync-status", (req, res) => {
+  res.json({
+    success: true,
+    syncState: driveSyncState,
+    queueLength: uploadQueue.length,
+    isProcessing: isProcessingQueue,
+  });
+});
+
+app.post("/api/drive/sync-execute", requireAdmin, express.json(), async (req, res) => {
+  if (driveSyncState.running) {
+    return res.status(400).json({ success: false, error: "Synchronisation läuft bereits im Hintergrund." });
+  }
+
+  const { items } = req.body; // Array of { id, name, existingJobId }
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, error: "Keine Belege zur Synchronisation ausgewählt." });
+  }
+
+  try {
+    const drive = await driveApi.getClient();
+
+    driveSyncState = {
+      running: true,
+      total: items.length,
+      processed: 0,
+      currentFileName: items[0]?.name || "",
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      errors: [],
+    };
+
+    res.json({ success: true, message: "Hintergrund-Synchronisation gestartet.", total: items.length });
+
+    // Strictly sequential background processing loop for Drive Sync
+    (async () => {
+      console.log(`[DRIVE SYNC] Starte streng sequenzielle Synchronisation für ${items.length} Belege...`);
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        try {
+          driveSyncState.currentFileName = item.name;
+          console.log(`[DRIVE SYNC] [${i + 1}/${items.length}] Lade herunter: ${item.name}`);
+
+          const safeName = item.name.toLowerCase().endsWith(".pdf") ? item.name : `${item.name}.pdf`;
+          const localPath = path.join(localDownloadFolder, `${Date.now()}-${safeName}`);
+          const dest = fs.createWriteStream(localPath);
+          const downloadRes = await drive.files.get({ fileId: item.id, alt: "media" }, { responseType: "stream" });
+          await pipeline(downloadRes.data, dest);
+
+          let jobId = item.existingJobId;
+          if (!jobId || !uploadJobs[jobId]) {
+            jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+            uploadJobs[jobId] = {
+              id: jobId,
+              originalName: item.name,
+              status: "pending",
+              source: "drive_sync",
+              inAiPipeline: true,
+              aiPipelineStartedAt: new Date().toISOString(),
+              result: null,
+              error: null,
+              filePath: localPath,
+              rawDriveId: item.id,
+              uploadDate: new Date().toISOString(),
+            };
+          } else {
+            uploadJobs[jobId].status = "pending";
+            uploadJobs[jobId].source = "drive_sync";
+            uploadJobs[jobId].inAiPipeline = true;
+            uploadJobs[jobId].aiPipelineStartedAt = new Date().toISOString();
+            uploadJobs[jobId].filePath = localPath;
+            uploadJobs[jobId].error = null;
+            if (!uploadJobs[jobId].rawDriveId) uploadJobs[jobId].rawDriveId = item.id;
+          }
+
+          if (!processedDriveFiles.includes(item.id)) {
+            processedDriveFiles.push(item.id);
+          }
+          saveJobs();
+
+          // Process this single job immediately and wait for its completion before downloading next
+          console.log(`[DRIVE SYNC] [${i + 1}/${items.length}] Verarbeite mit KI: ${item.name}`);
+          await processSingleJob(jobId);
+
+          driveSyncState.processed++;
+        } catch (itemErr) {
+          console.error(`[DRIVE SYNC] Fehler bei ${item.name}:`, itemErr);
+          driveSyncState.errors.push({ id: item.id, name: item.name, error: itemErr.message });
+          driveSyncState.processed++;
+        }
+      }
+
+      console.log(`[DRIVE SYNC] Alle ${items.length} Belege erfolgreich sequenziell verarbeitet.`);
+      driveSyncState.running = false;
+      driveSyncState.finishedAt = new Date().toISOString();
+
+      // Prüfe direkt den ClickUp-Status für alle Belege
+      try {
+        console.log("[DRIVE SYNC] Führe automatische ClickUp-Statusprüfung durch...");
+        await syncClickupStatusForJobs();
+      } catch (cuErr) {
+        console.error("[DRIVE SYNC] Fehler bei ClickUp-Statusprüfung:", cuErr.message);
+      }
+    })().catch((err) => {
+      console.error("[DRIVE SYNC] Unerwarteter Fehler im Hintergrund:", err);
+      driveSyncState.running = false;
+      driveSyncState.finishedAt = new Date().toISOString();
+    });
+  } catch (err) {
+    console.error("[DRIVE SYNC EXECUTE] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Starten der Synchronisation." });
+  }
 });
 
 app.post("/api/jobs/:id/private", requireAdmin, express.json(), async (req, res) => {
