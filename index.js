@@ -8,6 +8,13 @@ console.log = (...args) => {
   if (!args.join(" ").includes("Ran out of space in font private use area")) originalConsoleLog(...args);
 };
 
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[SYSTEM] Unhandled Rejection abgefangen:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[SYSTEM] Uncaught Exception abgefangen:", error);
+});
+
 const fs = require("fs");
 const path = require("path");
 const process = require("process");
@@ -525,6 +532,18 @@ function loadJobs() {
     if (data.uploadJobs) uploadJobs = data.uploadJobs;
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
+
+    // Setze verwaiste Jobs aus vorigen Server-Crashes / Restarts zurück
+    let changed = false;
+    for (const jobId in uploadJobs) {
+      if (uploadJobs[jobId].status === "processing" || uploadJobs[jobId].status === "pending") {
+        uploadJobs[jobId].status = "error";
+        uploadJobs[jobId].inAiPipeline = false;
+        uploadJobs[jobId].error = uploadJobs[jobId].error || "Verarbeitung durch Server-Neustart unterbrochen.";
+        changed = true;
+      }
+    }
+    if (changed) saveJobs();
   } catch (e) { }
 }
 function saveJobs() {

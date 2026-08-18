@@ -26,62 +26,79 @@ const ollama = new Ollama({ host: LOCAL_AI_HOST, fetch: customFetch });
 //const ollama = new Ollama({ host: LOCAL_AI_HOST });
 
 async function generatePdfName(filename, settings = {}) {
-  var pdfFileName = "";
-  var pdfDate = setFileDate();
-  var pdfData = await extractTextFromPdf(filename);
-  if (!pdfData) pdfData = "";
-  if (debug) console.log("[AI] Nativ extrahierter Text: " + pdfData.length + " Zeichen");
+  try {
+    var pdfFileName = "";
+    var pdfDate = setFileDate();
+    var rawText = await extractTextFromPdf(filename);
+    var cleanText = (rawText || "").replace(/[\s\r\n\t]+/g, " ").trim();
+    var pdfData = cleanText;
+    var pdfImageBuffer = false;
 
-  var pdfImageBuffer = false;
-  if (pdfData.length < 100) {
-    if (debug) console.log("[AI] Wenig Text. Generiere Bild und nutze OCR...");
-    if (filename.toLowerCase().endsWith(".pdf")) {
-      pdfImageBuffer = await getPdfImageBuffer(filename);
+    if (cleanText.length >= 40) {
+      console.log(`[AI] Vorhandene Text-/OCR-Ebene im PDF erkannt (${cleanText.length} Zeichen). Tesseract OCR wird übersprungen.`);
     } else {
-      pdfImageBuffer = await fs.promises.readFile(filename).then((buf) => buf.toString("base64"));
-    }
+      console.log(`[AI] Kein ausreichender nativer Text im Dokument (${cleanText.length} Zeichen). Starte Bild-Konvertierung & Fallback-OCR...`);
+      try {
+        if (filename.toLowerCase().endsWith(".pdf")) {
+          pdfImageBuffer = await getPdfImageBuffer(filename);
+        } else {
+          pdfImageBuffer = await fs.promises.readFile(filename).then((buf) => buf.toString("base64")).catch(() => false);
+        }
 
-    if (pdfImageBuffer) {
-      const ocrText = await performOcr(pdfImageBuffer, filename);
-      if (ocrText) {
-        pdfData += "\n" + ocrText;
+        if (pdfImageBuffer) {
+          const ocrText = await performOcr(pdfImageBuffer, filename);
+          if (ocrText) {
+            pdfData = (pdfData ? pdfData + "\n" : "") + ocrText.trim();
+          }
+        }
+      } catch (ocrWrapperErr) {
+        console.error("[AI] Fehler bei OCR Vorbereitung:", ocrWrapperErr.message || ocrWrapperErr);
       }
     }
-  }
 
-  pdfContentData = await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings);
-
-  // FALLBACK einbauen, falls die KI 'false' zurückmeldet (JSON kaputt oder Timeout)
-  if (!pdfContentData) {
-    console.error("[AI] KI Fallback aktiv. Generiere Standard-Daten, um Server-Crash zu verhindern.");
-    pdfContentData = {
+    const pdfContentData = (await getFileDataJSONGemma(pdfData, pdfImageBuffer, settings)) || {
       category: "Unbekannt",
       company: "Unbekannt",
       tags: ["Fehler", "Scanner", "Unbekannt"],
       documentDate: "unknown",
       isInvoice: false,
     };
+
+    var firstThreeWords =
+      pdfContentData.tags && Array.isArray(pdfContentData.tags)
+        ? pdfContentData.tags.slice(0, 3).join(" ")
+        : "Keine Tags";
+
+    pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
+
+    return {
+      success: true,
+      full: pdfFileName,
+      date: pdfDate,
+      documentDate: pdfContentData.documentDate,
+      category: pdfContentData.category,
+      tags: pdfContentData.tags,
+      company: pdfContentData.company,
+      isInvoice: pdfContentData.isInvoice,
+      invoiceNumber: pdfContentData.invoiceNumber,
+      invoiceAmmount: pdfContentData.invoiceAmmount,
+    };
+  } catch (fatalErr) {
+    console.error("[AI] Fataler Fehler bei generatePdfName:", fatalErr);
+    const pdfDate = setFileDate();
+    return {
+      success: true,
+      full: `${pdfDate} -Unbekannt- Dokument (Unbekannt)`,
+      date: pdfDate,
+      documentDate: "unknown",
+      category: "Unbekannt",
+      tags: ["Dokument"],
+      company: "Unbekannt",
+      isInvoice: false,
+      invoiceNumber: "none",
+      invoiceAmmount: 0,
+    };
   }
-
-  var firstThreeWords =
-    pdfContentData.tags && Array.isArray(pdfContentData.tags)
-      ? pdfContentData.tags.slice(0, 3).join(" ")
-      : "Keine Tags";
-
-  pdfFileName = `${pdfDate} -${pdfContentData.category}- ${firstThreeWords} (${pdfContentData.company})`;
-
-  return {
-    success: true,
-    full: pdfFileName,
-    date: pdfDate,
-    documentDate: pdfContentData.documentDate,
-    category: pdfContentData.category,
-    tags: pdfContentData.tags,
-    company: pdfContentData.company,
-    isInvoice: pdfContentData.isInvoice,
-    invoiceNumber: pdfContentData.invoiceNumber,
-    invoiceAmmount: pdfContentData.invoiceAmmount,
-  };
 }
 
 function setFileDate(fileName) {
@@ -199,7 +216,7 @@ async function checkCompanyName(companyNameIn) {
 
 checkFileDate = (text) => {
   if (text) {
-    // Falls die AI ein Dokumentendatum gefunden hat, dieses im Format DD.MM.YYYY zurückgeben
+    // Falls the AI ein Dokumentendatum gefunden hat, dieses im Format DD.MM.YYYY zurückgeben
     const match = text.match(/\b(\d{2})[./-](\d{2})[./-](\d{4}|\d{2})\b/);
     if (match) {
       const day = match[1];
@@ -225,10 +242,7 @@ async function getPdfImageBuffer(pdfPath) {
     };
 
     const convert = fromPath(pdfPath, options);
-    const pageToConvertAsImage = 1;
-
-    // Lass dir direkt Base64 zurückgeben anstatt eines Buffers
-    const result = await convert(pageToConvertAsImage, { responseType: "base64" });
+    const result = await convert(1, { responseType: "base64" });
 
     // Temp-Datei asynchron löschen, falls pd2pic sie trotzdem anlegt
     const tempFileCheck = path.join(os.tmpdir(), `pdfPic_${uniqueId}.1.png`);
@@ -237,13 +251,12 @@ async function getPdfImageBuffer(pdfPath) {
     }
 
     if (!result || !result.base64) {
-      console.log("[Fehler] pdf2pic hat kein valides Base64-Ergebnis geliefert.");
       return false;
     }
 
     return result.base64;
   } catch (err) {
-    console.error("Fehler bei der pdf2pic Konvertierung:", err);
+    console.error("[AI] Fehler bei der pdf2pic Konvertierung:", err.message || err);
     return false;
   }
 }
@@ -258,39 +271,42 @@ async function performOcr(base64Image, originalFilePath) {
 
     console.log("[AI] Starte OCR Prozess...");
 
-    // VERSUCH 1: OCRmyPDF (Der Industriestandard, um unsichtbaren Text über das Original zu legen)
-    // Behält die originale Formatierung, Rotation und Seitenverhältnisse perfekt bei!
-    let ocrMyPdfSuccess = false;
+    // VERSUCH 1: OCRmyPDF
     if (originalFilePath && originalFilePath.toLowerCase().endsWith(".pdf")) {
       try {
-        console.log("[AI] Versuche ocrmypdf auf Original-Datei anzuwenden...");
-        // ocrmypdf überschreibt die Datei sicher mit der OCR-Ebene. --force-ocr erzwingt OCR auch bei schlecht erkannten Seiten.
         await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath]);
-        console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar, ohne Verzerrung.");
-        ocrMyPdfSuccess = true;
+        console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar.");
       } catch (err) {
-        console.log("[AI] ocrmypdf nicht gefunden oder fehlgeschlagen. Nutze reinen Text-Fallback.");
-        // Wir ignorieren den Fehler, da wir als Fallback tesseract.js nutzen.
+        // Nicht fatal, fallback auf Tesseract
       }
     }
 
     // VERSUCH 2: Fallback (Tesseract.js)
-    // Wir extrahieren immer den Text für die KI-Erkennung (Ollama).
-    const Tesseract = require("tesseract.js");
-    const bufferToOcr = Buffer.from(base64Image, "base64");
+    try {
+      const Tesseract = require("tesseract.js");
+      const bufferToOcr = Buffer.from(base64Image, "base64");
+      if (!bufferToOcr || bufferToOcr.length < 50) {
+        return "";
+      }
 
-    if (!globalTesseractWorker) {
-      globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => { } });
+      if (!globalTesseractWorker) {
+        globalTesseractWorker = await Tesseract.createWorker("deu", 1, { logger: () => { } });
+      }
+
+      const res = await globalTesseractWorker.recognize(bufferToOcr);
+      const text = res?.data?.text || "";
+      console.log("[AI] Text für Metadaten extrahiert. Länge: " + (text ? text.length : 0));
+      return text && text.trim().length > 20 ? text : "";
+    } catch (tessErr) {
+      console.error("[AI] Tesseract.js OCR Fehler (wird übersprungen):", tessErr.message || tessErr);
+      if (globalTesseractWorker) {
+        try { await globalTesseractWorker.terminate(); } catch (e) {}
+        globalTesseractWorker = null;
+      }
+      return "";
     }
-
-    const {
-      data: { text },
-    } = await globalTesseractWorker.recognize(bufferToOcr);
-
-    console.log("[AI] Text für Metadaten extrahiert. Länge: " + (text ? text.length : 0));
-    return text && text.trim().length > 20 ? text : "";
   } catch (ocrErr) {
-    console.error("[AI] OCR fehlgeschlagen:", ocrErr);
+    console.error("[AI] OCR fehlgeschlagen:", ocrErr.message || ocrErr);
     return "";
   }
 }
@@ -302,9 +318,8 @@ async function extractTextFromPdf(pdfPath) {
     const data = await pdf(dataBuffer);
 
     return data.text || "";
-    //console.log(data); // Full data object including metadata
   } catch (err) {
-    console.error("Error parsing PDF:", err);
+    console.error("[AI] Error parsing PDF:", err.message || err);
     return "";
   }
 }
@@ -329,20 +344,27 @@ module.exports = {
   generateThumbnail: async function (pdfPath) {
     try {
       if (!pdfPath.toLowerCase().endsWith(".pdf")) return null;
+      const os = require("os");
+      const path = require("path");
+      const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
       const options = {
         density: 150,
-        saveFilename: "thumb",
-        savePath: ".",
+        saveFilename: `thumb_${uniqueId}`,
+        savePath: os.tmpdir(),
         format: "jpeg",
       };
       const convert = fromPath(pdfPath, options);
       const result = await convert(1, { responseType: "base64" });
+      const tempThumb = path.join(os.tmpdir(), `thumb_${uniqueId}.1.jpeg`);
+      if (fs.existsSync(tempThumb)) {
+        fs.promises.unlink(tempThumb).catch(() => {});
+      }
       if (result && result.base64) {
         return `data:image/jpeg;base64,${result.base64}`;
       }
       return null;
     } catch (err) {
-      console.error("[AI] Fehler bei Fallback-Vorschaubild:", err);
+      console.error("[AI] Fehler bei Fallback-Vorschaubild:", err.message || err);
       return null;
     }
   },
