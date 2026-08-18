@@ -24,6 +24,7 @@ const jwt = require("jsonwebtoken");
 const aiAgent = require("./app/aiAgent.js");
 const DriveAPI = require("./app/driveApi.js");
 const ClickUpAPI = require("./app/clickupApi.js");
+const butlerApi = require("./app/butlerApi.js");
 
 dotenv.config();
 
@@ -82,6 +83,9 @@ const appSettings = {
   LEXOFFICE_KEY_WIREWIRE: process.env.LEXOFFICE_KEY_WIREWIRE || "",
   LEXOFFICE_KEY_THEWIRE: process.env.LEXOFFICE_KEY_THEWIRE || "",
   LEXOFFICE_KEY_POLYXO: process.env.LEXOFFICE_KEY_POLYXO || "",
+  BUTTLER_KEY_THEWIRE_CLIENT: process.env.BUTTLER_KEY_THEWIRE_CLIENT || "",
+  BUTTLER_KEY_THEWIRE_SECRET: process.env.BUTTLER_KEY_THEWIRE_SECRET || "",
+  BUTTLER_KEY_THEWIRE_KEY: process.env.BUTTLER_KEY_THEWIRE_KEY || "",
   CLICKUP_API_KEY: process.env.CLICKUP_API_KEY || "",
   CLICKUP_LIST_ID: process.env.CLICKUP_LIST_ID || "",
   CLICKUP_AUTO_TASK: true,
@@ -318,6 +322,9 @@ app.post("/api/settings", requireAdmin, express.json(), async (req, res) => {
     "LEXOFFICE_KEY_WIREWIRE",
     "LEXOFFICE_KEY_THEWIRE",
     "LEXOFFICE_KEY_POLYXO",
+    "BUTTLER_KEY_THEWIRE_CLIENT",
+    "BUTTLER_KEY_THEWIRE_SECRET",
+    "BUTTLER_KEY_THEWIRE_KEY",
     "CLICKUP_API_KEY",
     "CLICKUP_LIST_ID",
     "CLICKUP_AUTO_TASK",
@@ -996,8 +1003,8 @@ app.post("/api/jobs/:id/target-company", requireAdmin, express.json(), (req, res
   }
 });
 
-// Lexoffice Endpoints (Admin only)
-app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) => {
+// Accounting Endpoints (Lexoffice & BuchhaltungsButler) - Admin only
+app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, express.json(), async (req, res) => {
   const { jobId, companyKey } = req.body;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
@@ -1005,7 +1012,14 @@ app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) 
   const validCompanies = ["wirewire", "thewire", "polyxo"];
   const configuredCompanies = {
     wirewire: !!(appSettings.LEXOFFICE_KEY_WIREWIRE && appSettings.LEXOFFICE_KEY_WIREWIRE.trim()),
-    thewire: !!(appSettings.LEXOFFICE_KEY_THEWIRE && appSettings.LEXOFFICE_KEY_THEWIRE.trim()),
+    thewire: !!(
+      appSettings.BUTTLER_KEY_THEWIRE_CLIENT &&
+      appSettings.BUTTLER_KEY_THEWIRE_SECRET &&
+      appSettings.BUTTLER_KEY_THEWIRE_KEY &&
+      appSettings.BUTTLER_KEY_THEWIRE_CLIENT.trim() &&
+      appSettings.BUTTLER_KEY_THEWIRE_SECRET.trim() &&
+      appSettings.BUTTLER_KEY_THEWIRE_KEY.trim()
+    ),
     polyxo: !!(appSettings.LEXOFFICE_KEY_POLYXO && appSettings.LEXOFFICE_KEY_POLYXO.trim()),
   };
 
@@ -1022,32 +1036,56 @@ app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) 
   }
 
   const targetComp = companyKey && validCompanies.includes(companyKey) ? companyKey : suggestedCompany;
-  const apiKeySettingName = `LEXOFFICE_KEY_${targetComp.toUpperCase()}`;
-  const apiKey = (appSettings[apiKeySettingName] || "").trim();
 
+  let provider = "lexoffice";
+  let providerName = "Lexoffice";
   let apiValid = false;
   let apiError = null;
   let organizationName = null;
 
-  if (apiKey) {
-    try {
-      const apiRes = await fetch("https://api.lexoffice.io/v1/profile", {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      if (apiRes.ok) {
-        apiValid = true;
-        const profData = await apiRes.json().catch(() => ({}));
-        organizationName = profData.companyName || profData.name || null;
-      } else {
-        apiValid = false;
-        apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
-      }
-    } catch (err) {
+  if (targetComp === "thewire") {
+    provider = "buchhaltungsbutler";
+    providerName = "BuchhaltungsButler";
+    const client = (appSettings.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+    const secret = (appSettings.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+    const key = (appSettings.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+
+    if (client && secret && key) {
+      const verifyRes = await butlerApi.verifyConnection({ client, secret, key });
+      apiValid = verifyRes.valid;
+      apiError = verifyRes.error || null;
+      organizationName = verifyRes.organizationName || "The Wire UG";
+    } else {
       apiValid = false;
-      apiError = `Verbindungsfehler zu Lexoffice: ${err.message}`;
+      apiError = "BuchhaltungsButler Zugangsdaten (Client, Secret, Key) für The Wire fehlen in den Einstellungen.";
     }
   } else {
-    apiError = `Kein API-Key für Lexoffice (${targetComp}) in den Einstellungen hinterlegt.`;
+    // wirewire or polyxo -> Lexoffice
+    provider = "lexoffice";
+    providerName = "Lexoffice";
+    const apiKeySettingName = `LEXOFFICE_KEY_${targetComp.toUpperCase()}`;
+    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+
+    if (apiKey) {
+      try {
+        const apiRes = await fetch("https://api.lexoffice.io/v1/profile", {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (apiRes.ok) {
+          apiValid = true;
+          const profData = await apiRes.json().catch(() => ({}));
+          organizationName = profData.companyName || profData.name || null;
+        } else {
+          apiValid = false;
+          apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
+        }
+      } catch (err) {
+        apiValid = false;
+        apiError = `Verbindungsfehler zu Lexoffice: ${err.message}`;
+      }
+    } else {
+      apiError = `Kein API-Key für Lexoffice (${targetComp}) in den Einstellungen hinterlegt.`;
+    }
   }
 
   const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[targetComp]);
@@ -1056,6 +1094,8 @@ app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) 
   res.json({
     success: true,
     jobId: job.id,
+    provider,
+    providerName,
     selectedCompany: targetComp,
     suggestedCompany,
     configuredCompanies,
@@ -1080,62 +1120,40 @@ app.post("/api/lexoffice/check", requireAdmin, express.json(), async (req, res) 
   });
 });
 
-app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, res) => {
+app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, express.json(), async (req, res) => {
   const { jobId, companyKey, force } = req.body;
   const validCompanies = ["wirewire", "thewire", "polyxo"];
   if (!validCompanies.includes(companyKey)) {
-    return res.status(400).json({ success: false, error: "Ungültige Firma für Lexoffice." });
-  }
-
-  const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
-  const apiKey = appSettings[apiKeySettingName];
-  if (!apiKey || !apiKey.trim()) {
-    return res.status(400).json({
-      success: false,
-      error: `Kein API-Key für Lexoffice (${companyKey}) in den Einstellungen hinterlegt.`,
-    });
+    return res.status(400).json({ success: false, error: "Ungültige Zielfirma." });
   }
 
   const job = uploadJobs[jobId];
-  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
 
   if (job.lexofficeTransfers && job.lexofficeTransfers[companyKey] && !force) {
+    const existing = job.lexofficeTransfers[companyKey];
+    const pName = existing.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
     return res.json({
       success: false,
       alreadyTransferred: true,
-      transferredInfo: job.lexofficeTransfers[companyKey],
-      error: `Dokument wurde bereits am ${new Date(job.lexofficeTransfers[companyKey].transferredAt).toLocaleString("de-DE")} zu Lexoffice (${companyKey}) übertragen.`,
+      transferredInfo: existing,
+      error: `Dokument wurde bereits am ${new Date(existing.transferredAt).toLocaleString("de-DE")} zu ${pName} (${companyKey}) übertragen.`,
     });
   }
 
   try {
-    let fileBuffer = null;
+    let fileBuffer = await getJobPdfBuffer(job);
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return res.status(400).json({ success: false, error: "Datei ist nicht mehr auf dem Server oder Google Drive vorhanden." });
+    }
+
     let fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
     if (!fileName.toLowerCase().endsWith(".pdf")) fileName += ".pdf";
 
-    if (job.filePath && fs.existsSync(job.filePath)) {
-      fileBuffer = await fs.promises.readFile(job.filePath);
-    } else {
-      // Find Drive File ID
-      let driveFileId = job.rawDriveId;
-      if (!driveFileId && job.result && job.result.webViewLink) {
-        const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-        if (match) driveFileId = match[1];
-      }
-
-      if (!driveFileId) {
-        return res.status(400).json({ success: false, error: "Datei ist nicht mehr auf dem Server oder Drive vorhanden." });
-      }
-
-      const drive = await driveApi.getClient();
-      const driveRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
-      fileBuffer = Buffer.from(driveRes.data);
-    }
-
-    // Auto-compress if file size exceeds Lexoffice threshold (3.5 MB)
-    const MAX_LEXOFFICE_BYTES = 3.5 * 1024 * 1024;
-    if (fileBuffer && fileBuffer.length > MAX_LEXOFFICE_BYTES) {
-      console.log(`[LEXOFFICE] Datei-Größe (${(fileBuffer.length / (1024*1024)).toFixed(2)} MB) übersteigt 3.5 MB Schwelle. Komprimiere PDF...`);
+    // Auto-compress if file size exceeds 3.5 MB
+    const MAX_BYTES = 3.5 * 1024 * 1024;
+    if (fileBuffer && fileBuffer.length > MAX_BYTES) {
+      console.log(`[ACCOUNTING] Datei-Größe (${(fileBuffer.length / (1024*1024)).toFixed(2)} MB) übersteigt 3.5 MB Schwelle. Komprimiere PDF...`);
       const tempIn = path.join(localDownloadFolder, `compress_in_${Date.now()}.pdf`);
       const tempOut = path.join(localDownloadFolder, `compress_out_${Date.now()}.pdf`);
       try {
@@ -1152,58 +1170,125 @@ app.post("/api/lexoffice/transfer", requireAdmin, express.json(), async (req, re
         });
         if (fs.existsSync(tempOut)) {
           fileBuffer = await fs.promises.readFile(tempOut);
-          console.log(`[LEXOFFICE] Datei erfolgreich auf ${(fileBuffer.length / (1024*1024)).toFixed(2)} MB komprimiert.`);
+          console.log(`[ACCOUNTING] Datei erfolgreich auf ${(fileBuffer.length / (1024*1024)).toFixed(2)} MB komprimiert.`);
         }
       } catch (compressErr) {
-        console.error("[LEXOFFICE] Komprimierungs-Warnung:", compressErr);
+        console.error("[ACCOUNTING] Komprimierungs-Warnung:", compressErr);
       } finally {
         if (fs.existsSync(tempIn)) fs.promises.unlink(tempIn).catch(() => {});
         if (fs.existsSync(tempOut)) fs.promises.unlink(tempOut).catch(() => {});
       }
     }
 
-    const formData = new FormData();
-    const blob = new Blob([fileBuffer], { type: "application/pdf" });
-    formData.append("file", blob, fileName);
-    formData.append("type", "voucher");
+    if (companyKey === "thewire") {
+      // Transfer to BuchhaltungsButler
+      const client = (appSettings.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+      const secret = (appSettings.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+      const key = (appSettings.BUTTLER_KEY_THEWIRE_KEY || "").trim();
 
-    const lexResponse = await fetch("https://api.lexoffice.io/v1/files", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey.trim()}`,
-      },
-      body: formData,
-    });
+      if (!client || !secret || !key) {
+        return res.status(400).json({
+          success: false,
+          error: "BuchhaltungsButler Zugangsdaten für The Wire fehlen in den Einstellungen.",
+        });
+      }
 
-    if (!lexResponse.ok) {
-      const errText = await lexResponse.text();
-      console.error("[LEXOFFICE] Upload Fehler:", lexResponse.status, errText);
-      return res.status(lexResponse.status).json({
-        success: false,
-        error: `Lexoffice API Fehler (${lexResponse.status}): ${errText}`,
+      const butlerRes = await butlerApi.uploadReceipt({
+        fileBuffer,
+        fileName,
+        client,
+        secret,
+        key,
+        type: "expense", // Immer Ausgabe
+      });
+
+      if (!butlerRes.success) {
+        return res.status(500).json({
+          success: false,
+          error: butlerRes.error || "Fehler beim Upload zu BuchhaltungsButler.",
+        });
+      }
+
+      if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+      job.lexofficeTransfers[companyKey] = {
+        provider: "buchhaltungsbutler",
+        transferredAt: butlerRes.transferredAt,
+        fileId: butlerRes.fileId,
+        lexofficeFileId: butlerRes.fileId, // Backwards compatibility
+        company: companyKey,
+      };
+      job.targetCompany = companyKey;
+      saveJobs();
+
+      console.log(`[BUTLER] Job ${jobId} erfolgreich zu BuchhaltungsButler (${companyKey}) übertragen (ID: ${butlerRes.fileId})`);
+      return res.json({
+        success: true,
+        provider: "buchhaltungsbutler",
+        providerName: "BuchhaltungsButler",
+        fileId: butlerRes.fileId,
+        lexofficeFileId: butlerRes.fileId,
+        transferredAt: butlerRes.transferredAt,
+        company: companyKey,
+      });
+    } else {
+      // Transfer to Lexoffice (wirewire or polyxo)
+      const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+      const apiKey = appSettings[apiKeySettingName];
+      if (!apiKey || !apiKey.trim()) {
+        return res.status(400).json({
+          success: false,
+          error: `Kein API-Key für Lexoffice (${companyKey}) in den Einstellungen hinterlegt.`,
+        });
+      }
+
+      const formData = new FormData();
+      const blob = new Blob([fileBuffer], { type: "application/pdf" });
+      formData.append("file", blob, fileName);
+      formData.append("type", "voucher");
+
+      const lexResponse = await fetch("https://api.lexoffice.io/v1/files", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey.trim()}`,
+        },
+        body: formData,
+      });
+
+      if (!lexResponse.ok) {
+        const errText = await lexResponse.text();
+        console.error("[LEXOFFICE] Upload Fehler:", lexResponse.status, errText);
+        return res.status(lexResponse.status).json({
+          success: false,
+          error: `Lexoffice API Fehler (${lexResponse.status}): ${errText}`,
+        });
+      }
+
+      const lexData = await lexResponse.json();
+      if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+      job.lexofficeTransfers[companyKey] = {
+        provider: "lexoffice",
+        transferredAt: new Date().toISOString(),
+        fileId: lexData.id,
+        lexofficeFileId: lexData.id,
+        company: companyKey,
+      };
+      job.targetCompany = companyKey;
+      saveJobs();
+
+      console.log(`[LEXOFFICE] Job ${jobId} erfolgreich zu Lexoffice (${companyKey}) übertragen (ID: ${lexData.id})`);
+      return res.json({
+        success: true,
+        provider: "lexoffice",
+        providerName: "Lexoffice",
+        fileId: lexData.id,
+        lexofficeFileId: lexData.id,
+        transferredAt: job.lexofficeTransfers[companyKey].transferredAt,
+        company: companyKey,
       });
     }
-
-    const lexData = await lexResponse.json();
-    if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
-    job.lexofficeTransfers[companyKey] = {
-      transferredAt: new Date().toISOString(),
-      lexofficeFileId: lexData.id,
-      company: companyKey,
-    };
-    job.targetCompany = companyKey;
-    saveJobs();
-
-    console.log(`[LEXOFFICE] Job ${jobId} erfolgreich zu Lexoffice (${companyKey}) übertragen (ID: ${lexData.id})`);
-    res.json({
-      success: true,
-      lexofficeFileId: lexData.id,
-      transferredAt: job.lexofficeTransfers[companyKey].transferredAt,
-      company: companyKey,
-    });
   } catch (err) {
-    console.error("[LEXOFFICE] Fehler bei Übertragung:", err);
-    res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung zu Lexoffice." });
+    console.error("[ACCOUNTING] Fehler bei Übertragung:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung." });
   }
 });
 
