@@ -1317,8 +1317,13 @@
       <script src="/index.js?v=20260819_gmail_v28"></script>
       <script>
         if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.addEventListener("message", (event) => {
+            if (event.data && event.data.type === "SW_UPDATED") {
+              window.location.reload();
+            }
+          });
           window.addEventListener("load", () => {
-            navigator.serviceWorker.register("/sw.js?v=20260819_5").then((reg) => {
+            navigator.serviceWorker.register("/sw.js?v=20260819_8").then((reg) => {
               reg.update().catch(() => {});
             }).catch(() => {});
           });

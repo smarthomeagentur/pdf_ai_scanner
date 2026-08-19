@@ -1,4 +1,4 @@
-const CACHE_NAME = "scanner-cache-v7";
+const CACHE_NAME = "scanner-cache-v8";
 const ONNX_ASSETS = [
   "/models/doc_corner_net.onnx",
   "/vendor/onnx/ort.min.js",
@@ -19,14 +19,18 @@ self.addEventListener("install", (event) => {
   );
 });
 
-// Activate event: Veraltete Caches bereinigen
+// Activate event: Veraltete Caches bereinigen und Clients sofort reloaden
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
         keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
       );
-    }).then(() => clients.claim())
+    }).then(() => clients.claim()).then(() => {
+      return self.clients.matchAll({ type: "window" }).then((clients) => {
+        clients.forEach((client) => client.postMessage({ type: "SW_UPDATED" }));
+      });
+    })
   );
 });
 

@@ -313,7 +313,7 @@ input[type="range"].modern-slider::-moz-range-thumb {
   margin: 0 auto;
   flex-shrink: 0 !important;
   padding: 8px 12px !important;
-  padding-bottom: max(16px, env(safe-area-inset-bottom, 16px)) !important;
+  padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 16px)) !important;
   background: #fff !important;
   border-top: 1px solid #dee2e6 !important;
   border-radius: 0 !important;
