@@ -439,9 +439,36 @@ const jobListContainer = document.getElementById("job-list-container");
 const jobList = document.getElementById("job-list");
 
 const triggerClearJobsBtn = document.getElementById("trigger-clear-jobs-btn");
+const triggerRescanDuplicatesBtn = document.getElementById("trigger-rescan-duplicates-btn");
 const confirmClearModal = document.getElementById("confirm-clear-modal");
 const confirmClearBtn = document.getElementById("confirm-clear-btn");
 const cancelClearBtn = document.getElementById("cancel-clear-btn");
+
+if (triggerRescanDuplicatesBtn) {
+  triggerRescanDuplicatesBtn.addEventListener("click", async () => {
+    triggerRescanDuplicatesBtn.disabled = true;
+    triggerRescanDuplicatesBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 18px;">hourglass_empty</span> Scanne...';
+    try {
+      const res = await fetch("/api/jobs/rescan-duplicates", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        if (typeof showToast === "function") {
+          showToast(`✅ Duplikat-Scan abgeschlossen: ${data.markedCount} neue Duplikate in ${data.scanned} Belegen gefunden.`, "success");
+        } else {
+          alert(`Duplikat-Scan abgeschlossen: ${data.markedCount} neue Duplikate in ${data.scanned} Belegen gefunden.`);
+        }
+        renderJobs();
+      } else {
+        alert("Fehler beim Duplikat-Scan: " + (data.error || "Unbekannter Fehler"));
+      }
+    } catch (err) {
+      alert("Netzwerkfehler beim Duplikat-Scan: " + err.message);
+    } finally {
+      triggerRescanDuplicatesBtn.disabled = false;
+      triggerRescanDuplicatesBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 18px;">content_copy</span> Duplikate neu scannen';
+    }
+  });
+}
 
 const downloadBackupBtn = document.getElementById("download-backup-btn");
 const triggerRestoreBtn = document.getElementById("trigger-restore-btn");
@@ -894,6 +921,9 @@ function filterActiveJobs(jobs) {
   return jobs.filter((job) => {
     const res = job.result || {};
 
+    // 0. Hidden filter: hide unless admin is showing hidden items
+    if (job.isHidden && !window.showHiddenJobs) return false;
+
     // 1. Search Query
     if (startSearchQuery) {
       const q = startSearchQuery.toLowerCase();
@@ -1178,6 +1208,15 @@ function renderJobs() {
         ? "Erfolgreich abgeschlossen"
         : "Fehlergeschlagen";
 
+    let cancelJobButtonHtml = "";
+    if (job.status === "pending" || job.status === "processing") {
+      cancelJobButtonHtml = `
+        <button class="btn btn-sm btn-outline-danger cancel-job-btn py-0 px-2 d-inline-flex align-items-center gap-1" data-job-id="${job.id}" style="font-size: 11px; height: 22px; border-radius: 6px; margin-left: 8px;" title="Aus Warteschlange abbrechen & löschen">
+          <span class="material-symbols-outlined" style="font-size: 13px;">close</span> Abbrechen
+        </button>
+      `;
+    }
+
     const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
 
     let resultHtml = "";
@@ -1278,6 +1317,24 @@ function renderJobs() {
         `;
       }
 
+      // Hide / unhide button (only for admins)
+      let hideButtonHtml = "";
+      if (window.isAdmin) {
+        const isHidden = job.isHidden === true;
+        hideButtonHtml = `
+          <button type="button" class="btn btn-sm btn-hide-job d-inline-flex align-items-center gap-1" data-job-id="${job.id}" data-is-hidden="${isHidden}"
+            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
+              ${isHidden
+                ? 'background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;'
+                : 'background: #f5f5f5; color: #555; border: 1px solid #ccc;'
+              }"
+            title="${isHidden ? 'Datei wieder einblenden (wird in Zukunft nicht erneut per Drive-Sync importiert)' : 'Datei ausblenden (bleibt in Google Drive, wird nicht erneut importiert)'}">
+            <span class="material-symbols-outlined" style="font-size: 15px;">${isHidden ? 'visibility' : 'visibility_off'}</span>
+            <span>${isHidden ? 'Einblenden' : 'Ausblenden'}</span>
+          </button>
+        `;
+      }
+
       resultHtml = `
                     <div style="margin-top: 10px; width: 100%;">
                       <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
@@ -1310,6 +1367,12 @@ function renderJobs() {
 ${invoiceHtml}                            <strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
 ${clickupDetailsHtml}
 ${lexofficeDetailsHtml}
+                            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                              <div class="text-muted" style="font-size: 12px;">
+                                ${job.isHidden ? '<span style="color: #e65100;"><span class="material-symbols-outlined" style="font-size: 14px; vertical-align: middle;">visibility_off</span> Ausgeblendet – wird bei Drive-Sync nicht erneut importiert</span>' : '<span style="color: #888;">Sichtbar in der Liste</span>'}
+                              </div>
+                              ${hideButtonHtml}
+                            </div>
                         </div>
                       </details>
                     </div>
@@ -1349,7 +1412,10 @@ ${lexofficeDetailsHtml}
                             </span>
                             <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
                         </div>
-                        <div class="job-status" style="margin-top: 4px;">${statusText}</div>
+                        <div class="job-status" style="margin-top: 4px; display: flex; align-items: center; flex-wrap: wrap;">
+                            <span>${statusText}</span>
+                            ${cancelJobButtonHtml}
+                        </div>
                     </div>
                     ${resultHtml}
                 </div>
@@ -1706,6 +1772,53 @@ jobList.addEventListener('click', async (e) => {
         console.error("Failed to toggle private status", err);
         job.isPrivate = !newIsPrivate;
         renderJobs();
+    }
+    return;
+  }
+
+  // Handle click on "Ausblenden / Einblenden" hide button
+  const hideBtn = e.target.closest('.btn-hide-job');
+  if (hideBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = hideBtn.getAttribute('data-job-id');
+    const job = activeJobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    const newIsHidden = !job.isHidden;
+
+    // Confirm before hiding to avoid accidental clicks
+    if (newIsHidden) {
+      const confirmed = confirm(
+        `Datei „${job.result?.full || job.originalName}" ausblenden?\n\nDie Datei bleibt in Google Drive erhalten und wird nicht gelöscht. Sie wird auch beim nächsten Drive-Sync nicht erneut importiert.`
+      );
+      if (!confirmed) return;
+    }
+
+    job.isHidden = newIsHidden;
+    renderJobs(); // optimistic update
+
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/hide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isHidden: newIsHidden })
+      });
+      if (!res.ok) {
+        alert('Fehler beim Speichern des Ausblenden-Status.');
+        job.isHidden = !newIsHidden;
+        renderJobs();
+      } else if (typeof showToast === 'function') {
+        showToast(newIsHidden
+          ? `📂 Datei ausgeblendet. Sie bleibt in Google Drive und wird nicht erneut importiert.`
+          : `👁️ Datei wieder eingeblendet.`,
+          newIsHidden ? 'info' : 'success'
+        );
+      }
+    } catch (err) {
+      console.error('Failed to toggle hidden status', err);
+      job.isHidden = !newIsHidden;
+      renderJobs();
     }
     return;
   }
@@ -3215,6 +3328,37 @@ document.addEventListener("click", (e) => {
     }
     return;
   }
+
+  const cancelJobBtn = e.target.closest(".cancel-job-btn");
+  if (cancelJobBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = cancelJobBtn.getAttribute("data-job-id");
+    if (jobId) {
+      if (confirm("Möchten Sie diesen Auftrag wirklich aus der Warteschlange abbrechen und löschen?")) {
+        cancelJobBtn.disabled = true;
+        cancelJobBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" style="width: 12px; height: 12px;"></span>`;
+        fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              if (typeof showToast === "function") showToast("✓ Auftrag aus Warteschlange gelöscht.", "info");
+              fetchStatus();
+            } else {
+              alert("Fehler beim Abbrechen: " + (data.error || "Unbekannt"));
+              cancelJobBtn.disabled = false;
+              cancelJobBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 13px;">close</span> Abbrechen`;
+            }
+          })
+          .catch((err) => {
+            alert("Netzwerkfehler: " + err.message);
+            cancelJobBtn.disabled = false;
+            cancelJobBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 13px;">close</span> Abbrechen`;
+          });
+      }
+    }
+    return;
+  }
 });
 
 // --- ClickUp Sync All Review Modal Logic ---
@@ -3833,6 +3977,7 @@ let inboxSkippedEmails = [];
 let inboxAccounts = [];
 let currentInboxSubtab = "detected"; // "detected" | "active" | "skipped"
 let selectedInboxMessageIds = new Set();
+let selectedInboxAttachments = {};
 let isProcessingInboxBatch = false;
 
 const inboxRefreshBtn = document.getElementById("inbox-refresh-btn");
@@ -3976,6 +4121,18 @@ if (inboxPdfQuickProcessBtn) {
     inboxPdfQuickProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
 
     try {
+      const selectedAttIds = selectedInboxAttachments[mail.id]
+        ? Array.from(selectedInboxAttachments[mail.id])
+        : (mail.attachments || []).map((a) => a.attachmentId);
+      const selectedAttachments = (mail.attachments || []).filter((a) => selectedAttIds.includes(a.attachmentId));
+
+      if (selectedAttachments.length === 0) {
+        alert("Bitte wählen Sie mindestens einen PDF-Anhang zum Verarbeiten aus.");
+        inboxPdfQuickProcessBtn.disabled = false;
+        inboxPdfQuickProcessBtn.innerHTML = originalHtml;
+        return;
+      }
+
       const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
       const res = await fetch("/api/gmail/process", {
         method: "POST",
@@ -3987,7 +4144,8 @@ if (inboxPdfQuickProcessBtn) {
           fromName: mail.fromName,
           fromEmail: mail.fromEmail,
           date: mail.date,
-          attachments: mail.attachments,
+          attachmentIds: selectedAttIds,
+          attachments: selectedAttachments,
           archive: shouldArchive,
         }),
       });
@@ -4489,6 +4647,12 @@ function renderInboxList() {
     const isSelected = selectedInboxMessageIds.has(mail.id);
     const attachments = mail.attachments || [];
 
+    // Initialisiere ausgewählte Anhänge für diese Mail (standardmäßig alle)
+    if (!selectedInboxAttachments[mail.id]) {
+      selectedInboxAttachments[mail.id] = new Set(attachments.map((a) => a.attachmentId));
+    }
+    const currentSelectedAtts = selectedInboxAttachments[mail.id];
+
     const card = document.createElement("div");
     card.className = "card p-3 shadow-sm border";
     card.style.cssText = `
@@ -4498,26 +4662,43 @@ function renderInboxList() {
       transition: all 0.2s ease;
     `;
 
-    // Attachments HTML (Clickable PDF Pills for live preview)
+    // Attachments HTML (Selektierbare PDF-Pills mit Checkbox & Vorschau-Button)
     const attachmentsHtml = attachments
-      .map(
-        (att) => `
-        <button type="button" class="btn btn-sm btn-light border d-inline-flex align-items-center gap-1 p-1 px-2 rounded small inbox-pdf-pill" 
-          data-message-id="${mail.id}"
-          data-account-id="${mail.accountId || ''}"
-          data-att-id="${att.attachmentId}"
-          data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
-          data-size="${att.size || 0}"
-          data-subject="${encodeURIComponent(mail.subject || '')}"
-          style="font-size: 12px; transition: all 0.15s ease; cursor: pointer; text-align: left;"
-          title="Klicken für PDF-Vorschau: ${att.filename}">
+      .map((att) => {
+        const isAttChecked = currentSelectedAtts.has(att.attachmentId);
+        return `
+        <div class="inbox-attachment-item d-inline-flex align-items-center gap-1 border rounded p-1 px-2 small" 
+          style="background-color: ${isAttChecked ? '#f0f7ff' : '#f8f9fa'}; border-color: ${isAttChecked ? '#b6d4fe' : '#dee2e6'} !important; transition: all 0.15s ease;">
+          <input type="checkbox" class="form-check-input m-0 inbox-att-cb" 
+            data-message-id="${mail.id}"
+            data-att-id="${att.attachmentId}"
+            ${isAttChecked ? "checked" : ""}
+            style="cursor: pointer; width: 15px; height: 15px;" 
+            title="Diesen Anhang für die Verarbeitung auswählen/abwählen" />
           <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
-          <span class="text-truncate fw-medium" style="max-width: 220px;">${att.filename || "Anhang.pdf"}</span>
+          <span class="text-truncate fw-medium inbox-pdf-pill" 
+            data-message-id="${mail.id}"
+            data-account-id="${mail.accountId || ''}"
+            data-att-id="${att.attachmentId}"
+            data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
+            data-size="${att.size || 0}"
+            data-subject="${encodeURIComponent(mail.subject || '')}"
+            style="max-width: 200px; cursor: pointer;" 
+            title="Klicken für PDF-Vorschau: ${att.filename}">${att.filename || "Anhang.pdf"}</span>
           <span class="text-muted" style="font-size: 11px;">(${formatFileSize(att.size)})</span>
-          <span class="material-symbols-outlined text-primary ms-1" style="font-size: 14px;">visibility</span>
-        </button>
-      `
-      )
+          <button type="button" class="btn btn-sm p-0 border-0 text-primary inbox-pdf-pill d-inline-flex align-items-center" 
+            data-message-id="${mail.id}"
+            data-account-id="${mail.accountId || ''}"
+            data-att-id="${att.attachmentId}"
+            data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
+            data-size="${att.size || 0}"
+            data-subject="${encodeURIComponent(mail.subject || '')}"
+            title="Vorschau öffnen">
+            <span class="material-symbols-outlined" style="font-size: 14px;">visibility</span>
+          </button>
+        </div>
+      `;
+      })
       .join("");
 
     const isSkippedTab = currentInboxSubtab === "skipped";
@@ -4585,7 +4766,7 @@ function renderInboxList() {
           }
 
           <!-- PDF Attachments Pills -->
-          <div class="d-flex flex-wrap gap-1 mb-3 pt-1">
+          <div class="d-flex flex-wrap gap-2 mb-3 pt-1">
             ${attachmentsHtml}
           </div>
 
@@ -4641,7 +4822,7 @@ function renderInboxList() {
       });
     });
 
-    // Checkbox event
+    // Checkbox event für E-Mail Selektion
     const cb = card.querySelector(".inbox-item-cb");
     if (cb) {
       cb.addEventListener("change", (e) => {
@@ -4655,6 +4836,39 @@ function renderInboxList() {
         card.style.backgroundColor = e.target.checked ? "#f8fbff" : "#ffffff";
       });
     }
+
+    // Checkbox event für Anhang-Selektion
+    card.querySelectorAll(".inbox-att-cb").forEach((attCb) => {
+      attCb.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const mId = attCb.getAttribute("data-message-id");
+        const aId = attCb.getAttribute("data-att-id");
+        if (!selectedInboxAttachments[mId]) {
+          selectedInboxAttachments[mId] = new Set((mail.attachments || []).map((a) => a.attachmentId));
+        }
+        if (e.target.checked) {
+          selectedInboxAttachments[mId].add(aId);
+        } else {
+          selectedInboxAttachments[mId].delete(aId);
+        }
+
+        const parentItem = attCb.closest(".inbox-attachment-item");
+        if (parentItem) {
+          parentItem.style.backgroundColor = e.target.checked ? "#f0f7ff" : "#f8f9fa";
+          parentItem.style.borderColor = e.target.checked ? "#b6d4fe" : "#dee2e6";
+        }
+
+        const activeCount = selectedInboxAttachments[mId].size;
+        const procBtn = card.querySelector(".inbox-process-btn");
+        if (procBtn) {
+          procBtn.disabled = activeCount === 0;
+          procBtn.innerHTML = `
+            <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+            <span>Verarbeiten${activeCount > 1 ? ` (${activeCount})` : activeCount === 0 ? " (0)" : ""}</span>
+          `;
+        }
+      });
+    });
 
     // Process button
     const procBtn = card.querySelector(".inbox-process-btn");
@@ -4686,6 +4900,18 @@ async function processSingleInboxEmail(mail, btnEl) {
   const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
 
   try {
+    const selectedAttIds = selectedInboxAttachments[mail.id]
+      ? Array.from(selectedInboxAttachments[mail.id])
+      : (mail.attachments || []).map((a) => a.attachmentId);
+    const selectedAttachments = (mail.attachments || []).filter((a) => selectedAttIds.includes(a.attachmentId));
+
+    if (selectedAttachments.length === 0) {
+      alert("Bitte wählen Sie mindestens einen PDF-Anhang zum Verarbeiten aus.");
+      btnEl.disabled = false;
+      btnEl.innerHTML = originalHtml;
+      return;
+    }
+
     const res = await fetch("/api/gmail/process", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4696,7 +4922,8 @@ async function processSingleInboxEmail(mail, btnEl) {
         fromName: mail.fromName,
         fromEmail: mail.fromEmail,
         date: mail.date,
-        attachments: mail.attachments,
+        attachmentIds: selectedAttIds,
+        attachments: selectedAttachments,
         archive: shouldArchive,
       }),
     });
@@ -4710,6 +4937,7 @@ async function processSingleInboxEmail(mail, btnEl) {
     inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
     inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
     selectedInboxMessageIds.delete(mail.id);
+    delete selectedInboxAttachments[mail.id];
 
     // Update Counter & Badge
     const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
@@ -4765,11 +4993,29 @@ async function processBatchSelectedEmails() {
 
   try {
     const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+    const payloadItems = selectedEmails.map((m) => {
+      const selectedAttIds = selectedInboxAttachments[m.id]
+        ? Array.from(selectedInboxAttachments[m.id])
+        : (m.attachments || []).map((a) => a.attachmentId);
+      const selectedAtts = (m.attachments || []).filter((a) => selectedAttIds.includes(a.attachmentId));
+      return {
+        id: m.id,
+        messageId: m.id,
+        accountId: m.accountId,
+        subject: m.subject,
+        fromName: m.fromName,
+        fromEmail: m.fromEmail,
+        date: m.date,
+        attachmentIds: selectedAttIds,
+        attachments: selectedAtts.length > 0 ? selectedAtts : m.attachments,
+      };
+    });
+
     const res = await fetch("/api/gmail/process-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        items: selectedEmails,
+        items: payloadItems,
         archive: shouldArchive,
       }),
     });
