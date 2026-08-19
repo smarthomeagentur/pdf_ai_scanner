@@ -2028,6 +2028,19 @@ function normalizeAlphaNum(s) {
   return (s || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 }
 
+async function fetchLexofficeWithRetry(url, options, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    const res = await fetch(url, options);
+    if (res.status === 429) {
+      console.warn(`[LEXOFFICE] Rate limit (429) erreicht. Warte ${500 * (i + 1)}ms vor erneutem Versuch...`);
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+      continue;
+    }
+    return res;
+  }
+  return fetch(url, options);
+}
+
 async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amountInCents, documentDate, company }) {
   if (!apiKey) return { found: false, matches: [] };
 
@@ -2047,7 +2060,7 @@ async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amount
     if (cleanInvNum) {
       try {
         const directUrl = `https://api.lexoffice.io/v1/voucherlist?voucherNumber=${encodeURIComponent(cleanInvNum)}&voucherStatus=${voucherStatuses}&voucherType=${voucherTypes}&page=0&size=100`;
-        const directRes = await fetch(directUrl, {
+        const directRes = await fetchLexofficeWithRetry(directUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         if (directRes.ok) {
@@ -2065,7 +2078,7 @@ async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amount
     // 2. Query general recent vouchers list
     try {
       const generalUrl = `https://api.lexoffice.io/v1/voucherlist?voucherStatus=${voucherStatuses}&voucherType=${voucherTypes}&page=0&size=250`;
-      const genRes = await fetch(generalUrl, {
+      const genRes = await fetchLexofficeWithRetry(generalUrl, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (genRes.ok) {
@@ -2234,7 +2247,7 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
 
     if (apiKey) {
       try {
-        const apiRes = await fetch("https://api.lexoffice.io/v1/profile", {
+        const apiRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/profile", {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         if (apiRes.ok) {
@@ -2335,7 +2348,7 @@ app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
     let targetFileId = fileId;
     if (!targetFileId && voucherId) {
       try {
-        const vRes = await fetch(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+        const vRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         if (vRes.ok) {
@@ -2348,7 +2361,7 @@ app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
 
       if (!targetFileId) {
         try {
-          const invRes = await fetch(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+          const invRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
             headers: { Authorization: `Bearer ${apiKey}` },
           });
           if (invRes.ok) {
@@ -2363,7 +2376,7 @@ app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
       targetFileId = voucherId;
     }
 
-    const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
+    const fileRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
 
@@ -2411,7 +2424,7 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
     let targetFileId = fileId;
     if (!targetFileId && voucherId) {
       try {
-        const vRes = await fetch(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+        const vRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         if (vRes.ok) {
@@ -2424,7 +2437,7 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
 
       if (!targetFileId) {
         try {
-          const invRes = await fetch(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+          const invRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
             headers: { Authorization: `Bearer ${apiKey}` },
           });
           if (invRes.ok) {
@@ -2440,7 +2453,7 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
     }
 
     // 3. Download binary file from Lexoffice
-    const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
+    const fileRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
 
