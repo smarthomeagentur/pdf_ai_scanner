@@ -3206,11 +3206,11 @@ async function loadInboxData(silent = false) {
   const inboxPermissionCard = document.getElementById("inbox-permission-card");
 
   if (!silent) {
-    if (inboxLoadingContainer) inboxLoadingContainer.style.display = "block";
-    if (inboxEmailList) inboxEmailList.style.display = "none";
-    if (inboxEmptyContainer) inboxEmptyContainer.style.display = "none";
-    if (inboxErrorAlert) inboxErrorAlert.style.display = "none";
-    if (inboxPermissionCard) inboxPermissionCard.style.display = "none";
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "block", "important");
+    if (inboxEmailList) inboxEmailList.style.setProperty("display", "none", "important");
+    if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
+    if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
+    if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "none", "important");
   }
 
   try {
@@ -3263,12 +3263,12 @@ async function loadInboxData(silent = false) {
 
     updateInboxBatchButton();
 
-    if (inboxLoadingContainer) inboxLoadingContainer.style.display = "none";
-    if (inboxPermissionCard) inboxPermissionCard.style.display = "none";
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
+    if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "none", "important");
     renderInboxList();
   } catch (err) {
     console.error("[GMAIL] Fehler bei loadInboxData:", err);
-    if (inboxLoadingContainer) inboxLoadingContainer.style.display = "none";
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
 
     const errStr = (err.message || "").toLowerCase();
     const isPermissionError =
@@ -3278,12 +3278,12 @@ async function loadInboxData(silent = false) {
       errStr.includes("403");
 
     if (isPermissionError && inboxPermissionCard) {
-      inboxPermissionCard.style.display = "block";
-      if (inboxEmailList) inboxEmailList.style.display = "none";
-      if (inboxEmptyContainer) inboxEmptyContainer.style.display = "none";
-      if (inboxErrorAlert) inboxErrorAlert.style.display = "none";
+      inboxPermissionCard.style.setProperty("display", "block", "important");
+      if (inboxEmailList) inboxEmailList.style.setProperty("display", "none", "important");
+      if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
+      if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
     } else if (inboxErrorAlert) {
-      inboxErrorAlert.style.display = "block";
+      inboxErrorAlert.style.setProperty("display", "block", "important");
       if (inboxErrorText) inboxErrorText.innerText = err.message || "Fehler beim Laden der E-Mails.";
     }
   }
@@ -3321,17 +3321,21 @@ function formatDateDisplay(isoString) {
 function renderInboxList() {
   if (!inboxEmailList) return;
 
+  // Alte Karten IMMER zuerst aus dem DOM löschen!
+  inboxEmailList.innerHTML = "";
+
   const visibleEmails = getVisibleInboxEmails();
 
   if (visibleEmails.length === 0) {
-    inboxEmailList.style.display = "none";
-    if (inboxEmptyContainer) inboxEmptyContainer.style.display = "block";
+    inboxEmailList.style.setProperty("display", "none", "important");
+    if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "block", "important");
+    if (inboxSelectAllCb) inboxSelectAllCb.checked = false;
+    updateInboxBatchButton();
     return;
   }
 
-  if (inboxEmptyContainer) inboxEmptyContainer.style.display = "none";
-  inboxEmailList.style.display = "flex";
-  inboxEmailList.innerHTML = "";
+  if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
+  inboxEmailList.style.setProperty("display", "flex", "important");
 
   visibleEmails.forEach((mail) => {
     const isSelected = selectedInboxMessageIds.has(mail.id);
