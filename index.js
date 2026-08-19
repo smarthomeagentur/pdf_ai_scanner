@@ -438,7 +438,7 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
 });
 
 // Drive Routes
-app.get("/api/drive/folders", async (req, res) => {
+app.get("/api/drive/folders", requireAdmin, async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.list({
@@ -454,7 +454,7 @@ app.get("/api/drive/folders", async (req, res) => {
   }
 });
 
-app.get("/api/drive/folder/:id", async (req, res) => {
+app.get("/api/drive/folder/:id", requireAdmin, async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.get({ fileId: req.params.id, fields: "id, name" });
@@ -464,7 +464,7 @@ app.get("/api/drive/folder/:id", async (req, res) => {
   }
 });
 
-app.get("/api/drive/search", async (req, res) => {
+app.get("/api/drive/search", requireAdmin, async (req, res) => {
   try {
     const q = req.query.q;
     if (!q) return res.json({ success: true, files: [] });
@@ -1222,7 +1222,7 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/drive/sync-status", (req, res) => {
+app.get("/api/drive/sync-status", requireAdmin, (req, res) => {
   res.json({
     success: true,
     syncState: driveSyncState,
@@ -1341,7 +1341,7 @@ app.post("/api/drive/sync-execute", requireAdmin, async (req, res) => {
 // ==========================================
 
 // 0. Accounts Endpoints
-app.get("/api/gmail/accounts", async (req, res) => {
+app.get("/api/gmail/accounts", requireAdmin, async (req, res) => {
   try {
     const accounts = await gmailApi.getAccountsList();
     res.json({ success: true, accounts });
@@ -1363,7 +1363,7 @@ app.post("/api/gmail/accounts/delete", requireAdmin, async (req, res) => {
 });
 
 // 0.1 Attachment Preview Endpoint
-app.get("/api/gmail/attachment/preview", async (req, res) => {
+app.get("/api/gmail/attachment/preview", requireAdmin, async (req, res) => {
   try {
     const { messageId, attachmentId, accountId, filename, download } = req.query;
     if (!messageId || !attachmentId) {
@@ -1388,7 +1388,7 @@ app.get("/api/gmail/attachment/preview", async (req, res) => {
 });
 
 // 1. GET /api/gmail/inbox
-app.get("/api/gmail/inbox", async (req, res) => {
+app.get("/api/gmail/inbox", requireAdmin, async (req, res) => {
   try {
     if (!fs.existsSync(TOKEN_PATH)) {
       return res.status(400).json({ success: false, error: "Google Konto ist nicht authentifiziert." });
@@ -1428,7 +1428,7 @@ app.get("/api/gmail/inbox", async (req, res) => {
 });
 
 // 2. GET /api/gmail/skipped
-app.get("/api/gmail/skipped", (req, res) => {
+app.get("/api/gmail/skipped", requireAdmin, (req, res) => {
   try {
     const list = Object.values(skippedEmails).sort(
       (a, b) => new Date(b.skippedAt || b.date) - new Date(a.skippedAt || a.date)
@@ -1440,7 +1440,7 @@ app.get("/api/gmail/skipped", (req, res) => {
 });
 
 // 3. POST /api/gmail/skip
-app.post("/api/gmail/skip", (req, res) => {
+app.post("/api/gmail/skip", requireAdmin, (req, res) => {
   try {
     const { messageId, accountId, accountEmail, subject, from, fromName, fromEmail, date, snippet, attachments, isDetected } = req.body;
     if (!messageId) {
@@ -1472,7 +1472,7 @@ app.post("/api/gmail/skip", (req, res) => {
 });
 
 // 4. POST /api/gmail/unskip
-app.post("/api/gmail/unskip", (req, res) => {
+app.post("/api/gmail/unskip", requireAdmin, (req, res) => {
   try {
     const { messageId } = req.body;
     if (!messageId) {
@@ -1493,7 +1493,7 @@ app.post("/api/gmail/unskip", (req, res) => {
 });
 
 // 5. POST /api/gmail/process
-app.post("/api/gmail/process", async (req, res) => {
+app.post("/api/gmail/process", requireAdmin, async (req, res) => {
   try {
     const { messageId, accountId, subject, fromName, fromEmail, date, attachmentIds, archive } = req.body;
     if (!messageId) {
@@ -1588,7 +1588,7 @@ app.post("/api/gmail/process", async (req, res) => {
 });
 
 // 6. POST /api/gmail/process-batch
-app.post("/api/gmail/process-batch", async (req, res) => {
+app.post("/api/gmail/process-batch", requireAdmin, async (req, res) => {
   try {
     const { items, archive } = req.body;
     if (!Array.isArray(items) || items.length === 0) {
@@ -1780,7 +1780,7 @@ app.post("/api/jobs/:id/private", requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/jobs/:id/category", (req, res) => {
+app.post("/api/jobs/:id/category", requireAdmin, (req, res) => {
   const jobId = req.params.id;
   const newCategory = req.body.category;
   if (uploadJobs[jobId] && uploadJobs[jobId].result) {

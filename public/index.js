@@ -29,6 +29,14 @@ openSettingsBtn.addEventListener("click", async () => {
         alert("Falsches Admin-Passwort.");
         return;
       }
+      window.isAdmin = true;
+      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+      const navInboxTab = document.getElementById("nav-inbox-tab");
+      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+      if (navInboxTab) navInboxTab.style.display = "inline-flex";
+      renderJobs();
+    } else {
+      window.isAdmin = true;
     }
   } catch (e) {
     console.error("Admin Check Error", e);
@@ -1358,8 +1366,25 @@ async function loadGlobalSettings() {
   try {
     const adminRes = await fetch("/api/admin-check");
     window.isAdmin = adminRes.ok;
-    renderJobs();
-  } catch(e) {}
+  } catch(e) {
+    window.isAdmin = false;
+  }
+
+  const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+  const navInboxTab = document.getElementById("nav-inbox-tab");
+
+  if (window.isAdmin) {
+    if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+    if (navInboxTab) navInboxTab.style.display = "inline-flex";
+  } else {
+    if (navRechnungenTab) navRechnungenTab.style.display = "none";
+    if (navInboxTab) navInboxTab.style.display = "none";
+    if ((viewRechnungen && viewRechnungen.style.display === "block") || (viewInbox && viewInbox.style.display === "block")) {
+      switchMainTab("upload");
+    }
+  }
+
+  renderJobs();
 
   try {
     const res = await fetch("/api/settings");
@@ -1505,6 +1530,10 @@ const viewRechnungen = document.getElementById("view-rechnungen");
 const viewInbox = document.getElementById("view-inbox");
 
 function switchMainTab(tab) {
+  if ((tab === "rechnungen" || tab === "inbox") && !window.isAdmin) {
+    tab = "upload";
+  }
+
   if (navUploadTab) navUploadTab.classList.toggle("active", tab === "upload");
   if (navRechnungenTab) navRechnungenTab.classList.toggle("active", tab === "rechnungen");
   if (navInboxTab) navInboxTab.classList.toggle("active", tab === "inbox");
@@ -1523,7 +1552,10 @@ if (navRechnungenTab) navRechnungenTab.addEventListener("click", () => {
   if (!window.isAdmin) return;
   switchMainTab("rechnungen");
 });
-if (navInboxTab) navInboxTab.addEventListener("click", () => switchMainTab("inbox"));
+if (navInboxTab) navInboxTab.addEventListener("click", () => {
+  if (!window.isAdmin) return;
+  switchMainTab("inbox");
+});
 
 // ==========================================
 // --- Rechnungsverarbeitung & Lexoffice ---
@@ -3440,6 +3472,7 @@ function updateAccountsDropdown(accounts) {
 }
 
 async function loadInboxData(silent = false) {
+  if (!window.isAdmin) return;
   const inboxPermissionCard = document.getElementById("inbox-permission-card");
 
   if (!silent) {
