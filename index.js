@@ -656,7 +656,7 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
     if (fs.existsSync(targetThumbPath)) return true;
   } catch (fitzErr) {}
 
-  // 2. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
+  // 2. pdftoppm (Linux Poppler Utility)
   try {
     const util = require("util");
     const execFileAsync = util.promisify(execFile);
@@ -668,6 +668,66 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
       return true;
     }
   } catch (e) {}
+
+  // 3. Ghostscript (gs - Standard in Docker Image)
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    await execFileAsync("gs", [
+      "-sDEVICE=jpeg",
+      "-dJPEGQ=90",
+      "-dNOPAUSE",
+      "-dBATCH",
+      "-dQUIET",
+      "-dFirstPage=1",
+      "-dLastPage=1",
+      "-r150",
+      `-sOutputFile=${targetThumbPath}`,
+      pdfPath,
+    ]);
+    if (fs.existsSync(targetThumbPath)) return true;
+  } catch (gsErr) {}
+
+  // 4. GraphicsMagick (gm convert - Standard in Docker Image)
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    await execFileAsync("gm", [
+      "convert",
+      "-density",
+      "150",
+      `${pdfPath}[0]`,
+      targetThumbPath,
+    ]);
+    if (fs.existsSync(targetThumbPath)) return true;
+  } catch (gmErr) {}
+
+  // 5. pdf2pic (Node.js fallback)
+  try {
+    const { fromPath } = require("pdf2pic");
+    const dir = path.dirname(targetThumbPath);
+    const baseName = path.basename(targetThumbPath, path.extname(targetThumbPath));
+    const convert = fromPath(pdfPath, {
+      density: 150,
+      saveFilename: baseName,
+      savePath: dir,
+      format: "jpeg",
+    });
+    const res = await convert(1);
+    const possible = [
+      path.join(dir, `${baseName}.1.jpeg`),
+      path.join(dir, `${baseName}.1.jpg`),
+      res?.path,
+    ];
+    for (const p of possible) {
+      if (p && fs.existsSync(p)) {
+        if (p !== targetThumbPath) {
+          await fs.promises.rename(p, targetThumbPath).catch(() => {});
+        }
+        return true;
+      }
+    }
+  } catch (p2pErr) {}
 
   return false;
 }

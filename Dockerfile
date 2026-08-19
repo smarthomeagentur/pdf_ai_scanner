@@ -4,6 +4,7 @@ FROM node:20-bookworm
 RUN apt-get update && apt-get install -y \
     graphicsmagick \
     ghostscript \
+    poppler-utils \
     ca-certificates \
     fonts-liberation \
     libnss3 \
@@ -22,7 +23,7 @@ WORKDIR /app
 
 # Setup Python Virtual Environment and install dependencies
 RUN python3 -m venv ./venv && \
-    ./venv/bin/pip install --no-cache-dir opencv-python-headless numpy pytesseract
+    ./venv/bin/pip install --no-cache-dir opencv-python-headless numpy pytesseract pymupdf
 
 # Copy package files and install dependencies
 COPY package*.json ./
