@@ -412,11 +412,7 @@ class GmailAPI {
           }
         }
       } catch (accErr) {
-        console.error(`[GMAIL] Fehler beim Abrufen für Konto ${acc.email}:`, accErr.message);
-        // Falls dieses Konto Insufficient Permission hat, weiterwerfen wenn einziges Konto
-        if (accountsToQuery.length === 1) {
-          throw accErr;
-        }
+        console.warn(`[GMAIL] Warnung beim Abrufen für Konto ${acc.email || acc.name}:`, accErr.message);
       }
     }
 

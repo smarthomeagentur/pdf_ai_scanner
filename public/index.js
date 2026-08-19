@@ -2653,6 +2653,17 @@ document.addEventListener("click", (e) => {
     return;
   }
 
+  const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync") || e.target.closest(".rechnung-lexoffice-btn");
+  if (lexofficeBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = lexofficeBtn.getAttribute("data-job-id") || lexofficeBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => lexofficeBtn.closest(".job-item") && lexofficeBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
+    if (jobId) {
+      openLexofficeSyncModal(jobId);
+    }
+    return;
+  }
+
   const markSyncedBtn = e.target.closest(".btn-mark-synced-direct");
   if (markSyncedBtn) {
     e.stopPropagation();
