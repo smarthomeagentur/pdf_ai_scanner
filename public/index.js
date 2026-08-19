@@ -729,6 +729,94 @@ let startSelectedCategories = new Set();
 let startCurrentPage = 1;
 const START_PAGE_SIZE = 50;
 
+function updateStartFilterDropdownCounts() {
+  const dateSelect = document.getElementById("start-filter-date");
+  const compSelect = document.getElementById("start-filter-company");
+  if (!activeJobs || activeJobs.length === 0) return;
+
+  const totalJobs = activeJobs.length;
+  const now = new Date();
+
+  // 1. Calculate Date Counts
+  let count7Days = 0;
+  let count30Days = 0;
+  let countMonth = 0;
+  let countYear2026 = 0;
+  let countYear2025 = 0;
+  let countOlder = 0;
+
+  activeJobs.forEach((job) => {
+    const res = job.result || {};
+    const dateVal = res.documentDate && res.documentDate !== "unknown" ? new Date(res.documentDate) : (job.uploadDate ? new Date(job.uploadDate) : null);
+    if (dateVal && !isNaN(dateVal.getTime())) {
+      const diffDays = (now - dateVal) / (1000 * 60 * 60 * 24);
+      const year = dateVal.getFullYear();
+      if (diffDays <= 7) count7Days++;
+      if (diffDays <= 30) count30Days++;
+      if (dateVal.getMonth() === now.getMonth() && dateVal.getFullYear() === now.getFullYear()) countMonth++;
+      if (year === 2026) countYear2026++;
+      if (year === 2025) countYear2025++;
+      if (year < 2025) countOlder++;
+    }
+  });
+
+  if (dateSelect) {
+    const dateLabels = {
+      alle: `📅 Alle Zeiträume (${totalJobs})`,
+      "7days": `Letzte 7 Tage (${count7Days})`,
+      "30days": `Letzte 30 Tage (${count30Days})`,
+      month: `Dieser Monat (${countMonth})`,
+      year2026: `Jahr 2026 (${countYear2026})`,
+      year2025: `Jahr 2025 (${countYear2025})`,
+      older: `Älter als 2025 (${countOlder})`,
+    };
+    Array.from(dateSelect.options).forEach((opt) => {
+      if (dateLabels[opt.value]) {
+        opt.text = dateLabels[opt.value];
+      }
+    });
+  }
+
+  // 2. Calculate Company Counts
+  let countWirewire = 0;
+  let countThewire = 0;
+  let countPolyxo = 0;
+  let countDaniel = 0;
+  let countAndere = 0;
+
+  activeJobs.forEach((job) => {
+    const res = job.result || {};
+    const compName = (res.company || "").toLowerCase();
+    const targetComp = (job.targetCompany || "").toLowerCase();
+    const isWirewire = compName.includes("wirewire") || targetComp === "wirewire";
+    const isThewire = compName.includes("the wire") || compName.includes("thewire") || targetComp === "thewire";
+    const isPolyxo = compName.includes("polyxo") || targetComp === "polyxo";
+    const isDaniel = compName.includes("daniel") || targetComp === "daniel";
+
+    if (isWirewire) countWirewire++;
+    if (isThewire) countThewire++;
+    if (isPolyxo) countPolyxo++;
+    if (isDaniel) countDaniel++;
+    if (!isWirewire && !isThewire && !isPolyxo && !isDaniel) countAndere++;
+  });
+
+  if (compSelect) {
+    const compLabels = {
+      alle: `🏢 Alle Unternehmen (${totalJobs})`,
+      thewire: `The Wire UG (${countThewire})`,
+      wirewire: `wirewire GmbH (${countWirewire})`,
+      polyxo: `Polyxo Studios GmbH (${countPolyxo})`,
+      daniel: `Daniel (Privat) (${countDaniel})`,
+      andere: `Andere / Unbekannt (${countAndere})`,
+    };
+    Array.from(compSelect.options).forEach((opt) => {
+      if (compLabels[opt.value]) {
+        opt.text = compLabels[opt.value];
+      }
+    });
+  }
+}
+
 function renderStartCategoryBubbles() {
   const container = document.getElementById("start-filter-category-bubbles");
   if (!container) return;
@@ -753,11 +841,26 @@ function renderStartCategoryBubbles() {
   container.innerHTML = "";
   allCats.forEach(cat => {
     const isSelected = startSelectedCategories.has(cat.toLowerCase());
+    const catLower = cat.toLowerCase();
+
+    // Count available documents for this category
+    const count = (activeJobs || []).filter((job) => {
+      const res = job.result || {};
+      const jobCat = (res.category || "").toLowerCase();
+      const isInvoice = res.isInvoice === true || jobCat.includes("rechnung");
+      const isPrivat = job.isPrivate === true || jobCat.includes("privat");
+
+      if (catLower === "rechnungen" || catLower === "rechnung") return isInvoice;
+      if (catLower === "dokumente" || catLower === "dokument") return !isInvoice;
+      if (catLower === "privat") return isPrivat;
+      return jobCat.includes(catLower);
+    }).length;
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
     btn.style.cssText = "border-radius: 16px; font-size: 12px; padding: 2px 10px; transition: all 0.15s ease;";
-    btn.innerHTML = `${cat}${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
+    btn.innerHTML = `${cat} <span class="badge ${isSelected ? 'bg-white text-primary' : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
     
     btn.addEventListener("click", () => {
       const key = cat.toLowerCase();
@@ -978,6 +1081,7 @@ function renderJobs() {
   }
 
   renderStartCategoryBubbles();
+  updateStartFilterDropdownCounts();
 
   const filteredJobs = filterActiveJobs(activeJobs);
   const totalFiltered = filteredJobs.length;
@@ -1143,11 +1247,11 @@ function renderJobs() {
           <button type="button" class="btn btn-sm btn-manual-clickup-transfer d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
             style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
               isClickupSynced
-                ? 'background: #ede7f6; color: #5e35b1; border: 1px solid #b39ddb;'
+                ? 'background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;'
                 : 'background: #ffffff; color: #7b68ee; border: 1px solid #7b68ee;'
             }" 
             title="${isClickupSynced ? `ClickUp Task #${clickupTaskId} (${clickupStatus}) - Klicken zum Aktualisieren` : 'Zu ClickUp übertragen'}">
-            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isClickupSynced ? '#5e35b1' : '#7b68ee'};">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
+            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isClickupSynced ? '#2e7d32' : '#7b68ee'};">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
             <span>${isClickupSynced ? '✓ ClickUp' : 'ClickUp'}</span>
           </button>
         `;
@@ -1985,13 +2089,6 @@ function createRechnungCard(job) {
         Übertragen an ${providerLabel} (${activeCompany}) am ${dateStr}
       </span>
     `;
-  } else {
-    lexStatusBadgeHtml = `
-      <span class="badge bg-light text-secondary border d-inline-flex align-items-center gap-1 p-1 px-2">
-        <span class="material-symbols-outlined" style="font-size: 14px;">info</span>
-        Nicht an Buchhaltung übertragen
-      </span>
-    `;
   }
 
   card.innerHTML = `
@@ -2012,7 +2109,7 @@ function createRechnungCard(job) {
             ${res.invoiceNumber && res.invoiceNumber !== "none" ? `<span>Rechnungs-Nr: <strong>${res.invoiceNumber}</strong></span>` : ""}
             ${amountFormatted ? `<span class="text-success font-monospace">Betrag: <strong>${amountFormatted}</strong></span>` : ""}
           </div>
-          <div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>
+          ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>` : ""}
         </div>
       </div>
 
