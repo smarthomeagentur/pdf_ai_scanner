@@ -3240,11 +3240,15 @@ if (inboxGrantPermissionBtn) {
   });
 }
 
-const gmailReauthBtn = document.getElementById("gmail-reauth-btn");
-if (gmailReauthBtn) {
-  gmailReauthBtn.addEventListener("click", () => {
-    if (authClientCode) {
+const settingsAddGmailAccountBtn = document.getElementById("settings-add-gmail-account-btn");
+if (settingsAddGmailAccountBtn) {
+  settingsAddGmailAccountBtn.addEventListener("click", () => {
+    if (secondaryGmailAuthClient) {
+      secondaryGmailAuthClient.requestCode();
+    } else if (authClientCode) {
       authClientCode.requestCode();
+    } else {
+      alert("Google Authentifizierung wird initialisiert. Bitte kurz warten.");
     }
   });
 }
