@@ -1153,6 +1153,10 @@ async function processSingleJob(jobId) {
     driveFile = driveFile || defaultDriveFile;
 
     if (driveFile) {
+      job.driveFileId = driveFile.id;
+      if (driveFile.id && !processedDriveFiles.includes(driveFile.id)) {
+        processedDriveFiles.push(driveFile.id);
+      }
       sortedName.webViewLink = driveFile.webViewLink;
       sortedName.thumbnailLink = driveFile.thumbnailLink;
       sortedName.webContentLink = driveFile.webContentLink;
@@ -1624,6 +1628,25 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
     console.error("[DRIVE SYNC PREVIEW] Fehler:", err);
     res.status(500).json({ success: false, error: err.message || "Fehler beim Laden der Drive-Vorschau." });
   }
+});
+
+// Endpunkte zum gezielten Ignorieren / Ausblenden einzelner Drive-Dateien vom Sync
+app.post("/api/drive/ignore-file", requireAdmin, (req, res) => {
+  const { fileId } = req.body;
+  if (!fileId) return res.status(400).json({ success: false, error: "fileId erforderlich." });
+  if (!processedDriveFiles.includes(fileId)) {
+    processedDriveFiles.push(fileId);
+    saveJobs();
+  }
+  res.json({ success: true, message: "Datei dauerhaft für Google Drive Sync ignoriert." });
+});
+
+app.post("/api/drive/unignore-file", requireAdmin, (req, res) => {
+  const { fileId } = req.body;
+  if (!fileId) return res.status(400).json({ success: false, error: "fileId erforderlich." });
+  processedDriveFiles = processedDriveFiles.filter((id) => id !== fileId);
+  saveJobs();
+  res.json({ success: true, message: "Datei wird beim nächsten Sync wieder berücksichtigt." });
 });
 
 app.get("/api/drive/sync-status", requireAdmin, (req, res) => {
