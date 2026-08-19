@@ -1,4 +1,5 @@
 const video = document.getElementById("video");
+const sampleImage = document.getElementById("sampleImage");
 const overlay = document.getElementById("overlay");
 const ctxOverlay = overlay.getContext("2d");
 const videoWrapper = document.getElementById("video-wrapper");
@@ -7,25 +8,130 @@ const loader = document.getElementById("loader");
 const loaderStatus = document.getElementById("loader-status");
 const loadingText = document.getElementById("opencv-loading");
 
+// --- Erkennungs-Engine State & Toggle ---
+let currentEngine = localStorage.getItem("scanner_detection_engine") || "onnx";
+let onnxSession = null;
+let onnxLoading = false;
+let onnxReady = false;
+let onnxLoadFailed = false;
+let openCvReady = false;
+let cameraStarted = false;
+let cvAutoEnabled = true;
+
+// Bildquelle (Live Kamera oder Test-Bilder)
+const sourceSelect = document.getElementById("sourceSelect");
+let activeSource = "camera";
+
+// UI Elements for Engine Toggle
+const engineToggleBtn = document.getElementById("engineToggleBtn");
+const modeIcon = document.getElementById("modeIcon");
+const modeText = document.getElementById("modeText");
+const modeSpinner = document.getElementById("modeSpinner");
+const setModeOnnxBtn = document.getElementById("setModeOnnxBtn");
+const setModeCvBtn = document.getElementById("setModeCvBtn");
+const onnxSettingsNotice = document.getElementById("onnxSettingsNotice");
+const cvSettingsGroup = document.getElementById("cvSettingsGroup");
+const cvAutoThresholds = document.getElementById("cvAutoThresholds");
+const cvManualSliders = document.getElementById("cvManualSliders");
+
+function updateEngineUI() {
+  if (currentEngine === "onnx") {
+    if (onnxLoading) {
+      if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
+      if (modeIcon) modeIcon.innerText = "psychology";
+      if (modeText) modeText.innerText = "KI lädt...";
+      if (modeSpinner) modeSpinner.style.display = "inline-block";
+    } else if (onnxReady) {
+      if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
+      if (modeIcon) modeIcon.innerText = "psychology";
+      if (modeText) modeText.innerText = "KI: ONNX";
+      if (modeSpinner) modeSpinner.style.display = "none";
+    } else if (onnxLoadFailed) {
+      if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-warning d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
+      if (modeIcon) modeIcon.innerText = "warning";
+      if (modeText) modeText.innerText = "KI Fehler (CV Fallback)";
+      if (modeSpinner) modeSpinner.style.display = "none";
+    }
+
+    if (setModeOnnxBtn) setModeOnnxBtn.className = "btn btn-sm btn-primary w-50 d-flex align-items-center justify-content-center gap-1";
+    if (setModeCvBtn) setModeCvBtn.className = "btn btn-sm btn-outline-secondary w-50 d-flex align-items-center justify-content-center gap-1";
+    if (onnxSettingsNotice) onnxSettingsNotice.style.display = "flex";
+    if (cvSettingsGroup) cvSettingsGroup.style.display = "none";
+  } else {
+    if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
+    if (modeIcon) modeIcon.innerText = "crop_free";
+    if (modeText) modeText.innerText = cvAutoEnabled ? "OpenCV (Auto)" : "OpenCV";
+    if (modeSpinner) modeSpinner.style.display = "none";
+
+    if (setModeOnnxBtn) setModeOnnxBtn.className = "btn btn-sm btn-outline-secondary w-50 d-flex align-items-center justify-content-center gap-1";
+    if (setModeCvBtn) setModeCvBtn.className = "btn btn-sm btn-primary w-50 d-flex align-items-center justify-content-center gap-1";
+    if (onnxSettingsNotice) onnxSettingsNotice.style.display = "none";
+    if (cvSettingsGroup) cvSettingsGroup.style.display = "block";
+  }
+}
+
+if (engineToggleBtn) {
+  engineToggleBtn.addEventListener("click", () => {
+    if (currentEngine === "onnx") {
+      currentEngine = "cv";
+    } else {
+      currentEngine = "onnx";
+      if (!onnxReady && !onnxLoading) initOnnx();
+    }
+    localStorage.setItem("scanner_detection_engine", currentEngine);
+    updateEngineUI();
+  });
+}
+
+if (setModeOnnxBtn) {
+  setModeOnnxBtn.addEventListener("click", () => {
+    currentEngine = "onnx";
+    if (!onnxReady && !onnxLoading) initOnnx();
+    localStorage.setItem("scanner_detection_engine", "onnx");
+    updateEngineUI();
+  });
+}
+
+if (setModeCvBtn) {
+  setModeCvBtn.addEventListener("click", () => {
+    currentEngine = "cv";
+    localStorage.setItem("scanner_detection_engine", "cv");
+    updateEngineUI();
+  });
+}
+
+if (cvAutoThresholds) {
+  cvAutoThresholds.addEventListener("change", (e) => {
+    cvAutoEnabled = e.target.checked;
+    if (cvManualSliders) cvManualSliders.style.display = cvAutoEnabled ? "none" : "block";
+    updateEngineUI();
+  });
+}
+
 // UI-Slider Handler
 let optBlur = 3;
 let optCanny1 = 40;
 let optCanny2 = 125;
 
-document.getElementById("sensitivitySlider").oninput = function () {
-  let s = parseInt(this.value);
-  document.getElementById("sensitivityVal").innerText = s + "%";
-  let norm = s / 100.0;
+const sensitivitySlider = document.getElementById("sensitivitySlider");
+if (sensitivitySlider) {
+  sensitivitySlider.oninput = function () {
+    let s = parseInt(this.value);
+    document.getElementById("sensitivityVal").innerText = s + "%";
+    let norm = s / 100.0;
+    optBlur = norm > 0.8 ? 3 : norm > 0.4 ? 5 : norm > 0.2 ? 7 : 9;
+    optCanny1 = 150 - Math.round(norm * 130);
+    optCanny2 = 250 - Math.round(norm * 150);
+  };
+}
 
-  optBlur = norm > 0.8 ? 3 : norm > 0.4 ? 5 : norm > 0.2 ? 7 : 9;
-  optCanny1 = 150 - Math.round(norm * 130);
-  optCanny2 = 250 - Math.round(norm * 150);
-};
-
-document.getElementById("smoothingSlider").oninput = function () {
-  SMOOTHING_FACTOR = parseInt(this.value) / 100.0;
-  document.getElementById("smoothingVal").innerText = this.value + "%";
-};
+const smoothingSlider = document.getElementById("smoothingSlider");
+if (smoothingSlider) {
+  smoothingSlider.oninput = function () {
+    SMOOTHING_FACTOR = parseInt(this.value) / 100.0;
+    document.getElementById("smoothingVal").innerText = this.value + "%";
+  };
+}
 
 let streaming = false;
 
@@ -37,20 +143,47 @@ canvasProcess.width = processWidth;
 canvasProcess.height = processHeight;
 const ctxProcess = canvasProcess.getContext("2d", { willReadFrequently: true });
 
-let src, gray, blurred, edges, contours, hierarchy;
-let currentRelativeDocumentCorners = null; // Speichert Live die Ecken des Dokuments [x, y relative to Width/Height]
+// Dedicated 256x256 working canvas for ONNX inference
+const canvasOnnx = document.createElement("canvas");
+canvasOnnx.width = 256;
+canvasOnnx.height = 256;
+const ctxOnnx = canvasOnnx.getContext("2d", { willReadFrequently: true });
+const onnxTensorBuffer = new Float32Array(3 * 256 * 256);
+const IMAGENET_MEAN = [0.485, 0.456, 0.406];
+const IMAGENET_STD = [0.229, 0.224, 0.225];
 
-// State Variablen für das "Glätten" der Positions-Erkennung (Anti-Flicker/Smoothing)
+let src, gray, blurred, edges, contours, hierarchy;
+let currentRelativeDocumentCorners = null;
+
 let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
-const MAX_FRAMES_LOSE_TRACK = 12; // Halbe Sekunde Toleranz
-let SMOOTHING_FACTOR = 0.5; // 8% Default, einstellbar über Slider
+const MAX_FRAMES_LOSE_TRACK = 12;
+let SMOOTHING_FACTOR = 0.5;
+
+function initCvMats() {
+  if (typeof cv !== "undefined" && !src && typeof cv.Mat !== "undefined") {
+    try {
+      src = new cv.Mat(processHeight, processWidth, cv.CV_8UC4);
+      gray = new cv.Mat();
+      blurred = new cv.Mat();
+      edges = new cv.Mat();
+      hierarchy = new cv.Mat();
+      contours = new cv.MatVector();
+    } catch (e) {
+      console.warn("Fehler beim Initialisieren der OpenCV Matrizen:", e);
+    }
+  }
+}
 
 // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
-function sortAndOrderCorners(ptsData32S) {
+function sortAndOrderCorners(ptsData) {
   let pts = [];
-  for (let i = 0; i < 4; i++) {
-    pts.push({ x: ptsData32S[i * 2], y: ptsData32S[i * 2 + 1] });
+  if (Array.isArray(ptsData) && typeof ptsData[0] === "object") {
+    pts = ptsData.map((p) => ({ x: p.x, y: p.y }));
+  } else {
+    for (let i = 0; i < 4; i++) {
+      pts.push({ x: ptsData[i * 2], y: ptsData[i * 2 + 1] });
+    }
   }
   let cx = 0,
     cy = 0;
@@ -66,16 +199,300 @@ function sortAndOrderCorners(ptsData32S) {
   });
 }
 
-// 1. Wird aufgerufen, wenn OpenCV.js Datei heruntergeladen wurde
-function onOpenCvReady() {
-  // Auf Initialisierung der WebAssembly-Umgebung warten
-  cv["onRuntimeInitialized"] = () => {
-    console.log("OpenCV initialized");
-    loadingText.style.display = "none";
-    videoWrapper.style.display = "block";
-    captureBtn.style.display = "block";
-    startCamera();
-  };
+// --- ONNX Corner Detection ---
+function extractCornersFromHeatmap(heatmapData, numCorners = 4, mapH = 128, mapW = 128) {
+  const corners = [];
+  const scores = [];
+
+  for (let c = 0; c < numCorners; c++) {
+    const channelOffset = c * mapH * mapW;
+    let maxVal = -Infinity;
+    let maxIdx = 0;
+
+    for (let i = 0; i < mapH * mapW; i++) {
+      const v = heatmapData[channelOffset + i];
+      if (v > maxVal) {
+        maxVal = v;
+        maxIdx = i;
+      }
+    }
+
+    const peakY = Math.floor(maxIdx / mapW);
+    const peakX = maxIdx % mapW;
+
+    let sumWeight = 0;
+    let sumX = 0;
+    let sumY = 0;
+
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const ny = peakY + dy;
+        const nx = peakX + dx;
+        if (nx >= 0 && nx < mapW && ny >= 0 && ny < mapH) {
+          const w = Math.max(0, heatmapData[channelOffset + ny * mapW + nx]);
+          sumWeight += w;
+          sumX += nx * w;
+          sumY += ny * w;
+        }
+      }
+    }
+
+    const finalX = sumWeight > 0 ? sumX / sumWeight : peakX;
+    const finalY = sumWeight > 0 ? sumY / sumWeight : peakY;
+
+    corners.push({
+      x: Math.max(0, Math.min(1, finalX / (mapW - 1))),
+      y: Math.max(0, Math.min(1, finalY / (mapH - 1))),
+    });
+    scores.push(maxVal);
+  }
+
+  return { corners, scores };
+}
+
+async function detectCornersOnnx(source, sx = 0, sy = 0, sWidth = null, sHeight = null) {
+  if (!onnxSession || !onnxReady) return null;
+
+  try {
+    const sw = sWidth || source.videoWidth || source.naturalWidth || source.width;
+    const sh = sHeight || source.videoHeight || source.naturalHeight || source.height;
+
+    ctxOnnx.drawImage(source, sx, sy, sw, sh, 0, 0, 256, 256);
+    const imageData = ctxOnnx.getImageData(0, 0, 256, 256);
+    const data = imageData.data;
+
+    for (let i = 0; i < 256 * 256; i++) {
+      const r = data[i * 4] / 255.0;
+      const g = data[i * 4 + 1] / 255.0;
+      const b = data[i * 4 + 2] / 255.0;
+
+      onnxTensorBuffer[0 * 65536 + i] = (r - IMAGENET_MEAN[0]) / IMAGENET_STD[0];
+      onnxTensorBuffer[1 * 65536 + i] = (g - IMAGENET_MEAN[1]) / IMAGENET_STD[1];
+      onnxTensorBuffer[2 * 65536 + i] = (b - IMAGENET_MEAN[2]) / IMAGENET_STD[2];
+    }
+
+    const tensor = new ort.Tensor("float32", onnxTensorBuffer, [1, 3, 256, 256]);
+    const results = await onnxSession.run({ img: tensor });
+    const heatmap = results.heatmap.data;
+
+    const { corners, scores } = extractCornersFromHeatmap(heatmap, 4, 128, 128);
+
+    const meanScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const minScore = Math.min(...scores);
+
+    if (meanScore < 0.08 || minScore < 0.02) {
+      return null;
+    }
+
+    const pts = corners;
+    const area =
+      0.5 *
+      Math.abs(
+        pts[0].x * (pts[1].y - pts[3].y) +
+          pts[1].x * (pts[2].y - pts[0].y) +
+          pts[2].x * (pts[3].y - pts[1].y) +
+          pts[3].x * (pts[0].y - pts[2].y)
+      );
+
+    if (area < 0.04) {
+      return null;
+    }
+
+    return corners;
+  } catch (err) {
+    console.error("ONNX Inferenzfehler:", err);
+    return null;
+  }
+}
+
+// --- OpenCV Corner Detection (Optimiert mit CLAHE & Auto-Canny) ---
+function detectCornersCv(source, sx = 0, sy = 0, sWidth = null, sHeight = null, isHighRes = false) {
+  if (!openCvReady || !src) return null;
+
+  try {
+    const sw = sWidth || source.videoWidth || source.naturalWidth || source.width;
+    const sh = sHeight || source.videoHeight || source.naturalHeight || source.height;
+
+    ctxProcess.drawImage(source, sx, sy, sw, sh, 0, 0, processWidth, processHeight);
+    const imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
+    src.data.set(imageData.data);
+
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+    let blurVal = optBlur;
+    let c1 = optCanny1;
+    let c2 = optCanny2;
+
+    if (cvAutoEnabled) {
+      try {
+        let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+        clahe.apply(gray, gray);
+        clahe.delete();
+      } catch (ce) {}
+
+      let meanVal = cv.mean(gray)[0];
+      c1 = Math.max(15, Math.floor(0.67 * meanVal));
+      c2 = Math.min(240, Math.floor(1.33 * meanVal));
+      blurVal = 5;
+    }
+
+    cv.GaussianBlur(gray, blurred, new cv.Size(blurVal, blurVal), 0, 0, cv.BORDER_DEFAULT);
+    cv.Canny(blurred, edges, c1, c2);
+
+    let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+    cv.dilate(edges, edges, kernel);
+    cv.erode(edges, edges, kernel);
+    kernel.delete();
+
+    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+    let maxArea = 0;
+    let bestCnt = null;
+    const minAreaThresh = isHighRes ? processWidth * processHeight * 0.03 : processWidth * processHeight * 0.05;
+
+    function checkContoursList(cntList) {
+      for (let i = 0; i < cntList.size(); ++i) {
+        let cnt = cntList.get(i);
+        let area = cv.contourArea(cnt);
+
+        if (area > minAreaThresh) {
+          let peri = cv.arcLength(cnt, true);
+          let epsilons = isHighRes ? [0.015, 0.03, 0.05, 0.08, 0.12, 0.15] : [0.04, 0.07, 0.11];
+
+          for (let eps of epsilons) {
+            let approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, eps * peri, true);
+
+            if (approx.rows === 4 && area > maxArea && cv.isContourConvex(approx)) {
+              let maxCosine = 0;
+              for (let j = 2; j < 6; j++) {
+                let pt1 = { x: approx.data32S[(j % 4) * 2], y: approx.data32S[(j % 4) * 2 + 1] };
+                let pt2 = { x: approx.data32S[((j - 2) % 4) * 2], y: approx.data32S[((j - 2) % 4) * 2 + 1] };
+                let pt0 = { x: approx.data32S[((j - 1) % 4) * 2], y: approx.data32S[((j - 1) % 4) * 2 + 1] };
+
+                let dx1 = pt1.x - pt0.x;
+                let dy1 = pt1.y - pt0.y;
+                let dx2 = pt2.x - pt0.x;
+                let dy2 = pt2.y - pt0.y;
+                let cosine = Math.abs(
+                  (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
+                );
+                maxCosine = Math.max(maxCosine, cosine);
+              }
+
+              const cosineMaxThresh = isHighRes ? 0.9 : 0.82;
+              if (maxCosine < cosineMaxThresh) {
+                maxArea = area;
+                if (bestCnt) bestCnt.delete();
+                bestCnt = approx.clone();
+              }
+            }
+            approx.delete();
+          }
+        }
+      }
+    }
+
+    checkContoursList(contours);
+
+    if (isHighRes && !bestCnt) {
+      let hFb = new cv.Mat();
+      cv.threshold(gray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
+      cv.morphologyEx(hFb, hFb, cv.MORPH_CLOSE, dKernel);
+      dKernel.delete();
+
+      let fbC = new cv.MatVector();
+      let fbH = new cv.Mat();
+      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+      checkContoursList(fbC);
+      fbC.delete();
+      fbH.delete();
+      hFb.delete();
+    }
+
+    if (bestCnt) {
+      let sorted = sortAndOrderCorners(bestCnt.data32S);
+      bestCnt.delete();
+      return sorted.map((c) => ({
+        x: c.x / processWidth,
+        y: c.y / processHeight,
+      }));
+    }
+
+    return null;
+  } catch (err) {
+    console.error("OpenCV Erkennungsfehler:", err);
+    return null;
+  }
+}
+
+// Initialisiere ONNX Runtime Web
+async function initOnnx() {
+  if (onnxLoading || onnxReady) return;
+  onnxLoading = true;
+  updateEngineUI();
+
+  try {
+    if (typeof ort === "undefined") {
+      console.warn("ONNX Runtime Web (ort) noch nicht im Window, warte...");
+      await new Promise((r) => setTimeout(r, 200));
+      if (typeof ort === "undefined") {
+        throw new Error("ort library nicht verfügbar");
+      }
+    }
+
+    ort.env.wasm.wasmPaths = "/vendor/onnx/";
+    ort.env.wasm.numThreads = 1;
+
+    console.log("Initialisiere ONNX Dokumenten-Modell (WASM)...");
+    onnxSession = await ort.InferenceSession.create("/models/doc_corner_net.onnx", {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+    });
+
+    // Warm-up Durchlauf
+    const dummy = new Float32Array(3 * 256 * 256).fill(0.5);
+    const tensor = new ort.Tensor("float32", dummy, [1, 3, 256, 256]);
+    await onnxSession.run({ img: tensor });
+
+    onnxReady = true;
+    onnxLoading = false;
+    onnxLoadFailed = false;
+    console.log("ONNX KI Dokumenten-Erkennung erfolgreich initialisiert!");
+
+    updateEngineUI();
+    onSystemReady();
+  } catch (err) {
+    console.error("Fehler beim Laden von ONNX:", err);
+    onnxLoading = false;
+    onnxReady = false;
+    onnxLoadFailed = true;
+    updateEngineUI();
+    onSystemReady();
+  }
+}
+
+// Global hook für OpenCV Initialisierung
+window.initOpenCvRuntime = function () {
+  if (typeof cv !== "undefined") {
+    if (cv.onRuntimeInitialized) {
+      cv["onRuntimeInitialized"] = () => {
+        console.log("OpenCV initialized");
+        openCvReady = true;
+        initCvMats();
+        onSystemReady();
+      };
+    } else if (cv.Mat) {
+      console.log("OpenCV already initialized");
+      openCvReady = true;
+      initCvMats();
+      onSystemReady();
+    }
+  }
+};
+if (window.openCvIsLoaded) {
+  window.initOpenCvRuntime();
 }
 
 let videoTrack = null;
@@ -93,105 +510,6 @@ async function initAutofocus() {
   }
 }
 
-async function startCamera() {
-  try {
-    // Wir fragen das Device ideal nach 4K für maximale Auflösung von Vorschau & Scan.
-    // Der Browser wählt automatisch die nächstgelegene unterstützte Auflösung, falls 4K nicht verfügbar ist.
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment",
-        width: { ideal: 3840 },
-        height: { ideal: 2160 },
-      },
-      audio: false,
-    });
-    video.srcObject = stream;
-    videoTrack = stream.getVideoTracks()[0];
-    video.play();
-    updateTorchState();
-    await initAutofocus();
-  } catch (err) {
-    // Fallback auf 1080p, wenn 4K-Initialisierung fehlschlägt
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
-      video.srcObject = stream;
-      videoTrack = stream.getVideoTracks()[0];
-      video.play();
-      updateTorchState();
-      await initAutofocus();
-    } catch (fallbackErr) {
-      alert("Kamera konnte nicht gestartet werden: " + fallbackErr);
-    }
-  }
-}
-
-
-// --- Auto Capture Support ---
-const autoCaptureBtn = document.getElementById("autoCaptureBtn");
-const autoCountdown = document.getElementById("auto-countdown");
-let autoCaptureEnabled = true;
-let documentDetectionStart = 0;
-let countdownInterval = null;
-let autoCaptureTriggered = false;
-
-autoCaptureBtn.addEventListener("click", () => {
-  autoCaptureEnabled = !autoCaptureEnabled;
-  if (autoCaptureEnabled) {
-    autoCaptureBtn.classList.replace("btn-outline-secondary", "btn-primary");
-    autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: An</span>';
-  } else {
-    autoCaptureBtn.classList.replace("btn-primary", "btn-outline-secondary");
-    autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: Aus</span>';
-    cancelAutoCountdown();
-  }
-});
-
-function cancelAutoCountdown() {
-  if (countdownInterval) {
-    clearInterval(countdownInterval);
-    countdownInterval = null;
-  }
-  autoCountdown.style.display = "none";
-  autoCountdown.innerText = "2";
-  documentDetectionStart = 0;
-  autoCaptureTriggered = false;
-}
-
-function startAutoCountdown() {
-  if (countdownInterval || autoCaptureTriggered) return;
-  autoCaptureTriggered = true; // Sperre
-  autoCountdown.style.display = "block";
-  autoCountdown.innerText = "2";
-  let count = 2;
-
-  countdownInterval = setInterval(() => {
-    count--;
-    if (count > 0) {
-      autoCountdown.innerText = count.toString();
-    } else {
-      // Bei 0
-      clearInterval(countdownInterval);
-      countdownInterval = null;
-      autoCountdown.style.display = "none";
-
-      // Wir haben einen gültigen Rahmen? Dann drück auf den Button
-      if (smoothedCornersRaw && !captureBtn.disabled) {
-        // Simuliere Haptic/Optic falls nötig
-        captureBtn.click();
-      } else {
-        cancelAutoCountdown(); // Wenn Rahmen grad im Moment des Fotomachens verschwand oder btn disabled (im Review Screen)
-      }
-    }
-  }, 1000);
-}
-
 // --- Taschenlampen Support ---
 const torchBtn = document.getElementById("torchBtn");
 let torchMode = "off"; // auto, off, on
@@ -199,14 +517,13 @@ let torchSupported = false;
 
 async function updateTorchState() {
   if (!videoTrack) {
-    console.warn("Taschenlampe Keine Video API");
     return;
   }
   try {
     const capabilities = videoTrack.getCapabilities();
     if (capabilities.torch) {
       torchSupported = true;
-      torchBtn.style.display = "flex"; // Changed to flex since we use it to center icon
+      torchBtn.style.display = "flex";
 
       if (torchMode === "off") {
         await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
@@ -225,9 +542,7 @@ async function updateTorchState() {
         torchBtn.style.color = "#000";
         torchBtn.style.backgroundColor = "";
       } else if (torchMode === "auto") {
-        // WebRTC support. Erlaube Auto-Flash falls das Gerät ihn nativ hat
         await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
-        // Auto Modus wird effektiv später beim takePhoto() ausgelöst (fillLightMode: 'auto')
         torchBtn.innerHTML =
           '<span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size:8px">Auto</small>';
         torchBtn.classList.remove("btn-outline-secondary", "btn-warning");
@@ -236,163 +551,263 @@ async function updateTorchState() {
         torchBtn.style.backgroundColor = "";
       }
     } else {
-      torchBtn.style.display = "none"; // Not supported on this device/camera
-      console.info("Taschenlampe nicht erkannt");
+      torchBtn.style.display = "none";
     }
   } catch (e) {
     console.warn("Taschenlampe konnte nicht gesteuert werden:", e);
   }
 }
 
-torchBtn.addEventListener("click", () => {
-  if (!torchSupported) return;
-  // Cycle: off -> on -> auto -> off
-  if (torchMode === "off") torchMode = "on";
-  else if (torchMode === "on") torchMode = "auto";
-  else torchMode = "off";
+if (torchBtn) {
+  torchBtn.addEventListener("click", () => {
+    if (!torchSupported) return;
+    if (torchMode === "off") torchMode = "on";
+    else if (torchMode === "on") torchMode = "auto";
+    else torchMode = "off";
+    updateTorchState();
+  });
+}
 
-  updateTorchState();
-});
-// -----------------------------
+// --- Auto Capture Support ---
+const autoCaptureBtn = document.getElementById("autoCaptureBtn");
+const autoCountdown = document.getElementById("auto-countdown");
+let autoCaptureEnabled = true;
+let documentDetectionStart = 0;
+let countdownInterval = null;
+let autoCaptureTriggered = false;
+
+if (autoCaptureBtn) {
+  autoCaptureBtn.addEventListener("click", () => {
+    autoCaptureEnabled = !autoCaptureEnabled;
+    if (autoCaptureEnabled) {
+      autoCaptureBtn.classList.replace("btn-outline-secondary", "btn-primary");
+      autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: An</span>';
+    } else {
+      autoCaptureBtn.classList.replace("btn-primary", "btn-outline-secondary");
+      autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: Aus</span>';
+      cancelAutoCountdown();
+    }
+  });
+}
+
+function cancelAutoCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+  if (autoCountdown) {
+    autoCountdown.style.display = "none";
+    autoCountdown.innerText = "2";
+  }
+  documentDetectionStart = 0;
+  autoCaptureTriggered = false;
+}
+
+function startAutoCountdown() {
+  if (countdownInterval || autoCaptureTriggered) return;
+  autoCaptureTriggered = true;
+  if (autoCountdown) {
+    autoCountdown.style.display = "block";
+    autoCountdown.innerText = "2";
+  }
+  let count = 2;
+
+  countdownInterval = setInterval(() => {
+    count--;
+    if (count > 0) {
+      if (autoCountdown) autoCountdown.innerText = count.toString();
+    } else {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+      if (autoCountdown) autoCountdown.style.display = "none";
+
+      if (smoothedCornersRaw && !captureBtn.disabled) {
+        captureBtn.click();
+      } else {
+        cancelAutoCountdown();
+      }
+    }
+  }, 1000);
+}
+
+// Kamera & Video Stream Management
+async function startCamera() {
+  if (sampleImage) sampleImage.style.display = "none";
+  if (video) video.style.display = "block";
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
+      },
+      audio: false,
+    });
+    video.srcObject = stream;
+    videoTrack = stream.getVideoTracks()[0];
+    video.play();
+    updateTorchState();
+    await initAutofocus();
+  } catch (err) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      });
+      video.srcObject = stream;
+      videoTrack = stream.getVideoTracks()[0];
+      video.play();
+      updateTorchState();
+      await initAutofocus();
+    } catch (fallbackErr) {
+      console.warn("Kamera konnte nicht gestartet werden (z. B. auf Desktop/Test). Schalte automatisch auf Test-Bild 'edge1.jpg' um.", fallbackErr);
+      if (sourceSelect) sourceSelect.value = "edge1.jpg";
+      activeSource = "edge1.jpg";
+      loadSampleImage("edge1.jpg");
+    }
+  }
+}
+
+// Test-Bild Loader für Entwicklungs- & Testpipeline
+function loadSampleImage(filename) {
+  if (videoTrack) {
+    try {
+      videoTrack.stop();
+      videoTrack = null;
+    } catch (e) {}
+  }
+  if (video) video.style.display = "none";
+  if (sampleImage) {
+    sampleImage.style.display = "block";
+    sampleImage.src = "/samples-scanner/" + filename;
+    sampleImage.onload = () => {
+      console.log(`Test-Bild '${filename}' geladen (${sampleImage.naturalWidth}x${sampleImage.naturalHeight})`);
+      const rect = videoWrapper.getBoundingClientRect();
+      overlay.width = rect.width;
+      overlay.height = rect.height;
+      streaming = true;
+      captureBtn.disabled = false;
+      smoothedCornersRaw = null;
+      framesWithoutDetection = 0;
+
+      initCvMats();
+      requestAnimationFrame(processVideo);
+    };
+  }
+}
+
+if (sourceSelect) {
+  sourceSelect.addEventListener("change", (e) => {
+    activeSource = e.target.value;
+    smoothedCornersRaw = null;
+    currentRelativeDocumentCorners = null;
+    ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
+
+    if (activeSource === "camera") {
+      startCamera();
+    } else {
+      loadSampleImage(activeSource);
+    }
+  });
+}
+
+function onSystemReady() {
+  if (!cameraStarted && (onnxReady || openCvReady || onnxLoadFailed)) {
+    cameraStarted = true;
+    loadingText.style.display = "none";
+    videoWrapper.style.display = "flex";
+    captureBtn.style.display = "block";
+    captureBtn.disabled = false;
+
+    if (activeSource === "camera") {
+      startCamera();
+    } else {
+      loadSampleImage(activeSource);
+    }
+  }
+}
 
 video.addEventListener("canplay", function () {
-  if (!streaming && video.videoWidth > 0) {
-    // Overlay and drawing must match the ACTUAL display size, not the internal video size,
-    // because we use object-fit: cover which crops the visual representation.
+  if (!streaming && video.videoWidth > 0 && activeSource === "camera") {
     const rect = video.getBoundingClientRect();
     overlay.width = rect.width;
     overlay.height = rect.height;
     streaming = true;
     captureBtn.disabled = false;
 
-    // Handle window resize dynamically to keep canvas tracking over video feed
     window.addEventListener("resize", () => {
-      if (streaming && video) {
-        const newRect = video.getBoundingClientRect();
+      if (streaming && (video || sampleImage)) {
+        const newRect = videoWrapper.getBoundingClientRect();
         overlay.width = newRect.width;
         overlay.height = newRect.height;
       }
     });
 
-    // OpenCV Matrizen einmalig anlegen für Memory Management
-    src = new cv.Mat(processHeight, processWidth, cv.CV_8UC4);
-    gray = new cv.Mat();
-    blurred = new cv.Mat();
-    edges = new cv.Mat();
-    hierarchy = new cv.Mat();
-    contours = new cv.MatVector();
-
-    // Starte Detektions-Schleife
+    initCvMats();
     requestAnimationFrame(processVideo);
   }
 });
 
-function processVideo() {
+let isProcessingFrame = false;
+
+async function processVideo() {
   if (!streaming) return;
 
+  if (isProcessingFrame) {
+    setTimeout(() => requestAnimationFrame(processVideo), 30);
+    return;
+  }
+
+  isProcessingFrame = true;
+
   try {
-    // Because video uses object-fit: cover, the displayed center is cropped from the native 16:9/4:3 stream.
-    // We calculate scaling to properly feed ONLY the visible part of the stream into OpenCV.
-    const rect = video.getBoundingClientRect();
-    const wScale = video.videoWidth / rect.width;
-    const hScale = video.videoHeight / rect.height;
+    const currentSource = activeSource === "camera" ? video : sampleImage;
+    if (!currentSource || (activeSource === "camera" && (!video.videoWidth || video.readyState < 2))) {
+      isProcessingFrame = false;
+      setTimeout(() => requestAnimationFrame(processVideo), 50);
+      return;
+    }
+
+    const rect = videoWrapper.getBoundingClientRect();
+    const srcW = activeSource === "camera" ? video.videoWidth : (sampleImage.naturalWidth || 800);
+    const srcH = activeSource === "camera" ? video.videoHeight : (sampleImage.naturalHeight || 600);
+
+    const wScale = srcW / rect.width;
+    const hScale = srcH / rect.height;
     const scale = Math.min(wScale, hScale);
 
     const sWidth = rect.width * scale;
     const sHeight = rect.height * scale;
-    const sx = (video.videoWidth - sWidth) / 2;
-    const sy = (video.videoHeight - sHeight) / 2;
+    const sx = Math.max(0, (srcW - sWidth) / 2);
+    const sy = Math.max(0, (srcH - sHeight) / 2);
 
-    // Video-Frame (nur den sichtbaren Teil!) auf unsere OpenCV Arbeitsfläche zeichnen
-    // prettier-ignore
-    ctxProcess.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, processWidth, processHeight);
+    let detectedCorners = null;
 
-    // Frame an OpenCV übergeben
-    let imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
-    src.data.set(imageData.data);
-
-    // Bildbearbeitung für Dokumentensuche (Graustufe, Unschärfe, Kanten)
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-
-    // Dynamischer Blur (Glättung) um kleine Störungen zu filtern (Wert z.B. 5x5)
-    cv.GaussianBlur(gray, blurred, new cv.Size(optBlur, optBlur), 0, 0, cv.BORDER_DEFAULT);
-
-    cv.Canny(blurred, edges, optCanny1, optCanny2);
-
-    // WICHTIG: Kanten dicker machen ("Dilatation"), damit Linien bei Kontrastschwäche der Handykamera nicht abreißen
-    let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
-    cv.dilate(edges, edges, kernel);
-    cv.erode(edges, edges, kernel);
-    kernel.delete();
-
-    // Konturen finden
-    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-    let maxArea = 0;
-    let bestCnt = null;
-
-    // Finde das größte Viereck im Bild
-    for (let i = 0; i < contours.size(); ++i) {
-      let cnt = contours.get(i);
-      let area = cv.contourArea(cnt);
-
-      // Ignoriere kleine Boxen unter 15% Screen-Größe (blockt Rauschen, Tassen oder Tastaturen extrem gut ab)
-      if (area > processWidth * processHeight * 0.05) {
-        let peri = cv.arcLength(cnt, true);
-        let foundValid = false;
-        for (let eps of [0.05, 0.08, 0.12]) {
-          if (foundValid) break;
-          let approx = new cv.Mat();
-          cv.approxPolyDP(cnt, approx, eps * peri, true);
-
-          if (approx.rows === 4 && area > maxArea && cv.isContourConvex(approx)) {
-            // Berechne die Winkel zwischen allen 4 Kanten
-            let maxCosine = 0;
-            for (let j = 2; j < 6; j++) {
-              let pt1Source = (j % 4) * 2;
-              let pt2Source = ((j - 2) % 4) * 2;
-              let pt0Source = ((j - 1) % 4) * 2;
-              let pt1 = {
-                x: approx.data32S[pt1Source],
-                y: approx.data32S[pt1Source + 1],
-              };
-              let pt2 = {
-                x: approx.data32S[pt2Source],
-                y: approx.data32S[pt2Source + 1],
-              };
-              let pt0 = {
-                x: approx.data32S[pt0Source],
-                y: approx.data32S[pt0Source + 1],
-              };
-
-              let dx1 = pt1.x - pt0.x;
-              let dy1 = pt1.y - pt0.y;
-              let dx2 = pt2.x - pt0.x;
-              let dy2 = pt2.y - pt0.y;
-              // Skalarprodukt für Cosinus des Winkels
-              let cosine = Math.abs(
-                (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
-              );
-              maxCosine = Math.max(maxCosine, cosine);
-            }
-
-            // Filter: Cosinus muss unter einem Schwellwert (z.B. <0.8, entspricht ~35-145 Grad Ecken beim Papier) bleiben
-            if (maxCosine < 0.82) {
-              maxArea = area;
-              if (bestCnt) bestCnt.delete();
-              bestCnt = approx.clone();
-              foundValid = true;
-            }
-          }
-          approx.delete();
-        }
+    // 1. Priorisiere die aktive Engine
+    if (currentEngine === "onnx") {
+      if (onnxReady) {
+        detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
+      }
+      if (!detectedCorners && openCvReady) {
+        detectedCorners = detectCornersCv(currentSource, sx, sy, sWidth, sHeight, false);
+      }
+    } else {
+      if (openCvReady) {
+        detectedCorners = detectCornersCv(currentSource, sx, sy, sWidth, sHeight, false);
+      } else if (onnxReady) {
+        detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
       }
     }
 
     // --- SMOOTHING / ANTI-FLICKERING LOGIK ---
-    if (bestCnt) {
+    if (detectedCorners && detectedCorners.length === 4) {
       framesWithoutDetection = 0;
-      let sortedNewCorners = sortAndOrderCorners(bestCnt.data32S);
+      let sortedNewCorners = sortAndOrderCorners(detectedCorners);
 
       if (!smoothedCornersRaw) {
         smoothedCornersRaw = sortedNewCorners;
@@ -404,10 +819,9 @@ function processVideo() {
             smoothedCornersRaw[i].y * (1 - SMOOTHING_FACTOR) + sortedNewCorners[i].y * SMOOTHING_FACTOR;
         }
       }
-      bestCnt.delete();
 
       // Auto-Capture Logik
-      if (autoCaptureEnabled && !document.getElementById("captureBtn").disabled) {
+      if (autoCaptureEnabled && !captureBtn.disabled) {
         if (documentDetectionStart === 0) {
           documentDetectionStart = Date.now();
         } else if (Date.now() - documentDetectionStart >= 1000 && !autoCaptureTriggered) {
@@ -415,37 +829,33 @@ function processVideo() {
         }
       } else {
         documentDetectionStart = 0;
-        if (countdownInterval && !autoCaptureTriggered) cancelAutoCountdown(); // Abort if manual logic deactivated this
+        if (countdownInterval && !autoCaptureTriggered) cancelAutoCountdown();
       }
     } else {
       framesWithoutDetection++;
 
-      // Bricht den Countdown ab, wenn das Blatt zu lange (ca. 0,3s) verloren geht
       if (autoCaptureTriggered && framesWithoutDetection > 7) {
         cancelAutoCountdown();
       }
 
-      // Vergiss das Quadrat, wenn es für X Frames (MAX) komplett verschwunden ist
       if (framesWithoutDetection > MAX_FRAMES_LOSE_TRACK) {
         smoothedCornersRaw = null;
-        cancelAutoCountdown(); // Tracking komplett verloren -> Timer killen
+        cancelAutoCountdown();
       }
     }
 
     // Zeichenfläche leeren
     ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
 
-    // Wenn wir (noch) über ein valides Quadrat (durch Smoothing) verfügen, zeichne es
+    // Zeichne das geglättete Polygon
     if (smoothedCornersRaw) {
       currentRelativeDocumentCorners = [];
       ctxOverlay.beginPath();
       for (let i = 0; i < 4; i++) {
-        // Punkt relativ speichern
-        let relativeX = smoothedCornersRaw[i].x / processWidth;
-        let relativeY = smoothedCornersRaw[i].y / processHeight;
+        let relativeX = smoothedCornersRaw[i].x;
+        let relativeY = smoothedCornersRaw[i].y;
         currentRelativeDocumentCorners.push({ x: relativeX, y: relativeY });
 
-        // Hochrechnen
         let x = relativeX * overlay.width;
         let y = relativeY * overlay.height;
 
@@ -465,153 +875,124 @@ function processVideo() {
       currentRelativeDocumentCorners = null;
     }
   } catch (err) {
-    console.error("OpenCV Verarbeitung:", err);
+    console.error("Frame-Verarbeitung Fehler:", err);
+  } finally {
+    isProcessingFrame = false;
   }
 
-  // Nächster Frame Timer (gedrosselt auf ca. 10-15 FPS für Akku/CPU)
+  // Nächster Frame Timer (35ms für flüssige ~25-30 FPS)
   setTimeout(() => {
     requestAnimationFrame(processVideo);
-  }, 50);
+  }, 35);
 }
 
 captureBtn.addEventListener("click", async () => {
   if (!streaming) return;
 
-  // Auto-Modus für diesen neuen Scan verlässlich setzen
   document.getElementById("algorithmSelect").value = "auto";
   document.getElementById("previewAlgorithmSelect").value = "auto";
 
-  cancelAutoCountdown(); // Timer und Flags resetten um Doppel-Clicks und Geister-Auslöser zu verhindern
+  cancelAutoCountdown();
 
-  // Ecken sofort beim Klick wegspeichern ("einfrieren"),
-  // da das Auslösen des Sensors per await ein paar Millisekunden dauert
-  // und das Bild durch Verwackeln sonst verloren ginge!
   let frozenCorners = currentRelativeDocumentCorners
     ? JSON.parse(JSON.stringify(currentRelativeDocumentCorners))
     : null;
   captureBtn.disabled = true;
 
-  // Deaktiviertes Verändern des Layouts durch Loader, damit der Rahmen nicht springt!
-  // loader.style.display = 'block';
-  // loaderStatus.innerText = "Dokumentbereich für lokalen Zuschnitt wird berechnet...";
-
-  let originalWidth = video.videoWidth;
-  let originalHeight = video.videoHeight;
+  let originalWidth = activeSource === "camera" ? (video ? video.videoWidth : 1920) : (sampleImage.naturalWidth || 1920);
+  let originalHeight = activeSource === "camera" ? (video ? video.videoHeight : 1080) : (sampleImage.naturalHeight || 1080);
   let photoWasUsed = false;
   let highResBitmap = null;
 
-  // Versuche über aktuelle ImageCapture API die echte volle Foto-Sensor-Auflösung abzurufen
-  if (window.ImageCapture && videoTrack) {
-    let flashWasTriggered = false;
-    let focusWasTriggered = false;
-    try {
-      const imageCapture = new ImageCapture(videoTrack);
-      const capabilities = videoTrack.getCapabilities();
-      const advancedConstraints = [];
+  if (activeSource === "camera") {
+    if (window.ImageCapture && videoTrack) {
+      let flashWasTriggered = false;
+      let focusWasTriggered = false;
+      try {
+        const imageCapture = new ImageCapture(videoTrack);
+        const capabilities = videoTrack.getCapabilities();
+        const advancedConstraints = [];
 
-      // Autofokus einfrieren (auf "manual" setzen), um den scharfen Fokuspunkt der Vorschau beizubehalten
-      if (capabilities.focusMode && capabilities.focusMode.includes("manual")) {
-        advancedConstraints.push({ focusMode: "manual" });
-        focusWasTriggered = true;
-      }
-
-      // Workaround für kaputten "Auto"-Flash in vielen Browsern:
-      // Wir schalten die Taschenlampe *manuell* kurz vor dem Foto ein!
-      if (torchSupported && torchMode === "auto") {
-        advancedConstraints.push({ torch: true });
-        flashWasTriggered = true;
-      }
-
-      if (advancedConstraints.length > 0) {
-        await videoTrack.applyConstraints({ advanced: advancedConstraints });
-        // Wenn Blitz getriggert wurde, warten wir, damit Kamera belichten kann.
-        // Bei reinem manuellen Fokus (Lock) ist keine Wartezeit für einen Fokus-Sweep nötig.
-        const waitTime = flashWasTriggered ? 400 : 0;
-        if (waitTime > 0) {
-          await new Promise((r) => setTimeout(r, waitTime));
+        if (capabilities.focusMode && capabilities.focusMode.includes("manual")) {
+          advancedConstraints.push({ focusMode: "manual" });
+          focusWasTriggered = true;
         }
-      }
 
-      // Nutzen von grabFrame() statt takePhoto():
-      // grabFrame() macht einen direkten Frame-Grab aus dem Video-Stream, wodurch der scharfe Fokus
-      // und die Belichtung der Live-Vorschau 1:1 übernommen werden, ohne den fehlerhaften/langsamen
-      // Hardware-Fokus-Sweep von takePhoto() zu triggern.
-      const imageBitmap = await imageCapture.grabFrame();
-      highResBitmap = imageBitmap;
-      originalWidth = imageBitmap.width;
-      originalHeight = imageBitmap.height;
-      photoWasUsed = true;
-      console.log(
-        `Echte Video-Stream-Auflösung via grabFrame genutzt: ${originalWidth}x${originalHeight}`
-      );
-    } catch (e) {
-      console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
-    } finally {
-      // GANZ WICHTIG: Licht sofort wieder aus und Autofokus zurück auf kontinuierlich stellen!
-      if (videoTrack) {
-        try {
-          const restoreConstraints = [];
-          if (flashWasTriggered) {
-            restoreConstraints.push({ torch: false });
+        if (torchSupported && torchMode === "auto") {
+          advancedConstraints.push({ torch: true });
+          flashWasTriggered = true;
+        }
+
+        if (advancedConstraints.length > 0) {
+          await videoTrack.applyConstraints({ advanced: advancedConstraints });
+          const waitTime = flashWasTriggered ? 400 : 0;
+          if (waitTime > 0) {
+            await new Promise((r) => setTimeout(r, waitTime));
           }
-          if (focusWasTriggered) {
-            restoreConstraints.push({ focusMode: "continuous" });
-          }
-          if (restoreConstraints.length > 0) {
-            await videoTrack.applyConstraints({ advanced: restoreConstraints });
-          }
-        } catch (restoreErr) {
-          console.warn("Fehler beim Zurücksetzen der Kamera-Constraints:", restoreErr);
+        }
+
+        const imageBitmap = await imageCapture.grabFrame();
+        highResBitmap = imageBitmap;
+        originalWidth = imageBitmap.width;
+        originalHeight = imageBitmap.height;
+        photoWasUsed = true;
+      } catch (e) {
+        console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
+      } finally {
+        if (videoTrack) {
+          try {
+            const restoreConstraints = [];
+            if (flashWasTriggered) restoreConstraints.push({ torch: false });
+            if (focusWasTriggered) restoreConstraints.push({ focusMode: "continuous" });
+            if (restoreConstraints.length > 0) await videoTrack.applyConstraints({ advanced: restoreConstraints });
+          } catch (restoreErr) {}
         }
       }
     }
+  } else {
+    originalWidth = sampleImage.naturalWidth;
+    originalHeight = sampleImage.naturalHeight;
+    photoWasUsed = true;
   }
 
   const canvasHighRes = document.createElement("canvas");
+  canvasHighRes.width = originalWidth;
+  canvasHighRes.height = originalHeight;
+  const ctxHighRes = canvasHighRes.getContext("2d");
 
   if (photoWasUsed) {
-    // Wir übergeben das gesamte unbeschnittene Sensor-Bild in den manuellen Review (für bestes Cropping).
-    canvasHighRes.width = originalWidth;
-    canvasHighRes.height = originalHeight;
-    const ctxHighRes = canvasHighRes.getContext("2d");
-    ctxHighRes.drawImage(highResBitmap, 0, 0);
+    if (activeSource === "camera") {
+      ctxHighRes.drawImage(highResBitmap, 0, 0);
+    } else {
+      ctxHighRes.drawImage(sampleImage, 0, 0);
+    }
 
-    // NEU: Rechnerisches Mapping zwischen dem DOM-Sichtfeld (Video) und dem echten Kamerasensor (Foto)
-    // Löst das FOV-Problem ohne erneuten OpenCV Bild-Scan.
-    if (frozenCorners && streaming && video) {
-      const rect = video.getBoundingClientRect();
+    if (frozenCorners && streaming) {
+      const rect = videoWrapper.getBoundingClientRect();
+      const vidW = activeSource === "camera" ? video.videoWidth : sampleImage.naturalWidth;
+      const vidH = activeSource === "camera" ? video.videoHeight : sampleImage.naturalHeight;
 
-      // 1. Welche Pixel des physischen Videostreams sieht der User überhaupt im gecroppten DOM?
-      const wScaleDOM = video.videoWidth / rect.width;
-      const hScaleDOM = video.videoHeight / rect.height;
-      const scaleDOM = Math.min(wScaleDOM, hScaleDOM); // object-fit: cover
+      const wScaleDOM = vidW / rect.width;
+      const hScaleDOM = vidH / rect.height;
+      const scaleDOM = Math.min(wScaleDOM, hScaleDOM);
 
       const visibleVidW = rect.width * scaleDOM;
       const visibleVidH = rect.height * scaleDOM;
-      const domOffsetX = (video.videoWidth - visibleVidW) / 2;
-      const domOffsetY = (video.videoHeight - visibleVidH) / 2;
+      const domOffsetX = (vidW - visibleVidW) / 2;
+      const domOffsetY = (vidH - visibleVidH) / 2;
 
-      // 2. Wo liegt der 16:9 VideoStream als echter Pixel-Cutout auf dem 4:3 Sensor-Rohfoto?
-      // Da das Rohfoto mehr Blickfeld enthält (z.B. mehr oben/unten oder links/rechts),
-      // bestimmt die kleinere Skalierung, an welchen Rändern gepaddet wird ("Center Crop").
-      const scaleVidToPhoto = Math.min(originalWidth / video.videoWidth, originalHeight / video.videoHeight);
-      const mappedVidW = video.videoWidth * scaleVidToPhoto;
-      const mappedVidH = video.videoHeight * scaleVidToPhoto;
+      const scaleVidToPhoto = Math.min(originalWidth / vidW, originalHeight / vidH);
+      const mappedVidW = vidW * scaleVidToPhoto;
+      const mappedVidH = vidH * scaleVidToPhoto;
 
-      // Puffer/Ränder, die das Foto gegenüber dem Video zusätzlich liefert
       const photoOffsetX = (originalWidth - mappedVidW) / 2;
       const photoOffsetY = (originalHeight - mappedVidH) / 2;
 
       frozenCorners = frozenCorners.map((fc) => {
-        // a) Relativen Vorschau-Corner (0.0-1.0) auf die absoluten Pixel des Video-Streams mappen
         let absVideoX = domOffsetX + fc.x * visibleVidW;
         let absVideoY = domOffsetY + fc.y * visibleVidH;
-
-        // b) Diese Video-Pixel proportional auf das viel größere Roh-Foto projizieren, zzgl. der Ränder
         let absPhotoX = photoOffsetX + absVideoX * scaleVidToPhoto;
         let absPhotoY = photoOffsetY + absVideoY * scaleVidToPhoto;
-
-        // c) Die finalen physischen Punkte als relative Koordinaten des großen Roh-Fotos zurückgeben
         return {
           x: absPhotoX / originalWidth,
           y: absPhotoY / originalHeight,
@@ -619,7 +1000,6 @@ captureBtn.addEventListener("click", async () => {
       });
     }
   } else {
-    // FALLBACK auf Videostream-Ausschnitt, wenn kein raw Foto genutzt werden konnte
     let cropWidth = originalWidth;
     let cropHeight = originalHeight;
     let sourceX = 0;
@@ -636,19 +1016,7 @@ captureBtn.addEventListener("click", async () => {
 
     canvasHighRes.width = cropWidth;
     canvasHighRes.height = cropHeight;
-    const ctxHighRes = canvasHighRes.getContext("2d");
-    ctxHighRes.drawImage(
-      video,
-      sourceX,
-      sourceY,
-      cropWidth,
-      cropHeight,
-      0,
-      0,
-      canvasHighRes.width,
-      canvasHighRes.height
-    );
-    // Die bereits gespeicherten relativen frozenCorners stimmen hierbei noch, weil das Bild wie vom user gesehen exakt beschnitten wird.
+    ctxHighRes.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
   }
 
   let hasRealCorners = !!frozenCorners;
@@ -667,155 +1035,22 @@ captureBtn.addEventListener("click", async () => {
     document.getElementById("previewLoadingText").style.display = "block";
   }
 
-  // --- NEUER RESCAN AUF DEM FERTIGEN FOTO ---
-  // Das Bild ist nun als hochauflösendes Foto in 'canvasHighRes' (egal ob vom Foto oder Video).
-  // Wir jagen das fertig knackscharfe Bild nochmal durch OpenCV um Wackler vor dem Klick auszugleichen.
+  // --- RESCAN AUF DEM FERTIGEN HOCHAUFLÖSENDEN FOTO ---
   try {
-    ctxProcess.imageSmoothingEnabled = true;
-    ctxProcess.imageSmoothingQuality = "high";
-    ctxProcess.drawImage(canvasHighRes, 0, 0, processWidth, processHeight);
-    let imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
-    src.data.set(imageData.data);
+    let postScanCorners = null;
 
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-    cv.GaussianBlur(gray, blurred, new cv.Size(optBlur, optBlur), 0, 0, cv.BORDER_DEFAULT);
-    cv.Canny(blurred, edges, optCanny1, optCanny2);
-
-    let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
-    cv.dilate(edges, edges, kernel);
-    cv.erode(edges, edges, kernel);
-    kernel.delete();
-
-    let bestCntRaw = null;
-    let maxAreaRaw = 0;
-
-    function searchContours(contoursToCheck) {
-      for (let i = 0; i < contoursToCheck.size(); ++i) {
-        let cnt = contoursToCheck.get(i);
-        let area = cv.contourArea(cnt);
-        // Such-Toleranz auf 3% gesenkt, falls das Rohfoto mehr Rand hat
-        if (area > processWidth * processHeight * 0.03) {
-          let peri = cv.arcLength(cnt, true);
-
-          // Mehrere Ecken-Glättungen probieren, falls das 12MP Foto leicht gebogene Ränder hat
-          let foundValid = false;
-          for (let eps of [0.015, 0.02, 0.03, 0.05, 0.08, 0.1, 0.12, 0.15]) {
-            if (foundValid) break;
-            let approx = new cv.Mat();
-            cv.approxPolyDP(cnt, approx, eps * peri, true);
-
-            if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
-              let maxCosine = 0;
-              for (let j = 2; j < 6; j++) {
-                let pt1Source = (j % 4) * 2;
-                let pt2Source = ((j - 2) % 4) * 2;
-                let pt0Source = ((j - 1) % 4) * 2;
-                let pt1 = {
-                  x: approx.data32S[pt1Source],
-                  y: approx.data32S[pt1Source + 1],
-                };
-                let pt2 = {
-                  x: approx.data32S[pt2Source],
-                  y: approx.data32S[pt2Source + 1],
-                };
-                let pt0 = {
-                  x: approx.data32S[pt0Source],
-                  y: approx.data32S[pt0Source + 1],
-                };
-                let dx1 = pt1.x - pt0.x;
-                let dy1 = pt1.y - pt0.y;
-                let dx2 = pt2.x - pt0.x;
-                let dy2 = pt2.y - pt0.y;
-                let cosine = Math.abs(
-                  (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
-                );
-                maxCosine = Math.max(maxCosine, cosine);
-              }
-              // Toleranz erhöht auf 0.9 (ca. 25-155 Grad) für perspektivisch sehr schräge Zettel
-              if (maxCosine < 0.9) {
-                maxAreaRaw = area;
-                if (bestCntRaw) bestCntRaw.delete();
-                bestCntRaw = approx.clone();
-                foundValid = true;
-              }
-            }
-            approx.delete();
-          }
-        }
-      }
+    if (currentEngine === "onnx" && onnxReady) {
+      postScanCorners = await detectCornersOnnx(canvasHighRes);
     }
 
-    // Phase 1: Standard Canny
-    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-    searchContours(contours);
-
-    // Fallback 1: Direct Otsu (no Canny) -> Perfect for cropped or high-contrast docs
-    if (!bestCntRaw) {
-      let hFb = new cv.Mat();
-      cv.threshold(gray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-      cv.morphologyEx(hFb, hFb, cv.MORPH_CLOSE, dKernel);
-      dKernel.delete();
-
-      let fbC = new cv.MatVector();
-      let fbH = new cv.Mat();
-      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-      searchContours(fbC);
-      fbC.delete();
-      fbH.delete();
-      hFb.delete();
+    if (!postScanCorners && openCvReady) {
+      postScanCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
     }
 
-    // Fallback 2: Otsu with Canny
-    if (!bestCntRaw) {
-      let hFb = new cv.Mat();
-      cv.threshold(gray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-      cv.Canny(hFb, hFb, 50, 150);
-      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-      cv.dilate(hFb, hFb, dKernel);
-      cv.erode(hFb, hFb, dKernel);
-      dKernel.delete();
-
-      let fbC = new cv.MatVector();
-      let fbH = new cv.Mat();
-      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-      searchContours(fbC);
-      fbC.delete();
-      fbH.delete();
-      hFb.delete();
-    }
-
-    // Fallback 3: Adaptive threshold with Canny
-    if (!bestCntRaw) {
-      let hFb = new cv.Mat();
-      cv.adaptiveThreshold(gray, hFb, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, 15);
-      cv.Canny(hFb, hFb, 50, 150);
-      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-      cv.dilate(hFb, hFb, dKernel);
-      cv.erode(hFb, hFb, dKernel);
-      dKernel.delete();
-
-      let fbC = new cv.MatVector();
-      let fbH = new cv.Mat();
-      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-      searchContours(fbC);
-      fbC.delete();
-      fbH.delete();
-      hFb.delete();
-    }
-
-    if (bestCntRaw) {
-      let sorted = sortAndOrderCorners(bestCntRaw.data32S);
-      bestCntRaw.delete();
-
-      // Wenn wir im gestochen scharfen Bild Ecken gefunden haben,
-      // überschreiben wir gnadenlos die wackeligen Videokoordinaten
-      frozenCorners = sorted.map((c) => ({
-        x: c.x / processWidth,
-        y: c.y / processHeight,
-      }));
+    if (postScanCorners && postScanCorners.length === 4) {
+      frozenCorners = sortAndOrderCorners(postScanCorners);
       hasRealCorners = true;
-      console.log("Erfolgreicher Post-Scan!");
+      console.log("Erfolgreicher Post-Scan auf Rohfoto!");
     }
   } catch (e) {
     console.error("Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:", e);
@@ -1094,214 +1329,60 @@ reviewOverlay.addEventListener("touchstart", onDragStart, { passive: false });
 reviewOverlay.addEventListener("touchmove", onDragMove, { passive: false });
 reviewOverlay.addEventListener("touchend", onDragEnd);
 
-// Klick auf "KI-Erkennung wiederholen" -> Scannt das aktuelle Standbild noch einmal
-document.getElementById("rescanBtn").addEventListener("click", () => {
+// Klick auf "Kantenerkennung wiederholen" -> Scannt das aktuelle Standbild noch einmal
+document.getElementById("rescanBtn").addEventListener("click", async () => {
   if (!reviewState.highResCanvas) return;
 
-  let neueEcken = null;
   const orgBtnHtml = '<span class="material-symbols-outlined" style="font-size: 18px;">crop</span> <span>Kantenerkennung</span>';
   document.getElementById("rescanBtn").innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> <span style="font-size: 0.8rem;">Bitte warten...</span>`;
   document.getElementById("rescanBtn").disabled = true;
 
-  setTimeout(() => {
-    try {
-      let rescanWidth = Math.min(800, reviewState.cropW);
-      let rescanHeight = Math.round((rescanWidth / reviewState.cropW) * reviewState.cropH);
+  try {
+    let neueEcken = null;
 
-      let tCanvas = document.createElement("canvas");
-      tCanvas.width = rescanWidth;
-      tCanvas.height = rescanHeight;
-      let tCtx = tCanvas.getContext("2d", { willReadFrequently: true });
-      tCtx.imageSmoothingEnabled = true;
-      tCtx.imageSmoothingQuality = "high";
+    let tCanvas = document.createElement("canvas");
+    tCanvas.width = reviewState.cropW;
+    tCanvas.height = reviewState.cropH;
+    let tCtx = tCanvas.getContext("2d", { willReadFrequently: true });
+    tCtx.imageSmoothingEnabled = true;
+    tCtx.imageSmoothingQuality = "high";
 
-      // Wir schneiden exakt den Bereich des bisherigen Scans aus (+15% Puffer, die im cropW/H schon drin sind)
-      tCtx.drawImage(
-        reviewState.highResCanvas,
-        reviewState.cropX,
-        reviewState.cropY,
-        reviewState.cropW,
-        reviewState.cropH,
-        0,
-        0,
-        rescanWidth,
-        rescanHeight
-      );
+    tCtx.drawImage(
+      reviewState.highResCanvas,
+      reviewState.cropX,
+      reviewState.cropY,
+      reviewState.cropW,
+      reviewState.cropH,
+      0,
+      0,
+      reviewState.cropW,
+      reviewState.cropH
+    );
 
-      let imageData = tCtx.getImageData(0, 0, rescanWidth, rescanHeight);
-
-      let hSrc = new cv.Mat(rescanHeight, rescanWidth, cv.CV_8UC4);
-      let hGray = new cv.Mat();
-      let hBlurred = new cv.Mat();
-      let hEdges = new cv.Mat();
-      let hHierarchy = new cv.Mat();
-      let hContours = new cv.MatVector();
-
-      hSrc.data.set(imageData.data);
-      cv.cvtColor(hSrc, hGray, cv.COLOR_RGBA2GRAY, 0);
-
-      let blurSize = optBlur <= 3 ? 3 : optBlur <= 5 ? 5 : 7;
-      if (blurSize % 2 === 0) blurSize += 1;
-
-      cv.GaussianBlur(hGray, hBlurred, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_DEFAULT);
-      cv.Canny(hBlurred, hEdges, optCanny1, optCanny2);
-
-      let dSize = 5;
-      let kernel = cv.Mat.ones(dSize, dSize, cv.CV_8U);
-      cv.dilate(hEdges, hEdges, kernel);
-      cv.erode(hEdges, hEdges, kernel);
-      kernel.delete();
-
-      // Da wir durch tCtx.drawImage() das Bild bereits auf die "Nähe" (Bounding Box)
-      // des vorherigen Rahmens beschränkt haben, brauchen wir KEINE riskante Maske mehr,
-      // die mögliche Linien zerschneidet (contourArea = 0).
-
-      cv.findContours(hEdges, hContours, hHierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-      let bestCntRaw = null;
-      let maxAreaRaw = 0;
-
-      function searchContours(contoursToCheck) {
-        for (let i = 0; i < contoursToCheck.size(); ++i) {
-          let cnt = contoursToCheck.get(i);
-          let area = cv.contourArea(cnt);
-          // Toleranz: Das Dokument ist jetzt groß im Crop, also reichen 15% Area
-          if (area > rescanWidth * rescanHeight * 0.15) {
-            let peri = cv.arcLength(cnt, true);
-
-            let foundValid = false;
-            for (let eps of [0.015, 0.02, 0.03, 0.05, 0.08, 0.1, 0.15]) {
-              if (foundValid) break;
-              let approx = new cv.Mat();
-              cv.approxPolyDP(cnt, approx, eps * peri, true);
-
-              if (approx.rows === 4 && area > maxAreaRaw && cv.isContourConvex(approx)) {
-                let maxCosine = 0;
-                for (let j = 2; j < 6; j++) {
-                  let pt1Source = (j % 4) * 2;
-                  let pt2Source = ((j - 2) % 4) * 2;
-                  let pt0Source = ((j - 1) % 4) * 2;
-                  let pt1 = {
-                    x: approx.data32S[pt1Source],
-                    y: approx.data32S[pt1Source + 1],
-                  };
-                  let pt2 = {
-                    x: approx.data32S[pt2Source],
-                    y: approx.data32S[pt2Source + 1],
-                  };
-                  let pt0 = {
-                    x: approx.data32S[pt0Source],
-                    y: approx.data32S[pt0Source + 1],
-                  };
-                  let dx1 = pt1.x - pt0.x;
-                  let dy1 = pt1.y - pt0.y;
-                  let dx2 = pt2.x - pt0.x;
-                  let dy2 = pt2.y - pt0.y;
-                  let cosine = Math.abs(
-                    (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
-                  );
-                  maxCosine = Math.max(maxCosine, cosine);
-                }
-                if (maxCosine < 0.95) {
-                  maxAreaRaw = area;
-                  if (bestCntRaw) bestCntRaw.delete();
-                  bestCntRaw = approx.clone();
-                  foundValid = true;
-                }
-              }
-              approx.delete();
-            }
-          }
-        }
-      }
-
-      searchContours(hContours);
-
-      // Fallback 1: Direct Otsu (no Canny) -> Perfect for cropped or high-contrast docs
-      if (!bestCntRaw) {
-        let hFb = new cv.Mat();
-        cv.threshold(hGray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-        let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-        cv.morphologyEx(hFb, hFb, cv.MORPH_CLOSE, dKernel);
-        dKernel.delete();
-
-        let fbC = new cv.MatVector();
-        let fbH = new cv.Mat();
-        cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-        searchContours(fbC);
-        fbC.delete();
-        fbH.delete();
-        hFb.delete();
-      }
-
-      // Fallback 2: Otsu with Canny
-      if (!bestCntRaw) {
-        let hFb = new cv.Mat();
-        cv.threshold(hGray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-        cv.Canny(hFb, hFb, 50, 150);
-        let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-        cv.dilate(hFb, hFb, dKernel);
-        cv.erode(hFb, hFb, dKernel);
-        dKernel.delete();
-
-        let fbC = new cv.MatVector();
-        let fbH = new cv.Mat();
-        cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-        searchContours(fbC);
-        fbC.delete();
-        fbH.delete();
-        hFb.delete();
-      }
-
-      // Fallback 3: Adaptive threshold with Canny
-      if (!bestCntRaw) {
-        let hFb = new cv.Mat();
-        cv.adaptiveThreshold(hGray, hFb, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, 15);
-        cv.Canny(hFb, hFb, 50, 150);
-        let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-        cv.dilate(hFb, hFb, dKernel);
-        cv.erode(hFb, hFb, dKernel);
-        dKernel.delete();
-
-        let fbC = new cv.MatVector();
-        let fbH = new cv.Mat();
-        cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-        searchContours(fbC);
-        fbC.delete();
-        fbH.delete();
-        hFb.delete();
-      }
-
-      if (bestCntRaw) {
-        let sorted = sortAndOrderCorners(bestCntRaw.data32S);
-        bestCntRaw.delete();
-
-        neueEcken = sorted.map((c) => ({
-          x: (c.x / rescanWidth) * reviewState.cropW,
-          y: (c.y / rescanHeight) * reviewState.cropH,
-        }));
-      }
-
-      hSrc.delete();
-      hGray.delete();
-      hBlurred.delete();
-      hEdges.delete();
-      hHierarchy.delete();
-      hContours.delete();
-    } catch (e) {
-      console.error("Manueller Re-Scan fehlgeschlagen:", e);
+    if (currentEngine === "onnx" && onnxReady) {
+      neueEcken = await detectCornersOnnx(tCanvas);
     }
 
+    if (!neueEcken && openCvReady) {
+      neueEcken = detectCornersCv(tCanvas, 0, 0, reviewState.cropW, reviewState.cropH, true);
+    }
+
+    if (neueEcken && neueEcken.length === 4) {
+      reviewState.corners = neueEcken.map((c) => ({
+        x: c.x * reviewState.cropW,
+        y: c.y * reviewState.cropH,
+      }));
+      drawReviewOverlay();
+      updatePreviewFilter();
+    } else {
+      alert("Auf diesem Foto konnte kein eindeutiges Dokument erkannt werden. Bitte justiere die Kanten manuell.");
+    }
+  } catch (e) {
+    console.error("Manueller Re-Scan fehlgeschlagen:", e);
+  } finally {
     document.getElementById("rescanBtn").innerHTML = orgBtnHtml;
     document.getElementById("rescanBtn").disabled = false;
-
-    if (neueEcken) {
-      reviewState.corners = neueEcken;
-      drawReviewOverlay();
-    } else {
-      alert("Auf diesem Foto konnte die KI kein eindeutiges Dokument erkennen. Bitte justiere die Kanten manuell.");
-    }
-  }, 50);
+  }
 });
 
 function updateConfirmBtnText() {
@@ -1542,4 +1623,15 @@ if ("serviceWorker" in navigator) {
       .then((registration) => console.log("SW registered"))
       .catch((err) => console.log("SW registration failed:", err));
   });
+}
+
+// Initialisiere Engine & ONNX bei Start
+updateEngineUI();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    updateEngineUI();
+    initOnnx();
+  });
+} else {
+  initOnnx();
 }

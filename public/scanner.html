@@ -22,6 +22,15 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="/scanner.css?v=20260819_1" />
   <link rel="stylesheet" href="/md3-theme.css" />
+  <script>
+    window.onOpenCvReady = function() {
+      if (typeof window.initOpenCvRuntime === "function") {
+        window.initOpenCvRuntime();
+      } else {
+        window.openCvIsLoaded = true;
+      }
+    };
+  </script>
 </head>
 
 <body>
@@ -30,7 +39,25 @@
     <div class="sticky-top bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center p-3">
       <a href="/" class="back-link m-0 d-flex align-items-center gap-1"><span
           class="material-symbols-outlined">arrow_back</span> Home</a>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 align-items-center">
+        <!-- Bildquellen-Wähler: Live Kamera oder Test-Bilder -->
+        <select id="sourceSelect" class="form-select form-select-sm" style="width: auto; max-width: 135px; font-weight: 500; font-size: 0.82rem; border-radius: 8px;" title="Bildquelle (Kamera oder Test-Bild)">
+          <option value="camera">📷 Live Kamera</option>
+          <option value="edge1.jpg">🧪 edge1.jpg</option>
+          <option value="edge2.jpg">🧪 edge2.jpg</option>
+          <option value="edge3.jpg">🧪 edge3.jpg</option>
+          <option value="edge4.jpg">🧪 edge4.jpg</option>
+        </select>
+
+        <!-- Modus Umschalter (KI: ONNX / OpenCV) -->
+        <button id="engineToggleBtn"
+          class="btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn"
+          title="Erkennungs-Engine umschalten (KI / OpenCV)">
+          <span class="material-symbols-outlined mode-icon" id="modeIcon">psychology</span>
+          <span class="mode-text" id="modeText">KI: ONNX</span>
+          <span class="spinner-border spinner-border-sm mode-spinner" id="modeSpinner" style="display: none;" role="status"></span>
+        </button>
+
         <button id="autoCaptureBtn"
           class="btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-2" style="
               font-weight: 500;
@@ -61,11 +88,35 @@
         <input type="hidden" id="algorithmSelect" value="auto" />
 
         <h6 class="text-secondary mt-3 mb-2 small fw-bold">
-          Scanner Einstellung
+          Erkennungs-Modus
         </h6>
+        <div class="d-flex gap-2 mb-3">
+          <button type="button" class="btn btn-sm btn-primary w-50 d-flex align-items-center justify-content-center gap-1" id="setModeOnnxBtn">
+            <span class="material-symbols-outlined" style="font-size: 18px;">psychology</span>
+            <span>KI (ONNX)</span>
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary w-50 d-flex align-items-center justify-content-center gap-1" id="setModeCvBtn">
+            <span class="material-symbols-outlined" style="font-size: 18px;">crop_free</span>
+            <span>OpenCV (Auto)</span>
+          </button>
+        </div>
 
-        <label class="form-label mb-0 mt-1 small">Dokumentenerkennung: <span id="sensitivityVal">85%</span></label>
-        <input type="range" class="modern-slider" id="sensitivitySlider" min="0" max="100" value="85" />
+        <div id="onnxSettingsNotice" class="alert alert-primary py-2 px-3 small mb-2 d-flex align-items-center gap-2" style="border-radius: 8px;">
+          <span class="material-symbols-outlined text-primary" style="font-size: 20px;">auto_awesome</span>
+          <span><strong>KI-Modus aktiv:</strong> Parameter werden automatisch per Deep Learning optimiert (beste Erkennung bei weiß auf weiß).</span>
+        </div>
+
+        <div id="cvSettingsGroup" style="display: none;">
+          <div class="form-check form-switch mb-2">
+            <input class="form-check-input" type="checkbox" id="cvAutoThresholds" checked>
+            <label class="form-check-label small fw-bold" for="cvAutoThresholds">Auto-Canny & CLAHE (Dynamisch)</label>
+          </div>
+
+          <div id="cvManualSliders" style="display: none;">
+            <label class="form-label mb-0 mt-1 small">Manuelle Sensitivität: <span id="sensitivityVal">85%</span></label>
+            <input type="range" class="modern-slider" id="sensitivitySlider" min="0" max="100" value="85" />
+          </div>
+        </div>
 
         <label class="form-label mb-0 mt-1 small">Rahmen-Trägheit (Anti-Flicker):
           <span id="smoothingVal">50%</span></label>
@@ -73,7 +124,6 @@
 
         <hr class="my-3" />
         <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
-        <!-- Die Optionen wurden gemäß Audit entfernt. AutoQueue (KI Pipeline) ist nun via Button geregelt -->
       </div>
     </details>
 
@@ -86,6 +136,7 @@
     <!-- Video füllt den restlichen Bildschirm -->
     <div class="video-wrapper" id="video-wrapper">
       <video id="video" autoplay playsinline></video>
+      <img id="sampleImage" style="display: none; width: 100%; height: 100%; object-fit: contain;" alt="Test-Bild" />
       <canvas id="overlay"></canvas>
     </div>
 
@@ -228,11 +279,14 @@
     </button>
   </div>
 
-  <!-- Zuerst die Scanner-Logik definieren, damit onOpenCvReady bekannt ist -->
-  <script src="/scanner.js?v=20260819_1"></script>
+  <!-- ONNX Runtime Web (lokal von vendor oder CDN-Fallback) -->
+  <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
-  <!-- OpenCV.js erst im Hintergrund (defer) laden! -->
-  <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()" type="text/javascript"></script>
+  <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
+  <script src="/scanner.js?v=20260819_4"></script>
+
+  <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
+  <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
 </body>
 
 </html>

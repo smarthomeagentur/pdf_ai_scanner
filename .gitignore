@@ -20,3 +20,7 @@ store
 store/jobs.json
 jobs.json
 /store
+**/sample-scanner
+edge*.jpg
+# ONNX Runtime WASM files - auto-generated from node_modules in Dockerfile
+/public/vendor/
