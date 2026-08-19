@@ -690,28 +690,32 @@ async function uploadFiles(files) {
   fileInput.value = "";
 }
 
-function startPolling() {
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`/api/status?ids=all`);
-      const data = await res.json();
+async function fetchStatus() {
+  try {
+    const res = await fetch(`/api/status?ids=all`);
+    const data = await res.json();
 
-      if (data.success) {
-        activeJobs = data.statuses || [];
-        renderJobs();
+    if (data.success) {
+      activeJobs = data.statuses || [];
+      renderJobs();
 
-        // Stop polling dynamically if no jobs are pending/processing on server
-        const hasPendingServerJobs = activeJobs.some((j) => j.status === "pending" || j.status === "processing");
-        if (!hasPendingServerJobs && pollingInterval) {
-          clearInterval(pollingInterval);
-          pollingInterval = null;
-        }
+      // Stop polling dynamically if no jobs are pending/processing on server
+      const hasPendingServerJobs = activeJobs.some((j) => j.status === "pending" || j.status === "processing");
+      if (!hasPendingServerJobs && pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
       }
-    } catch (err) {
-      console.error("Polling error", err);
     }
-  };
+  } catch (err) {
+    console.error("Polling error", err);
+  }
+}
 
+function updateStatus() {
+  return fetchStatus();
+}
+
+function startPolling() {
   fetchStatus();
   if (!pollingInterval) {
     pollingInterval = setInterval(fetchStatus, 5000); // 5 Sekunden Polling
