@@ -1314,13 +1314,11 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v28"></script>
+      <script src="/index.js?v=20260819_gmail_v29"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {
-            navigator.serviceWorker.register("/sw.js?v=20260819_5").then((reg) => {
-              reg.update().catch(() => {});
-            }).catch(() => {});
+            navigator.serviceWorker.register("/sw.js").catch(() => {});
           });
         }
       </script>

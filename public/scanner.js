@@ -1483,6 +1483,8 @@ function updatePreviewFilter() {
           rCv.getContext("2d").drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
           document.getElementById("previewLoadingText").style.display = "none";
           URL.revokeObjectURL(url);
+          fitReviewCanvas();
+          drawReviewOverlay();
         };
         img.src = url;
       } catch (err) {
@@ -1562,6 +1564,8 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
     fitReviewCanvas();
     drawReviewOverlay();
   });
+  setTimeout(() => { fitReviewCanvas(); drawReviewOverlay(); }, 80);
+  setTimeout(() => { fitReviewCanvas(); drawReviewOverlay(); }, 200);
 
   // Vermeide den Preview-Lader, falls ohnehin keine klaren Kanten erkannt wurden
   if (hasRealCorners) {
@@ -1576,30 +1580,29 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
 function fitReviewCanvas() {
   const reviewSec = document.getElementById("manual-review-section");
   if (!reviewSec || reviewSec.style.display === "none") return;
-  const container = document.querySelector(".review-preview-container");
   const wrapper = document.querySelector(".review-canvas-wrapper");
   const rCv = document.getElementById("reviewCanvas");
   const oCv = document.getElementById("reviewOverlay");
-  if (!container || !wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
+  if (!wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
 
-  const pad = 16;
-  const availW = Math.max(10, container.clientWidth - pad);
-  const availH = Math.max(10, container.clientHeight - pad);
+  const availW = Math.max(50, wrapper.clientWidth - 16);
+  const availH = Math.max(50, wrapper.clientHeight - 16);
   if (availW <= 0 || availH <= 0) return;
 
   const aspect = reviewState.cropW / reviewState.cropH;
   let targetW, targetH;
 
   if (availW / availH > aspect) {
-    targetH = Math.floor(availH);
-    targetW = Math.floor(targetH * aspect);
+    targetH = availH;
+    targetW = targetH * aspect;
   } else {
-    targetW = Math.floor(availW);
-    targetH = Math.floor(targetW / aspect);
+    targetW = availW;
+    targetH = targetW / aspect;
   }
 
-  wrapper.style.width = targetW + "px";
-  wrapper.style.height = targetH + "px";
+  targetW = Math.floor(Math.min(targetW, availW));
+  targetH = Math.floor(Math.min(targetH, availH));
+
   rCv.style.width = targetW + "px";
   rCv.style.height = targetH + "px";
   oCv.style.width = targetW + "px";
@@ -1608,6 +1611,8 @@ function fitReviewCanvas() {
 
 window.addEventListener("resize", fitReviewCanvas);
 window.addEventListener("orientationchange", () => setTimeout(fitReviewCanvas, 100));
+window.addEventListener("pageshow", () => setTimeout(fitReviewCanvas, 100));
+window.addEventListener("focus", () => setTimeout(fitReviewCanvas, 100));
 
 function drawReviewOverlay() {
   const ctx = document.getElementById("reviewOverlay").getContext("2d");
