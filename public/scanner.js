@@ -135,6 +135,9 @@ if (sensitivitySlider) {
 
 const smoothingSlider = document.getElementById("smoothingSlider");
 if (smoothingSlider) {
+  smoothingSlider.value = 85; // 85% Trägheit als Default
+  const smoothingVal = document.getElementById("smoothingVal");
+  if (smoothingVal) smoothingVal.innerText = "85%";
   smoothingSlider.oninput = function () {
     SMOOTHING_FACTOR = parseInt(this.value) / 100.0;
     document.getElementById("smoothingVal").innerText = this.value + "%";
@@ -166,7 +169,9 @@ let currentRelativeDocumentCorners = null;
 let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
 const MAX_FRAMES_LOSE_TRACK = 12;
-let SMOOTHING_FACTOR = 0.5;
+// SMOOTHING_FACTOR: Anteil der neuen Position pro Frame.
+// 0.15 = 85% Trägheit (neue Erkennung hat nur 15% Gewicht → sehr stabiles Polygon)
+let SMOOTHING_FACTOR = 0.85;
 
 function initCvMats() {
   if (typeof cv !== "undefined" && !src && typeof cv.Mat !== "undefined") {
@@ -297,9 +302,9 @@ async function detectCornersOnnx(source, sx = 0, sy = 0, sWidth = null, sHeight 
       0.5 *
       Math.abs(
         pts[0].x * (pts[1].y - pts[3].y) +
-          pts[1].x * (pts[2].y - pts[0].y) +
-          pts[2].x * (pts[3].y - pts[1].y) +
-          pts[3].x * (pts[0].y - pts[2].y)
+        pts[1].x * (pts[2].y - pts[0].y) +
+        pts[2].x * (pts[3].y - pts[1].y) +
+        pts[3].x * (pts[0].y - pts[2].y)
       );
 
     if (area < 0.04) {
@@ -337,7 +342,7 @@ function detectCornersCv(source, sx = 0, sy = 0, sWidth = null, sHeight = null, 
         let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
         clahe.apply(gray, gray);
         clahe.delete();
-      } catch (ce) {}
+      } catch (ce) { }
 
       let meanVal = cv.mean(gray)[0];
       c1 = Math.max(15, Math.floor(0.67 * meanVal));
@@ -534,7 +539,7 @@ async function initAutofocus() {
           setTimeout(async () => {
             try {
               await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-            } catch (_) {}
+            } catch (_) { }
           }, 1500);
         } catch (focusErr) {
           console.warn("Tap-to-Focus nicht unterstützt:", focusErr);
@@ -722,7 +727,7 @@ function loadSampleImage(filename) {
     try {
       videoTrack.stop();
       videoTrack = null;
-    } catch (e) {}
+    } catch (e) { }
   }
   if (video) video.style.display = "none";
   if (sampleImage) {
@@ -980,7 +985,7 @@ captureBtn.addEventListener("click", async () => {
         if (videoTrack && flashWasTriggered) {
           try {
             await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
-          } catch (restoreErr) {}
+          } catch (restoreErr) { }
         }
       }
     }
