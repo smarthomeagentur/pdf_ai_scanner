@@ -825,7 +825,7 @@ function renderStartCategoryBubbles() {
     "Rechnungen", "Dokumente", "Administration", "Personal",
     "Projekte", "Verträge", "Marketing", "Förderung",
     "Buchhaltung", "Vertrieb", "Privat", "Sonstige",
-    "⚠️ Duplikat-Verdacht"
+    "Duplikat-Verdacht"
   ];
 
   const dynamicCatsStr = window.currentSettings?.AI_CATEGORIES;
@@ -843,7 +843,6 @@ function renderStartCategoryBubbles() {
   allCats.forEach(cat => {
     const isSelected = startSelectedCategories.has(cat.toLowerCase());
     const catLower = cat.toLowerCase();
-    const isDupBadge = cat.includes("Duplikat");
 
     // Count available documents for this category
     const count = (activeJobs || []).filter((job) => {
@@ -861,13 +860,9 @@ function renderStartCategoryBubbles() {
 
     const btn = document.createElement("button");
     btn.type = "button";
-    if (isDupBadge) {
-      btn.className = `btn btn-sm ${isSelected ? 'btn-warning text-dark fw-bold shadow-sm' : 'btn-outline-warning text-dark'} start-cat-bubble`;
-    } else {
-      btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
-    }
+    btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
     btn.style.cssText = "border-radius: 16px; font-size: 12px; padding: 2px 10px; transition: all 0.15s ease;";
-    btn.innerHTML = `${cat} <span class="badge ${isSelected ? (isDupBadge ? 'bg-dark text-white' : 'bg-white text-primary') : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
+    btn.innerHTML = `${cat} <span class="badge ${isSelected ? 'bg-white text-primary' : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
     
     btn.addEventListener("click", () => {
       const key = cat.toLowerCase();
@@ -2853,10 +2848,12 @@ async function openDuplicateCompareModal(jobId) {
               </div>
               <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
                 ${dupJob.result?.webViewLink ? `<a href="${dupJob.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
-                <button class="btn btn-xs btn-outline-danger btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
-                  <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
-                  <span>Duplikat löschen</span>
-                </button>
+                ${window.isAdmin ? `
+                  <button class="btn btn-xs btn-outline-danger btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                    <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
+                    <span>Duplikat löschen</span>
+                  </button>
+                ` : ``}
               </div>
             </div>
           </div>
