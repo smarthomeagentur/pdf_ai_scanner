@@ -1130,14 +1130,54 @@ function renderJobs() {
         `;
       }
 
+      // Quick Sync Buttons for ClickUp & Buchhaltung next to Details
+      const isClickupSynced = !!(job.clickup && job.clickup.taskId);
+      const clickupTaskId = job.clickup?.taskId || "";
+      const clickupStatus = job.clickup?.status || "offen";
+
+      let clickupButtonHtml = "";
+      let buchhaltungButtonHtml = "";
+
+      if (window.isAdmin) {
+        clickupButtonHtml = `
+          <button type="button" class="btn btn-sm btn-manual-clickup-transfer d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
+            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
+              isClickupSynced
+                ? 'background: #ede7f6; color: #5e35b1; border: 1px solid #b39ddb;'
+                : 'background: #ffffff; color: #7b68ee; border: 1px solid #7b68ee;'
+            }" 
+            title="${isClickupSynced ? `ClickUp Task #${clickupTaskId} (${clickupStatus}) - Klicken zum Aktualisieren` : 'Zu ClickUp übertragen'}">
+            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isClickupSynced ? '#5e35b1' : '#7b68ee'};">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
+            <span>${isClickupSynced ? '✓ ClickUp' : 'ClickUp'}</span>
+          </button>
+        `;
+
+        buchhaltungButtonHtml = `
+          <button type="button" class="btn btn-sm btn-manual-lexoffice-sync d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
+            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
+              isLexTransferred
+                ? 'background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;'
+                : 'background: #ffffff; color: #0d6efd; border: 1px solid #0d6efd;'
+            }" 
+            title="${isLexTransferred ? `Bereits in ${providerLabel} (${activeCompany}) synchronisiert - Klicken für Details / erneuten Abgleich` : `In Buchhaltung (${providerLabel}) übertragen`}">
+            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isLexTransferred ? '#2e7d32' : '#0d6efd'};">${isLexTransferred ? 'check_circle' : 'sync'}</span>
+            <span>${isLexTransferred ? '✓ Buchhaltung' : 'Buchhaltung'}</span>
+          </button>
+        `;
+      }
+
       resultHtml = `
-                    <details class="job-result" data-job-id="${
-                      job.id
-                    }" style="margin-top: 10px; width: 100%; transition: all 0.3s;" ${openStates[job.id] ? "open" : ""}>
-                        <summary style="cursor: pointer; color: var(--md-sys-color-primary, #1A1A1A); font-weight: 500; font-size: 14px; margin-bottom: 0px; width: fit-content; padding: 4px 12px; border-radius: 12px; background: var(--md-sys-color-surface-container-high, #E7E0EC); display: inline-flex; align-items: center; gap: 4px; user-select: none;">
+                    <div style="margin-top: 10px; width: 100%;">
+                      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <button type="button" class="btn-toggle-details btn btn-sm border-0 d-inline-flex align-items-center gap-1" data-job-id="${job.id}" style="color: var(--md-sys-color-primary, #1A1A1A); font-weight: 500; font-size: 13px; padding: 3px 10px; border-radius: 12px; background: var(--md-sys-color-surface-container-high, #E7E0EC); user-select: none; cursor: pointer;">
                           <span class="material-symbols-outlined" style="font-size: 16px;">info</span> Details
-                        </summary>
-                        <div style="margin-top: 12px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
+                        </button>
+                        ${clickupButtonHtml}
+                        ${buchhaltungButtonHtml}
+                      </div>
+                      <details class="job-result" data-job-id="${job.id}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
+                        <summary style="display: none;"></summary>
+                        <div style="margin-top: 6px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dateiname:</strong> ${
                                 job.result.full
                             }<br>
@@ -1159,7 +1199,8 @@ ${invoiceHtml}                            <strong style="color: var(--md-sys-col
 ${clickupDetailsHtml}
 ${lexofficeDetailsHtml}
                         </div>
-                    </details>
+                      </details>
+                    </div>
                 `;
     } else if (job.status === "error") {
       resultHtml = `<div class="job-result error">${job.error || "Unbekannter Fehler"}</div>`;
@@ -2435,8 +2476,20 @@ if (confirmClickupBtn) {
   });
 }
 
-// Click listener delegation for manual transfer buttons (ClickUp & Lexoffice)
+// Click listener delegation for manual transfer buttons (ClickUp & Lexoffice) & details toggle
 document.addEventListener("click", (e) => {
+  const toggleDetailsBtn = e.target.closest(".btn-toggle-details");
+  if (toggleDetailsBtn) {
+    const jobId = toggleDetailsBtn.getAttribute("data-job-id");
+    const container = toggleDetailsBtn.closest("div")?.parentElement;
+    const detailsEl = container ? container.querySelector(`details.job-result[data-job-id="${jobId}"]`) : null;
+    if (detailsEl) {
+      detailsEl.open = !detailsEl.open;
+      openStates[jobId] = detailsEl.open;
+    }
+    return;
+  }
+
   const clickupBtn = e.target.closest(".btn-manual-clickup-transfer") || e.target.closest(".rechnung-clickup-btn");
   if (clickupBtn) {
     e.stopPropagation();

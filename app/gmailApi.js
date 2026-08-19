@@ -13,6 +13,9 @@ const INVOICE_PATTERNS = [
   /rechnungen/i,
   /rechnungsnummer/i,
   /rechnungsbeleg/i,
+  /zollrechnung/i,
+  /zoll/i,
+  /einfuhr/i,
   /invoice/i,
   /invoices/i,
   /receipt/i,
@@ -20,22 +23,42 @@ const INVOICE_PATTERNS = [
   /receipe/i,
   /beleg/i,
   /belege/i,
+  /buchung/i,
+  /buchungsbeleg/i,
   /abrechnung/i,
   /quittung/i,
   /gutschrift/i,
+  /credit[-_ ]?note/i,
   /payment/i,
   /zahlung/i,
+  /zahlungsbeleg/i,
+  /zahlungsbestätigung/i,
+  /bestell/i,
+  /bestellung/i,
   /bestellbestätigung/i,
   /order/i,
   /auftrag/i,
+  /auftragsbestätigung/i,
   /bill/i,
+  /billing/i,
   /tax/i,
+  /steuer/i,
   /gebühr/i,
+  /abgabe/i,
+  /bescheid/i,
   /honorarnote/i,
   /entgelt/i,
   /subscription/i,
   /statement/i,
   /kontoauszug/i,
+  /reklamation/i,
+  /lieferschein/i,
+  /kaufbeleg/i,
+  /re[-_ .]?nr/i,
+  /inv[-_ .]?no/i,
+  /invoice[-_ .]?no/i,
+  /rg[-_ .]?nr/i,
+  /acc[-_ .]?nr/i,
   /inv[-_]?\d+/i,
   /re[-_]?\d+/i,
   /rg[-_]?\d+/i,
@@ -237,10 +260,10 @@ class GmailAPI {
   }
 
   /**
-   * Prüft ob Text / Dateinamen einer E-Mail auf Rechnungen / Belege hinweisen.
+   * Prüft ob Text, Absender oder Dateinamen einer E-Mail auf Rechnungen / Belege hinweisen.
    */
-  checkIsInvoiceOrReceipt(subject = "", snippet = "", attachments = []) {
-    const combinedText = `${subject} ${snippet} ${attachments.map((a) => a.filename || "").join(" ")}`;
+  checkIsInvoiceOrReceipt(subject = "", snippet = "", attachments = [], fromEmail = "", fromName = "") {
+    const combinedText = `${subject} ${snippet} ${fromEmail} ${fromName} ${attachments.map((a) => a.filename || "").join(" ")}`;
     for (const pattern of INVOICE_PATTERNS) {
       if (pattern.test(combinedText)) {
         return { isInvoice: true, pattern: pattern.source };
@@ -363,7 +386,7 @@ class GmailAPI {
             }
 
             if (attachments.length > 0) {
-              const detection = this.checkIsInvoiceOrReceipt(subject, msg.data.snippet || "", attachments);
+              const detection = this.checkIsInvoiceOrReceipt(subject, msg.data.snippet || "", attachments, fromEmail, fromName);
 
               allEmails.push({
                 id: msg.data.id,
