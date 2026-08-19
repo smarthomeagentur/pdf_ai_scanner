@@ -2185,6 +2185,11 @@ app.get("/api/jobs/:id/duplicates", async (req, res) => {
     return res.status(403).json({ success: false, error: "Forbidden" });
   }
 
+  // Wenn der Job selbst bereits manuell bestätigt/abgelehnt wurde, keine Duplikate mehr anzeigen
+  if (job.duplicateDismissed) {
+    return res.json({ success: true, currentJob: job, duplicates: [] });
+  }
+
   const curInv = job.result?.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-"
     ? normalizeAlphaNum(job.result.invoiceNumber) : null;
   const curName = (job.originalName || "").trim().toLowerCase();
@@ -2266,6 +2271,45 @@ app.get("/api/jobs/:id/duplicates", async (req, res) => {
   });
 });
 
+function recalculateDuplicateFlags() {
+  const jobs = Object.values(uploadJobs);
+  for (const job of jobs) {
+    if (job.status !== "completed" || !job.result) continue;
+    if (job.duplicateDismissed) {
+      job.suspectedDuplicate = false;
+      continue;
+    }
+
+    const curInv = job.result.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-"
+      ? normalizeAlphaNum(job.result.invoiceNumber) : null;
+    const curSorted = (job.result.full || "").trim().toLowerCase();
+    const curAmount = job.result.invoiceAmmount || job.invoiceAmmount || null;
+    const curDate = job.result.documentDate && job.result.documentDate !== "unknown" ? job.result.documentDate : null;
+    const curOrig = (job.originalName || "").trim().toLowerCase();
+
+    const hasActiveDuplicate = jobs.some(other => {
+      if (other.id === job.id) return false;
+      if (other.status !== "completed" || !other.result) return false;
+      if (other.duplicateDismissed) return false;
+
+      const otherInv = other.result.invoiceNumber && other.result.invoiceNumber !== "none" && other.result.invoiceNumber !== "-"
+        ? normalizeAlphaNum(other.result.invoiceNumber) : null;
+      const otherSorted = (other.result.full || "").trim().toLowerCase();
+      const otherAmount = other.result.invoiceAmmount || other.invoiceAmmount || null;
+      const otherDate = other.result.documentDate && other.result.documentDate !== "unknown" ? other.result.documentDate : null;
+      const otherOrig = (other.originalName || "").trim().toLowerCase();
+
+      if (curInv && otherInv && (curInv === otherInv || (curInv.length >= 4 && (curInv.includes(otherInv) || otherInv.includes(curInv))))) return true;
+      if (curSorted && otherSorted && curSorted === otherSorted) return true;
+      if (curAmount && otherAmount && curAmount === otherAmount && curDate && otherDate && curDate === otherDate) return true;
+      if (curOrig && otherOrig && curOrig === otherOrig) return true;
+      return false;
+    });
+
+    job.suspectedDuplicate = hasActiveDuplicate;
+  }
+}
+
 app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
   const jobId = req.params.id;
   const job = uploadJobs[jobId];
@@ -2273,7 +2317,11 @@ app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
 
   job.suspectedDuplicate = false;
   job.duplicateDismissed = true; // Manuell bestätigt: nicht erneut als Duplikat markieren
+
+  // Auch alle gegenseitigen Duplikat-Flags im System neu berechnen
+  recalculateDuplicateFlags();
   saveJobs();
+
   console.log(`[DUPLICATE] Job ${jobId} (${job.originalName || job.result?.full}) als kein Duplikat bestätigt.`);
   res.json({ success: true });
 });

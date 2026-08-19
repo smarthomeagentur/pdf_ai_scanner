@@ -3250,13 +3250,18 @@ document.addEventListener("click", (e) => {
       // Duplikat-Verdacht aufheben & Entscheidung merken (Datei bleibt in der Hauptliste sichtbar!)
       fetch(`/api/jobs/${encodeURIComponent(jobId)}/dismiss-duplicate`, { method: "POST" })
         .then((r) => r.json())
-        .then((data) => {
+        .then(async (data) => {
           if (typeof showToast === "function") showToast("✓ Beleg behalten & Duplikat-Verdacht entfernt.", "success");
-          const job = activeJobs.find(j => j.id === jobId);
-          if (job) {
-            job.suspectedDuplicate = false;
-            job.duplicateDismissed = true;
-          }
+
+          // Frischen Status aller Jobs vom Server holen, damit Gegen-Jobs mit aktualisiert werden
+          try {
+            const statusRes = await fetch("/api/status?ids=all");
+            const statusJson = await statusRes.json();
+            if (statusJson.success && statusJson.statuses) {
+              activeJobs = statusJson.statuses;
+            }
+          } catch (e) {}
+
           renderJobs();
 
           if (jobId === currentDuplicateJobId) {
@@ -3266,7 +3271,6 @@ document.addEventListener("click", (e) => {
           } else {
             closeDuplicateCompareModal();
           }
-          startPolling();
         })
         .catch((err) => alert("Fehler: " + err.message));
     }
