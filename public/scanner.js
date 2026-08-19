@@ -1036,11 +1036,20 @@ captureBtn.addEventListener("click", async () => {
   }
 
   // --- RESCAN AUF DEM FERTIGEN HOCHAUFLÖSENDEN FOTO ---
+  // ONNX wird immer zuerst versucht (unabhängig vom Live-Modus).
+  // Hinweis: ONNX skaliert intern immer auf 256×256 – HighRes-Canvas hat daher
+  // keinen direkten Auflösungsvorteil, aber das vollständige Bild ohne
+  // Vorschau-Crop liefert trotzdem bessere Ergebnisse als der Live-Frame.
+  // OpenCV arbeitet intern auf 320×240 und profitiert bei isHighRes=true
+  // von lockereren Epsilon-Werten und dem Otsu-Fallback.
   try {
     let postScanCorners = null;
 
-    if (currentEngine === "onnx" && onnxReady) {
-      postScanCorners = await detectCornersOnnx(canvasHighRes);
+    if (onnxReady) {
+      // Gesamtes Foto übergeben (sx=0, sy=0, volle Abmessungen)
+      postScanCorners = await detectCornersOnnx(
+        canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height
+      );
     }
 
     if (!postScanCorners && openCvReady) {
@@ -1359,7 +1368,7 @@ document.getElementById("rescanBtn").addEventListener("click", async () => {
       reviewState.cropH
     );
 
-    if (currentEngine === "onnx" && onnxReady) {
+    if (onnxReady) {
       neueEcken = await detectCornersOnnx(tCanvas);
     }
 
