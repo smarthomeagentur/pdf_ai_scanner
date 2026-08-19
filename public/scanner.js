@@ -22,6 +22,14 @@ let cvAutoEnabled = true;
 const sourceSelect = document.getElementById("sourceSelect");
 let activeSource = "camera";
 
+// Debug-Modus: sourceSelect nur sichtbar bei ?debug in der URL
+const isDebugMode = new URLSearchParams(window.location.search).has("debug");
+if (isDebugMode && sourceSelect) {
+  sourceSelect.style.display = "";
+  console.log("[Scanner] Debug-Modus aktiv: Testbild-Auswahl sichtbar");
+}
+
+
 // UI Elements for Engine Toggle
 const engineToggleBtn = document.getElementById("engineToggleBtn");
 const modeIcon = document.getElementById("modeIcon");
@@ -298,6 +306,7 @@ async function detectCornersOnnx(source, sx = 0, sy = 0, sWidth = null, sHeight 
       return null;
     }
 
+    console.log(`[ONNX] Dokument erkannt ✓ mean=${meanScore.toFixed(3)} min=${minScore.toFixed(3)} area=${area.toFixed(3)}`);
     return corners;
   } catch (err) {
     console.error("ONNX Inferenzfehler:", err);
@@ -501,9 +510,39 @@ async function initAutofocus() {
   if (!videoTrack) return;
   try {
     const capabilities = videoTrack.getCapabilities();
+    // Continuous AF als Standard setzen
     if (capabilities.focusMode && capabilities.focusMode.includes("continuous")) {
       await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
       console.log("Kontinuierlicher Autofokus initialisiert");
+    }
+
+    // Tap-to-Focus: Bei Touch/Klick aufs Overlay Fokuspunkt setzen
+    const overlay = document.getElementById("overlay");
+    if (overlay && capabilities.pointsOfInterest) {
+      const triggerFocus = async (e) => {
+        e.preventDefault();
+        const rect = overlay.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const x = (clientX - rect.left) / rect.width;
+        const y = (clientY - rect.top) / rect.height;
+        try {
+          await videoTrack.applyConstraints({
+            advanced: [{ pointsOfInterest: [{ x, y }], focusMode: "single-shot" }],
+          });
+          // Nach kurzem Delay zurück zu continuous
+          setTimeout(async () => {
+            try {
+              await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+            } catch (_) {}
+          }, 1500);
+        } catch (focusErr) {
+          console.warn("Tap-to-Focus nicht unterstützt:", focusErr);
+        }
+      };
+      overlay.addEventListener("click", triggerFocus);
+      overlay.addEventListener("touchstart", triggerFocus, { passive: false });
+      console.log("Tap-to-Focus aktiviert");
     }
   } catch (e) {
     console.warn("Autofokus konnte nicht initialisiert werden:", e);
@@ -759,7 +798,7 @@ async function processVideo() {
   if (!streaming) return;
 
   if (isProcessingFrame) {
-    setTimeout(() => requestAnimationFrame(processVideo), 30);
+    setTimeout(processVideo, 30);
     return;
   }
 
@@ -769,7 +808,7 @@ async function processVideo() {
     const currentSource = activeSource === "camera" ? video : sampleImage;
     if (!currentSource || (activeSource === "camera" && (!video.videoWidth || video.readyState < 2))) {
       isProcessingFrame = false;
-      setTimeout(() => requestAnimationFrame(processVideo), 50);
+      setTimeout(processVideo, 50);
       return;
     }
 
@@ -880,10 +919,10 @@ async function processVideo() {
     isProcessingFrame = false;
   }
 
-  // Nächster Frame Timer (35ms für flüssige ~25-30 FPS)
-  setTimeout(() => {
-    requestAnimationFrame(processVideo);
-  }, 35);
+  // Nächster Frame: Nur setTimeout, kein requestAnimationFrame.
+  // rAF würde [Violation] 'requestAnimationFrame handler took Nms' auslösen,
+  // da ONNX-Inferenz mehrere 100ms braucht und den Paint-Thread blockiert.
+  setTimeout(processVideo, 35);
 }
 
 captureBtn.addEventListener("click", async () => {
@@ -907,17 +946,13 @@ captureBtn.addEventListener("click", async () => {
   if (activeSource === "camera") {
     if (window.ImageCapture && videoTrack) {
       let flashWasTriggered = false;
-      let focusWasTriggered = false;
       try {
         const imageCapture = new ImageCapture(videoTrack);
         const capabilities = videoTrack.getCapabilities();
         const advancedConstraints = [];
 
-        if (capabilities.focusMode && capabilities.focusMode.includes("manual")) {
-          advancedConstraints.push({ focusMode: "manual" });
-          focusWasTriggered = true;
-        }
-
+        // Kein manueller Fokus-Override: nativer Continuous-AF der Kamera bleibt aktiv.
+        // Torch nur bei Modus "auto" kurz einschalten.
         if (torchSupported && torchMode === "auto") {
           advancedConstraints.push({ torch: true });
           flashWasTriggered = true;
@@ -925,9 +960,8 @@ captureBtn.addEventListener("click", async () => {
 
         if (advancedConstraints.length > 0) {
           await videoTrack.applyConstraints({ advanced: advancedConstraints });
-          const waitTime = flashWasTriggered ? 400 : 0;
-          if (waitTime > 0) {
-            await new Promise((r) => setTimeout(r, waitTime));
+          if (flashWasTriggered) {
+            await new Promise((r) => setTimeout(r, 400));
           }
         }
 
@@ -939,12 +973,9 @@ captureBtn.addEventListener("click", async () => {
       } catch (e) {
         console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
       } finally {
-        if (videoTrack) {
+        if (videoTrack && flashWasTriggered) {
           try {
-            const restoreConstraints = [];
-            if (flashWasTriggered) restoreConstraints.push({ torch: false });
-            if (focusWasTriggered) restoreConstraints.push({ focusMode: "continuous" });
-            if (restoreConstraints.length > 0) await videoTrack.applyConstraints({ advanced: restoreConstraints });
+            await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
           } catch (restoreErr) {}
         }
       }

@@ -1906,7 +1906,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     const runScannerTask = (inputPath, tempPdfPath, coordsStr) =>
       new Promise((resolve, reject) => {
         execFile(
-          "./venv/bin/python",
+          process.platform === "win32" ? ".\\venv\\Scripts\\python.exe" : "./venv/bin/python",
           ["./app/scanner.py", inputPath, tempPdfPath, coordsStr, algorithm],
           (error, stdout, stderr) => {
             if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
@@ -1993,7 +1993,7 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
   try {
     await new Promise((resolve, reject) => {
       execFile(
-        "./venv/bin/python",
+        process.platform === "win32" ? ".\\venv\\Scripts\\python.exe" : "./venv/bin/python",
         ["./app/scanner.py", inputPath, outputJpgPath, req.body.coords || "skip", algorithm],
         (error, stdout, stderr) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
