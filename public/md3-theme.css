@@ -79,7 +79,7 @@ body {
 }
 
 /* Standard MD3 Card/Container styling */
-.modal-content, .bg-white, #manual-review-section {
+.modal-content, .card {
   background-color: var(--md-sys-color-surface) !important;
   border-radius: var(--md-sys-shape-corner-large) !important;
   box-shadow: var(--md-sys-elevation-1) !important;

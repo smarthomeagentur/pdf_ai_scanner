@@ -20,8 +20,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <link rel="stylesheet" href="/scanner.css?v=20260819_1" />
-  <link rel="stylesheet" href="/md3-theme.css" />
+  <link rel="stylesheet" href="/scanner.css?v=20260819_2" />
+  <link rel="stylesheet" href="/md3-theme.css?v=20260819_2" />
   <script>
     window.onOpenCvReady = function() {
       if (typeof window.initOpenCvRuntime === "function") {
@@ -167,16 +167,15 @@
 
         <!-- Alle Aktions-Buttons in einer einzigen kompakten Zeile -->
         <div class="review-action-row d-flex gap-2 w-100 align-items-center">
-          <!-- Neuer Abbrechen Button links für schnelles Verwerfen -->
-          <button class="btn btn-outline-danger d-flex align-items-center justify-content-center gap-1 action-btn-retake" id="cancelReviewBtn">
-            <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
-            <span>Verwerfen</span>
+          <!-- Download Icon Button -->
+          <button class="btn btn-outline-secondary d-flex align-items-center justify-content-center action-btn-download" id="downloadOnlyBtn" title="Nur Herunterladen (ohne KI)">
+            <span class="material-symbols-outlined" style="font-size: 22px;">download</span>
           </button>
           <button class="btn btn-outline-primary d-flex align-items-center justify-content-center gap-1 action-btn-addpage" id="nextPageBtn">
             <span class="material-symbols-outlined" style="font-size: 20px;">note_add</span>
             <span>Seite hinzufügen</span>
           </button>
-          <!-- Verarbeiten umbenannt in 'Abschließen' und farblich markiert -->
+          <!-- Abschließen mit KI -->
           <button class="btn btn-success d-flex align-items-center justify-content-center gap-1 fw-bold text-white shadow action-btn-finish" id="finishScanBtn">
             <span class="material-symbols-outlined" style="font-size: 20px;">check_circle</span>
             <span>Abschließen</span>
@@ -260,7 +259,7 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
-  <script src="/scanner.js?v=20260819_14"></script>
+  <script src="/scanner.js?v=20260819_16"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
