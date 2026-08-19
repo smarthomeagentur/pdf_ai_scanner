@@ -941,6 +941,7 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   document.getElementById("manual-review-section").style.display = "flex";
   // Wenn man in den Review kommt, Auto-Tracking unbedingt zurücksetzen:
   cancelAutoCountdown();
+  updateConfirmBtnText();
 
   reviewState.highResCanvas = highResCanvas;
 
@@ -1098,10 +1099,8 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
   if (!reviewState.highResCanvas) return;
 
   let neueEcken = null;
-  const orgBtnText = document.getElementById("rescanBtn").innerHTML;
-  document.getElementById(
-    "rescanBtn"
-  ).innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Bitte warten...`;
+  const orgBtnHtml = '<span class="material-symbols-outlined" style="font-size: 18px;">crop</span> <span>Kantenerkennung</span>';
+  document.getElementById("rescanBtn").innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> <span style="font-size: 0.8rem;">Bitte warten...</span>`;
   document.getElementById("rescanBtn").disabled = true;
 
   setTimeout(() => {
@@ -1293,7 +1292,7 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
       console.error("Manueller Re-Scan fehlgeschlagen:", e);
     }
 
-    document.getElementById("rescanBtn").innerHTML = orgBtnText;
+    document.getElementById("rescanBtn").innerHTML = orgBtnHtml;
     document.getElementById("rescanBtn").disabled = false;
 
     if (neueEcken) {
@@ -1305,6 +1304,18 @@ document.getElementById("rescanBtn").addEventListener("click", () => {
   }, 50);
 });
 
+function updateConfirmBtnText() {
+  const finishBtn = document.getElementById("finishScanBtn");
+  if (!finishBtn) return;
+  const count = scanPagesArray.length + 1;
+  const icon = '<span class="material-symbols-outlined" style="font-size: 20px;">check_circle</span>';
+  if (count > 1) {
+    finishBtn.innerHTML = `${icon} <span>Abschließen (${count} Seiten)</span>`;
+  } else {
+    finishBtn.innerHTML = `${icon} <span>Abschließen</span>`;
+  }
+}
+
 // Event Listener für den neuen Schließen-Button am Panel-Rand
 document.getElementById("cancelReviewCrossBtn").addEventListener("click", () => {
   document.getElementById("manual-review-section").style.display = "none";
@@ -1314,6 +1325,7 @@ document.getElementById("cancelReviewCrossBtn").addEventListener("click", () => 
   document.getElementById("captureBtn").disabled = false;
 
   scanPagesArray = []; // Alle gesammelten Seiten resetten
+  updateConfirmBtnText();
 });
 
 // Neu hinzugefügter DownloadBtn Handler

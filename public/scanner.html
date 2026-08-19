@@ -20,7 +20,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <link rel="stylesheet" href="/scanner.css?v=1777396912" />
+  <link rel="stylesheet" href="/scanner.css?v=20260819_1" />
   <link rel="stylesheet" href="/md3-theme.css" />
 </head>
 
@@ -90,60 +90,38 @@
     </div>
 
     <!-- Review Section für manuelles Croppen -->
-    <div id="manual-review-section" class="bg-white p-3 mt-auto" style="
-          display: none;
-          position: relative;
-          width: 100%;
-          box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.1);
-          z-index: 1030;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          flex-grow: 1;
-        ">
+    <div id="manual-review-section" class="manual-review-section">
       <!-- Close button (Abbrechen) oben rechts absolut positioniert im Review-Panel -->
       <button id="cancelReviewCrossBtn"
         class="btn btn-sm btn-outline-secondary position-absolute d-flex align-items-center justify-content-center"
-        style="top: 15px; right: 15px; padding: 6px; border-radius: 50%; z-index: 1040;" title="Schließen">
-        <span class="material-symbols-outlined">close</span>
+        style="top: 12px; right: 12px; width: 36px; height: 36px; padding: 0; border-radius: 50%; z-index: 1040; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(4px);" title="Schließen">
+        <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
       </button>
 
-      <div style="
-            position: relative;
-            max-width: 100%;
-            height: auto;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            overflow: hidden;
-            background: #eee;
-            display: inline-block;
-          ">
-        <canvas id="reviewCanvas" style="
-              max-width: 100%;
-              max-height: 65vh;
-              display: block;
-              object-fit: contain;
-            "></canvas>
-        <canvas id="reviewOverlay" style="
-              position: absolute;
-              top: 0;
-              left: 0;
-              width: 100%;
-              height: 100%;
-              z-index: 20;
-              touch-action: none;
-            "></canvas>
+      <!-- Bild-Vorschau Container mit skalierendem Canvas -->
+      <div class="review-preview-container">
+        <div class="review-canvas-wrapper">
+          <canvas id="reviewCanvas"></canvas>
+          <canvas id="reviewOverlay"></canvas>
+
+          <!-- Floating Kantenerkennung Button direkt auf der Bildvorschau -->
+          <button id="rescanBtn" class="floating-rescan-btn" title="Kantenerkennung erneut ausführen">
+            <span class="material-symbols-outlined" style="font-size: 18px;">crop</span>
+            <span>Kantenerkennung</span>
+          </button>
+        </div>
       </div>
 
-      <div id="previewLoadingText" class="text-primary mt-2 fw-bold" style="display: none; font-size: 0.9em">
+      <div id="previewLoadingText" class="text-primary fw-bold text-center my-1" style="display: none; font-size: 0.85em">
         <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
         Warten auf Vorschau...
       </div>
 
-      <div class="mt-3 w-100 d-flex justify-content-center flex-column gap-2" style="max-width: 500px">
-        <div class="input-group mb-2 shadow-sm">
-          <span class="input-group-text bg-light fw-bold" style="font-size: 0.9em">🎨 Filter</span>
-          <select id="previewAlgorithmSelect" class="form-select text-primary fw-bold" style="font-size: 0.9em"
+      <!-- Controls Container unten (Immer sichtbar) -->
+      <div class="review-controls-container">
+        <div class="input-group input-group-sm mb-2 shadow-sm filter-row">
+          <span class="input-group-text bg-light fw-bold" style="font-size: 0.85em">🎨 Filter</span>
+          <select id="previewAlgorithmSelect" class="form-select text-primary fw-bold" style="font-size: 0.85em"
             onchange="
                 document.getElementById('algorithmSelect').value = this.value;
                 updatePreviewFilter();
@@ -159,27 +137,23 @@
           </select>
         </div>
 
-        <div class="d-flex gap-2 w-100">
-          <button class="btn btn-secondary w-50 py-2 fw-bold text-white shadow-sm" id="rescanBtn"
-            style="font-size: 0.95em">
-            Kantenerkennung
+        <!-- Alle Aktions-Buttons in einer einzigen kompakten Zeile -->
+        <div class="review-action-row d-flex gap-2 w-100 align-items-center">
+          <!-- Download als kompaktes Icon -->
+          <button class="btn btn-outline-secondary d-flex align-items-center justify-content-center action-btn-download" id="downloadOnlyBtn" title="Nur Herunterladen (ohne KI)">
+            <span class="material-symbols-outlined">download</span>
           </button>
-          <button class="btn btn-primary w-50 py-2 fw-bold shadow-sm" id="addPageBtn" style="font-size: 0.95em">
-            Nächste Seite
+          <!-- Nächste Seite umbenannt in 'Seite hinzufügen' -->
+          <button class="btn btn-outline-dark d-flex align-items-center justify-content-center gap-1 fw-bold action-btn-add-page" id="addPageBtn">
+            <span class="material-symbols-outlined" style="font-size: 20px;">add_photo_alternate</span>
+            <span>Seite hinzufügen</span>
+          </button>
+          <!-- Verarbeiten umbenannt in 'Abschließen' und farblich markiert -->
+          <button class="btn btn-success d-flex align-items-center justify-content-center gap-1 fw-bold text-white shadow action-btn-finish" id="finishScanBtn">
+            <span class="material-symbols-outlined" style="font-size: 20px;">check_circle</span>
+            <span>Abschließen</span>
           </button>
         </div>
-      </div>
-
-      <div class="d-flex w-100 gap-2 mb-3 mt-3 position-relative" style="
-            max-width: 500px;
-            padding-bottom: env(safe-area-inset-bottom, 20px);
-          ">
-        <button class="btn btn-secondary py-2 shadow-sm text-white fw-bold" id="downloadOnlyBtn" style="flex: 1;">
-          Download
-        </button>
-        <button class="btn btn-success py-2 shadow-sm fw-bold" style="flex: 2; font-size: 1.05em" id="finishScanBtn">
-          Verarbeiten
-        </button>
       </div>
     </div>
 
@@ -255,7 +229,7 @@
   </div>
 
   <!-- Zuerst die Scanner-Logik definieren, damit onOpenCvReady bekannt ist -->
-  <script src="/scanner.js?v=1777396912"></script>
+  <script src="/scanner.js?v=20260819_1"></script>
 
   <!-- OpenCV.js erst im Hintergrund (defer) laden! -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()" type="text/javascript"></script>
