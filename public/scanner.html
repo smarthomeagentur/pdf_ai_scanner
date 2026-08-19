@@ -284,15 +284,8 @@
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
   <script>
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.addEventListener("message", (event) => {
-        if (event.data && event.data.type === "SW_UPDATED") {
-          window.location.reload();
-        }
-      });
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=20260819_8").then((reg) => {
-          reg.update().catch(() => {});
-        }).catch(() => {});
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
       });
     }
   </script>
