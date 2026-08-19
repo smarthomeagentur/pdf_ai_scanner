@@ -1483,6 +1483,8 @@ function updatePreviewFilter() {
           rCv.getContext("2d").drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
           document.getElementById("previewLoadingText").style.display = "none";
           URL.revokeObjectURL(url);
+          fitReviewCanvas();
+          drawReviewOverlay();
         };
         img.src = url;
       } catch (err) {
@@ -1562,6 +1564,8 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
     fitReviewCanvas();
     drawReviewOverlay();
   });
+  setTimeout(() => { fitReviewCanvas(); drawReviewOverlay(); }, 80);
+  setTimeout(() => { fitReviewCanvas(); drawReviewOverlay(); }, 200);
 
   // Vermeide den Preview-Lader, falls ohnehin keine klaren Kanten erkannt wurden
   if (hasRealCorners) {
@@ -1578,14 +1582,19 @@ function fitReviewCanvas() {
   if (!reviewSec || reviewSec.style.display === "none") return;
   const container = document.querySelector(".review-preview-container");
   const wrapper = document.querySelector(".review-canvas-wrapper");
+  const controls = document.querySelector(".review-controls-container");
+  const header = document.querySelector(".scanner-header");
   const rCv = document.getElementById("reviewCanvas");
   const oCv = document.getElementById("reviewOverlay");
   if (!container || !wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
 
-  const pad = 16;
-  const availW = Math.max(10, container.clientWidth - pad);
-  const availH = Math.max(10, container.clientHeight - pad);
-  if (availW <= 0 || availH <= 0) return;
+  const totalWindowH = window.innerHeight || document.documentElement.clientHeight;
+  const headerH = header ? header.offsetHeight : 60;
+  const controlsH = controls ? controls.offsetHeight : 120;
+  const pad = 24; // safety headroom
+
+  const availH = Math.max(50, totalWindowH - headerH - controlsH - pad);
+  const availW = Math.max(50, (container.clientWidth || window.innerWidth) - 24);
 
   const aspect = reviewState.cropW / reviewState.cropH;
   let targetW, targetH;
@@ -1608,6 +1617,8 @@ function fitReviewCanvas() {
 
 window.addEventListener("resize", fitReviewCanvas);
 window.addEventListener("orientationchange", () => setTimeout(fitReviewCanvas, 100));
+window.addEventListener("pageshow", () => setTimeout(fitReviewCanvas, 100));
+window.addEventListener("focus", () => setTimeout(fitReviewCanvas, 100));
 
 function drawReviewOverlay() {
   const ctx = document.getElementById("reviewOverlay").getContext("2d");
