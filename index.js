@@ -1170,6 +1170,42 @@ async function checkDriveForNewFiles() {
 }
 
 // File routing
+// PWA Web Share Target for Android "Share with" / "Open in"
+app.post("/share-target", upload.array("files"), async (req, res) => {
+  try {
+    if (req.files && req.files.length > 0) {
+      const jobs = req.files.map((file) => {
+        const job = {
+          id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+          originalName: file.originalname,
+          status: "pending",
+          source: "share_target",
+          inAiPipeline: true,
+          aiPipelineStartedAt: new Date().toISOString(),
+          result: null,
+          error: null,
+          filePath: file.path,
+          uploadDate: new Date().toISOString(),
+        };
+        uploadJobs[job.id] = job;
+        uploadQueue.push(job.id);
+        return job;
+      });
+      saveJobs();
+      processQueue();
+      console.log(`[PWA SHARE] ${jobs.length} geteilte Datei(en) über Android Share Target empfangen.`);
+      return res.redirect(`/?shared=true&count=${jobs.length}`);
+    }
+  } catch (err) {
+    console.error("[PWA SHARE] Fehler beim Empfang geteilter Dateien:", err);
+  }
+  res.redirect("/");
+});
+
+app.get("/share-target", (req, res) => {
+  res.redirect("/");
+});
+
 app.post("/api/upload", upload.array("files"), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
 

@@ -1285,6 +1285,48 @@ window.addEventListener("appinstalled", () => {
   console.log("PWA was installed");
 });
 
+// PWA Web Share Target & File Handling Receiver
+(function handlePwaSharedFiles() {
+  // 1. Check if opened via /share-target redirect
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("shared") === "true") {
+    const count = parseInt(urlParams.get("count") || "1", 10);
+    setTimeout(() => {
+      if (typeof showToast === "function") {
+        showToast(`📥 ${count} geteilte(s) Dokument(e) empfangen und in die KI-Pipeline gestellt!`, "success");
+      }
+      startPolling();
+    }, 500);
+    // URL sauber bereinigen
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
+
+  // 2. File Handling API (LaunchQueue for Android/Desktop PWA "Open With")
+  if ("launchQueue" in window && window.LaunchParams && "files" in window.LaunchParams.prototype) {
+    window.launchQueue.setConsumer(async (launchParams) => {
+      if (!launchParams.files || launchParams.files.length === 0) return;
+      try {
+        const formData = new FormData();
+        for (const fileHandle of launchParams.files) {
+          const file = await fileHandle.getFile();
+          formData.append("files", file);
+        }
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.success) {
+          if (typeof showToast === "function") {
+            showToast(`📥 ${data.jobs.length} geöffnete Datei(en) in die KI-Pipeline gestellt!`, "success");
+          }
+          startPolling();
+        }
+      } catch (err) {
+        console.error("[PWA FILE HANDLER] Fehler:", err);
+      }
+    });
+  }
+})();
+
 // ==========================================
 // --- Deep Document Content Search (OCR & Full-Text) ---
 // ==========================================
