@@ -610,12 +610,16 @@ if (torchBtn) {
 // --- Auto Capture Support ---
 const autoCaptureBtn = document.getElementById("autoCaptureBtn");
 const autoCountdown = document.getElementById("auto-countdown");
-let autoCaptureEnabled = true;
+let autoCaptureEnabled = false;
 let documentDetectionStart = 0;
 let countdownInterval = null;
 let autoCaptureTriggered = false;
 
+// Button initial auf "Aus" setzen
 if (autoCaptureBtn) {
+  autoCaptureBtn.classList.replace("btn-primary", "btn-outline-secondary");
+  autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: Aus</span>';
+
   autoCaptureBtn.addEventListener("click", () => {
     autoCaptureEnabled = !autoCaptureEnabled;
     if (autoCaptureEnabled) {
