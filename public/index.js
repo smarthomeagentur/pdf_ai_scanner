@@ -55,7 +55,7 @@ openSettingsBtn.addEventListener("click", async () => {
       document.getElementById("auth-status").innerText = "Bereit zur Authentifizierung";
       document.getElementById("auth-btn").style.display = "inline-block";
 
-      // Initialize Google Auth Implicit flow client
+      // Initialize Google Auth client for Primary Account (Google Drive + Gmail)
       authClientCode = window.google.accounts.oauth2.initCodeClient({
         client_id: googleClientId,
         scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify",
@@ -67,7 +67,7 @@ openSettingsBtn.addEventListener("click", async () => {
             const authRes = await fetch("/api/auth/code", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: response.code }),
+              body: JSON.stringify({ code: response.code, isSecondary: false }),
             });
             if (authRes.ok) {
               document.getElementById("auth-status").innerText = "Erfolgreich verbunden!";
@@ -78,6 +78,36 @@ openSettingsBtn.addEventListener("click", async () => {
               }
             } else {
               document.getElementById("auth-status").innerText = "Fehler bei der Verbindung.";
+            }
+          }
+        },
+      });
+
+      // Initialize Google Auth client for Secondary Gmail Accounts (ONLY Gmail scope, NO Drive!)
+      secondaryGmailAuthClient = window.google.accounts.oauth2.initCodeClient({
+        client_id: googleClientId,
+        scope: "https://www.googleapis.com/auth/gmail.modify",
+        prompt: "select_account consent",
+        ux_mode: "popup",
+        callback: async (response) => {
+          if (response.code) {
+            try {
+              const authRes = await fetch("/api/auth/code", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: response.code, isSecondary: true }),
+              });
+              const data = await authRes.json();
+              if (data.success) {
+                if (typeof showToast === "function") {
+                  showToast(`Posteingang ${data.account?.email || ""} erfolgreich hinzugefügt!`, "success");
+                }
+                loadInboxData(false);
+              } else {
+                alert("Fehler beim Hinzufügen des Posteingangs: " + (data.error || "Unbekannter Fehler"));
+              }
+            } catch (err) {
+              alert("Fehler bei der Autorisierung: " + err.message);
             }
           }
         },
@@ -2918,6 +2948,207 @@ const inboxCountActive = document.getElementById("inbox-count-active");
 const inboxCountSkipped = document.getElementById("inbox-count-skipped");
 const inboxSelectionControls = document.getElementById("inbox-selection-controls");
 
+// PDF Attachment Preview Modal Elements & State
+const inboxPdfPreviewModal = document.getElementById("inbox-pdf-preview-modal");
+const inboxPdfPreviewTitle = document.getElementById("inbox-pdf-preview-title");
+const inboxPdfPreviewSubtitle = document.getElementById("inbox-pdf-preview-subtitle");
+const inboxPdfPreviewCounter = document.getElementById("inbox-pdf-preview-counter");
+const inboxPdfPrevBtn = document.getElementById("inbox-pdf-prev-btn");
+const inboxPdfNextBtn = document.getElementById("inbox-pdf-next-btn");
+const inboxPdfQuickProcessBtn = document.getElementById("inbox-pdf-quick-process-btn");
+const inboxPdfDownloadBtn = document.getElementById("inbox-pdf-download-btn");
+const inboxPdfExternalBtn = document.getElementById("inbox-pdf-external-btn");
+const inboxPdfPreviewClose = document.getElementById("inbox-pdf-preview-close");
+const inboxPdfPreviewIframe = document.getElementById("inbox-pdf-preview-iframe");
+const inboxPdfLoading = document.getElementById("inbox-pdf-loading");
+
+let currentPreviewMailIndex = -1;
+let currentPreviewAttIndex = 0;
+
+function openInboxPdfPreview(mailOrId, attIndex = 0) {
+  if (!inboxPdfPreviewModal || !inboxPdfPreviewIframe) return;
+
+  const visibleEmails = getVisibleInboxEmails();
+  let mail = null;
+
+  if (typeof mailOrId === "object" && mailOrId !== null) {
+    mail = mailOrId;
+    currentPreviewMailIndex = visibleEmails.findIndex((m) => m.id === mail.id);
+  } else if (typeof mailOrId === "number") {
+    currentPreviewMailIndex = mailOrId;
+    mail = visibleEmails[currentPreviewMailIndex];
+  } else if (typeof mailOrId === "string") {
+    currentPreviewMailIndex = visibleEmails.findIndex((m) => m.id === mailOrId);
+    mail = visibleEmails[currentPreviewMailIndex] || inboxActiveEmails.find((m) => m.id === mailOrId) || inboxSkippedEmails.find((m) => m.id === mailOrId);
+  }
+
+  if (!mail) return;
+
+  const attachments = mail.attachments || [];
+  if (attachments.length === 0) return;
+
+  currentPreviewAttIndex = Math.max(0, Math.min(attIndex, attachments.length - 1));
+  const currentAtt = attachments[currentPreviewAttIndex];
+  const totalCount = visibleEmails.length;
+
+  const previewUrl = `/api/gmail/attachment/preview?messageId=${encodeURIComponent(mail.id)}&attachmentId=${encodeURIComponent(currentAtt.attachmentId)}&accountId=${encodeURIComponent(mail.accountId || "")}&filename=${encodeURIComponent(currentAtt.filename || "Anhang.pdf")}`;
+  const downloadUrl = `${previewUrl}&download=true`;
+
+  if (inboxPdfPreviewTitle) {
+    inboxPdfPreviewTitle.innerText = currentAtt.filename || "Dokumentenvorschau";
+  }
+  if (inboxPdfPreviewSubtitle) {
+    const sender = mail.fromName || mail.fromEmail || "Absender";
+    const dateFormatted = formatDateDisplay(mail.date);
+    inboxPdfPreviewSubtitle.innerText = `${mail.subject || "(Kein Betreff)"} • Von: ${sender} • ${dateFormatted} • ${formatFileSize(currentAtt.size)}`;
+  }
+
+  if (inboxPdfPreviewCounter) {
+    if (currentPreviewMailIndex >= 0 && totalCount > 0) {
+      inboxPdfPreviewCounter.innerText = `${currentPreviewMailIndex + 1} von ${totalCount}`;
+      inboxPdfPreviewCounter.style.display = "inline-block";
+    } else {
+      inboxPdfPreviewCounter.style.display = "none";
+    }
+  }
+
+  if (inboxPdfPrevBtn) {
+    inboxPdfPrevBtn.disabled = currentPreviewMailIndex <= 0;
+  }
+  if (inboxPdfNextBtn) {
+    inboxPdfNextBtn.disabled = currentPreviewMailIndex < 0 || currentPreviewMailIndex >= totalCount - 1;
+  }
+
+  if (inboxPdfDownloadBtn) inboxPdfDownloadBtn.href = downloadUrl;
+  if (inboxPdfExternalBtn) inboxPdfExternalBtn.href = previewUrl;
+
+  if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "block", "important");
+  inboxPdfPreviewIframe.onload = () => {
+    if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "none", "important");
+  };
+
+  inboxPdfPreviewIframe.src = previewUrl;
+  inboxPdfPreviewModal.style.setProperty("display", "flex", "important");
+}
+
+function navigateInboxPdfPreview(direction) {
+  const visibleEmails = getVisibleInboxEmails();
+  if (visibleEmails.length === 0) return;
+
+  const newIndex = currentPreviewMailIndex + direction;
+  if (newIndex >= 0 && newIndex < visibleEmails.length) {
+    openInboxPdfPreview(newIndex, 0);
+  }
+}
+
+function closeInboxPdfPreview() {
+  if (!inboxPdfPreviewModal) return;
+  inboxPdfPreviewModal.style.setProperty("display", "none", "important");
+  if (inboxPdfPreviewIframe) inboxPdfPreviewIframe.src = "";
+  currentPreviewMailIndex = -1;
+}
+
+if (inboxPdfPrevBtn) {
+  inboxPdfPrevBtn.addEventListener("click", () => navigateInboxPdfPreview(-1));
+}
+if (inboxPdfNextBtn) {
+  inboxPdfNextBtn.addEventListener("click", () => navigateInboxPdfPreview(1));
+}
+
+if (inboxPdfQuickProcessBtn) {
+  inboxPdfQuickProcessBtn.addEventListener("click", async () => {
+    const visibleEmails = getVisibleInboxEmails();
+    if (currentPreviewMailIndex < 0 || currentPreviewMailIndex >= visibleEmails.length) return;
+    const mail = visibleEmails[currentPreviewMailIndex];
+
+    const originalHtml = inboxPdfQuickProcessBtn.innerHTML;
+    inboxPdfQuickProcessBtn.disabled = true;
+    inboxPdfQuickProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
+
+    try {
+      const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+      const res = await fetch("/api/gmail/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messageId: mail.id,
+          accountId: mail.accountId,
+          subject: mail.subject,
+          fromName: mail.fromName,
+          fromEmail: mail.fromEmail,
+          date: mail.date,
+          attachments: mail.attachments,
+          archive: shouldArchive,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Fehler beim Verarbeiten.");
+
+      // Aus lokaler Liste entfernen
+      inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+      inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
+      selectedInboxMessageIds.delete(mail.id);
+
+      const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+      if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
+      if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+      if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+      if (navInboxBadge) {
+        const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+        navInboxBadge.innerText = bCount;
+        navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
+      }
+
+      updateInboxBatchButton();
+      renderInboxList();
+      fetchStatus();
+
+      if (typeof showToast === "function") {
+        showToast(data.message || "Beleg erfolgreich verarbeitet!", "success");
+      }
+
+      // Zum nächsten Beleg wechseln oder schließen
+      const updatedVisible = getVisibleInboxEmails();
+      if (updatedVisible.length > 0) {
+        const nextIdx = Math.min(currentPreviewMailIndex, updatedVisible.length - 1);
+        openInboxPdfPreview(nextIdx, 0);
+      } else {
+        closeInboxPdfPreview();
+      }
+    } catch (err) {
+      alert("Fehler beim Verarbeiten: " + err.message);
+    } finally {
+      inboxPdfQuickProcessBtn.disabled = false;
+      inboxPdfQuickProcessBtn.innerHTML = originalHtml;
+    }
+  });
+}
+
+if (inboxPdfPreviewClose) {
+  inboxPdfPreviewClose.addEventListener("click", closeInboxPdfPreview);
+}
+
+if (inboxPdfPreviewModal) {
+  inboxPdfPreviewModal.addEventListener("click", (e) => {
+    if (e.target === inboxPdfPreviewModal) {
+      closeInboxPdfPreview();
+    }
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  if (inboxPdfPreviewModal && inboxPdfPreviewModal.style.display !== "none") {
+    if (e.key === "Escape") {
+      closeInboxPdfPreview();
+    } else if (e.key === "ArrowLeft") {
+      navigateInboxPdfPreview(-1);
+    } else if (e.key === "ArrowRight") {
+      navigateInboxPdfPreview(1);
+    }
+  }
+});
+
 function setInboxSubtab(tabName) {
   currentInboxSubtab = tabName;
 
@@ -2987,7 +3218,9 @@ if (inboxAccountSelect) {
 
 if (inboxAddAccountBtn) {
   inboxAddAccountBtn.addEventListener("click", () => {
-    if (authClientCode) {
+    if (secondaryGmailAuthClient) {
+      secondaryGmailAuthClient.requestCode();
+    } else if (authClientCode) {
       authClientCode.requestCode();
     } else {
       alert("Google Authentifizierung wird initialisiert. Bitte kurz warten oder Einstellungen öffnen.");
@@ -3350,15 +3583,24 @@ function renderInboxList() {
       transition: all 0.2s ease;
     `;
 
-    // Attachments HTML
+    // Attachments HTML (Clickable PDF Pills for live preview)
     const attachmentsHtml = attachments
       .map(
         (att) => `
-        <div class="d-inline-flex align-items-center gap-1 p-1 px-2 rounded border bg-light small" style="font-size: 12px;" title="${att.filename}">
+        <button type="button" class="btn btn-sm btn-light border d-inline-flex align-items-center gap-1 p-1 px-2 rounded small inbox-pdf-pill" 
+          data-message-id="${mail.id}"
+          data-account-id="${mail.accountId || ''}"
+          data-att-id="${att.attachmentId}"
+          data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
+          data-size="${att.size || 0}"
+          data-subject="${encodeURIComponent(mail.subject || '')}"
+          style="font-size: 12px; transition: all 0.15s ease; cursor: pointer; text-align: left;"
+          title="Klicken für PDF-Vorschau: ${att.filename}">
           <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
           <span class="text-truncate fw-medium" style="max-width: 220px;">${att.filename || "Anhang.pdf"}</span>
           <span class="text-muted" style="font-size: 11px;">(${formatFileSize(att.size)})</span>
-        </div>
+          <span class="material-symbols-outlined text-primary ms-1" style="font-size: 14px;">visibility</span>
+        </button>
       `
       )
       .join("");
@@ -3438,6 +3680,10 @@ function renderInboxList() {
               ${attachments.length} ${attachments.length === 1 ? "PDF-Anhang" : "PDF-Anhänge"}
             </div>
             <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-dark d-flex align-items-center gap-1 inbox-preview-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;" title="PDF-Vorschau öffnen">
+                <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
+                <span>Vorschau</span>
+              </button>
               ${
                 !isSkippedTab
                   ? `
@@ -3466,6 +3712,19 @@ function renderInboxList() {
         </div>
       </div>
     `;
+
+    // PDF Preview Click Handler for button and pills
+    const previewBtn = card.querySelector(".inbox-preview-btn");
+    if (previewBtn) {
+      previewBtn.addEventListener("click", () => openInboxPdfPreview(mail, 0));
+    }
+
+    card.querySelectorAll(".inbox-pdf-pill").forEach((pill, idx) => {
+      pill.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openInboxPdfPreview(mail, idx);
+      });
+    });
 
     // Checkbox event
     const cb = card.querySelector(".inbox-item-cb");

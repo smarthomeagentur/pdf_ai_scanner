@@ -423,6 +423,66 @@
         </div>
       </div>
 
+      <!-- PDF Attachment Preview Modal -->
+      <div id="inbox-pdf-preview-modal" class="modal-overlay" style="display: none; z-index: 2100; background: rgba(0,0,0,0.75); backdrop-filter: blur(5px);">
+        <div class="modal-content" style="max-width: 1100px; width: 96vw; height: 92vh; display: flex; flex-direction: column; padding: 0; border-radius: 16px; overflow: hidden; background: #fff; box-shadow: 0 16px 48px rgba(0,0,0,0.4);">
+          <!-- Modal Header -->
+          <div class="modal-header d-flex justify-content-between align-items-center p-3 border-bottom bg-light m-0" style="flex-shrink: 0; position: static;">
+            <div class="d-flex align-items-center gap-2 text-truncate" style="min-width: 0; max-width: 45%;">
+              <span class="material-symbols-outlined text-danger" style="font-size: 28px;">picture_as_pdf</span>
+              <div class="text-truncate">
+                <div class="d-flex align-items-center gap-2">
+                  <h5 id="inbox-pdf-preview-title" class="m-0 text-truncate fw-bold" style="font-size: 15px;">Vorschau</h5>
+                  <span id="inbox-pdf-preview-counter" class="badge bg-secondary-subtle text-secondary small" style="font-size: 11px;">1 / 1</span>
+                </div>
+                <div id="inbox-pdf-preview-subtitle" class="text-muted small text-truncate" style="font-size: 12px;"></div>
+              </div>
+            </div>
+
+            <!-- Controls & Actions -->
+            <div class="d-flex align-items-center gap-2 flex-shrink-0">
+              <!-- Navigation -->
+              <div class="btn-group btn-group-sm me-1" role="group">
+                <button id="inbox-pdf-prev-btn" type="button" class="btn btn-outline-secondary d-flex align-items-center px-2" title="Vorherige E-Mail / Beleg (Pfeiltaste links)">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">chevron_left</span>
+                </button>
+                <button id="inbox-pdf-next-btn" type="button" class="btn btn-outline-secondary d-flex align-items-center px-2" title="Nächste E-Mail / Beleg (Pfeiltaste rechts)">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">chevron_right</span>
+                </button>
+              </div>
+
+              <!-- Quick Process Button inside Preview -->
+              <button id="inbox-pdf-quick-process-btn" type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 px-3" style="border-radius: 20px; font-weight: 600; font-size: 13px;" title="Diesen Beleg jetzt verarbeiten und archivieren">
+                <span class="material-symbols-outlined" style="font-size: 18px;">play_arrow</span>
+                <span>Verarbeiten</span>
+              </button>
+
+              <a id="inbox-pdf-download-btn" href="#" target="_blank" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;" title="Herunterladen">
+                <span class="material-symbols-outlined" style="font-size: 18px;">download</span>
+                <span class="d-none d-md-inline">Download</span>
+              </a>
+
+              <a id="inbox-pdf-external-btn" href="#" target="_blank" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;" title="In neuem Tab öffnen">
+                <span class="material-symbols-outlined" style="font-size: 18px;">open_in_new</span>
+              </a>
+
+              <button id="inbox-pdf-preview-close" type="button" class="btn btn-sm btn-light rounded-circle d-flex align-items-center justify-content-center ms-1" style="width: 34px; height: 34px; padding: 0;" title="Schließen (Esc)">
+                <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Modal Body with Full Height PDF Viewer -->
+          <div class="modal-body p-0 flex-grow-1 position-relative" style="background: #525659; min-height: 0;">
+            <div id="inbox-pdf-loading" class="position-absolute top-50 start-50 translate-middle text-center text-white" style="z-index: 5;">
+              <div class="spinner-border text-light mb-2" role="status"></div>
+              <div class="small fw-medium">Lade Dokumentenvorschau...</div>
+            </div>
+            <iframe id="inbox-pdf-preview-iframe" src="" style="width: 100%; height: 100%; border: 0; display: block;"></iframe>
+          </div>
+        </div>
+      </div>
+
       <!-- Settings Modal -->
       <div id="settings-modal" class="modal-overlay">
         <div class="modal-content">
@@ -1060,7 +1120,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v5"></script>
+      <script src="/index.js?v=20260819_gmail_v7"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

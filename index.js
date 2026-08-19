@@ -397,33 +397,40 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
       "postmessage",
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
+    const isSecondary = req.body.isSecondary === true;
 
     let addedAccount = null;
     try {
-      addedAccount = await gmailApi.addAccountFromTokens(tokens, keys);
-      console.log(`[AUTH] Google-Konto ${addedAccount.email} erfolgreich verknüpft.`);
+      addedAccount = await gmailApi.addAccountFromTokens(tokens, keys, isSecondary);
+      console.log(`[AUTH] Google-Konto ${addedAccount.email} (${isSecondary ? "Sekundärer Posteingang" : "Hauptkonto Drive+Gmail"}) verknüpft.`);
     } catch (accErr) {
       console.warn("[AUTH] Konto-Verknüpfung via Gmail API:", accErr.message);
     }
 
-    let existingToken = {};
-    if (fs.existsSync(TOKEN_PATH)) {
-      try {
-        existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH, "utf8"));
-      } catch (e) {}
+    // NUR wenn es das Hauptkonto ist, wird store/token.json (für Google Drive) geschrieben
+    if (!isSecondary) {
+      let existingToken = {};
+      if (fs.existsSync(TOKEN_PATH)) {
+        try {
+          existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH, "utf8"));
+        } catch (e) {}
+      }
+
+      const refreshToken = tokens.refresh_token || existingToken.refresh_token;
+      const payload = JSON.stringify({
+        type: "authorized_user",
+        client_id: key.client_id,
+        client_secret: key.client_secret,
+        refresh_token: refreshToken,
+      }, null, 2);
+
+      await fs.promises.writeFile(TOKEN_PATH, payload);
+      console.log("[AUTH] Google Drive Hauptkonto-Token (token.json) erfolgreich gespeichert.");
+    } else {
+      console.log("[AUTH] Sekundärer Gmail-Posteingang gespeichert. Google Drive Hauptkonto bleibt unberührt.");
     }
 
-    const refreshToken = tokens.refresh_token || existingToken.refresh_token;
-    const payload = JSON.stringify({
-      type: "authorized_user",
-      client_id: key.client_id,
-      client_secret: key.client_secret,
-      refresh_token: refreshToken,
-    }, null, 2);
-
-    await fs.promises.writeFile(TOKEN_PATH, payload);
-    console.log("[AUTH] Google OAuth Token erfolgreich gespeichert.");
-    res.json({ success: true, account: addedAccount });
+    res.json({ success: true, account: addedAccount, isSecondary });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.toString() });
@@ -1352,6 +1359,31 @@ app.post("/api/gmail/accounts/delete", requireAdmin, async (req, res) => {
     res.json({ success: deleted, accounts });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 0.1 Attachment Preview Endpoint
+app.get("/api/gmail/attachment/preview", async (req, res) => {
+  try {
+    const { messageId, attachmentId, accountId, filename, download } = req.query;
+    if (!messageId || !attachmentId) {
+      return res.status(400).send("messageId und attachmentId erforderlich");
+    }
+
+    const buffer = await gmailApi.downloadAttachment(messageId, attachmentId, accountId);
+    const safeName = (filename || "Anhang.pdf").replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+
+    res.setHeader("Content-Type", "application/pdf");
+    if (download === "true") {
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    } else {
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    }
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    console.error("[GMAIL PREVIEW] Fehler:", err);
+    res.status(500).send("Fehler beim Laden des PDF-Anhangs: " + err.message);
   }
 });
 

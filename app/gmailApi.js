@@ -150,8 +150,11 @@ class GmailAPI {
 
   /**
    * Fügt ein neues Konto nach OAuth-Autorisierung hinzu.
+   * @param {Object} tokens - Die OAuth Tokens
+   * @param {Object} keyData - Die Google Client Credentials
+   * @param {boolean} isSecondary - Wenn true, wird dieses Konto ausschließlich als sekundärer Posteingang registriert und das Hauptkonto (Google Drive) bleibt unberührt.
    */
-  async addAccountFromTokens(tokens, keyData) {
+  async addAccountFromTokens(tokens, keyData, isSecondary = false) {
     const key = keyData.installed || keyData.web;
     const tokenPayload = {
       type: "authorized_user",
@@ -169,13 +172,24 @@ class GmailAPI {
       throw new Error("E-Mail-Adresse des Google-Kontos konnte nicht ermittelt werden.");
     }
 
-    const isFirst = Object.keys(this.accounts).length === 0;
+    this.loadAccounts();
+
+    // Wenn isSecondary true ist: Es ist definitiv ein sekundäres Konto
+    // Wenn isSecondary false ist: Es ist das Hauptkonto (Drive + Gmail)
+    const isPrimaryAccount = !isSecondary;
+
+    if (isPrimaryAccount) {
+      // Setze alle anderen Konten auf isPrimary = false
+      Object.values(this.accounts).forEach((acc) => {
+        acc.isPrimary = false;
+      });
+    }
 
     const account = {
       id: email,
       email: email,
-      name: email,
-      isPrimary: isFirst || !fs.existsSync(this.tokenPath),
+      name: isPrimaryAccount ? `Hauptkonto (${email})` : email,
+      isPrimary: isPrimaryAccount,
       addedAt: new Date().toISOString(),
       token: tokenPayload,
     };
@@ -183,8 +197,8 @@ class GmailAPI {
     this.accounts[email] = account;
     await this.saveAccounts();
 
-    // Falls erstes Konto, auch als token.json sichern
-    if (account.isPrimary || !fs.existsSync(this.tokenPath)) {
+    // NUR wenn es das Hauptkonto ist, in token.json sichern
+    if (isPrimaryAccount) {
       await fs.promises.writeFile(this.tokenPath, JSON.stringify(tokenPayload, null, 2), "utf8");
     }
 
