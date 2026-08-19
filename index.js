@@ -954,6 +954,7 @@ app.post("/api/clickup/sync-status", requireAdmin, async (req, res) => {
 let uploadJobs = {};
 let uploadQueue = [];
 let processedDriveFiles = [];
+let hiddenDriveFiles = [];
 let isProcessingQueue = false;
 
 function loadJobs() {
@@ -963,20 +964,21 @@ function loadJobs() {
     if (data.uploadJobs) uploadJobs = data.uploadJobs;
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
+    if (data.hiddenDriveFiles) hiddenDriveFiles = data.hiddenDriveFiles;
 
-    // Stelle sicher, dass Drive-IDs aller ausgeblendeten Belege (job.isHidden) in processedDriveFiles vorhanden sind
+    // Stelle sicher, dass Drive-IDs aller ausgeblendeten Belege (job.isHidden) in hiddenDriveFiles vorhanden sind
     for (const jobId in uploadJobs) {
       const job = uploadJobs[jobId];
       if (job.isHidden) {
-        if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) {
-          processedDriveFiles.push(job.rawDriveId);
+        if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
+          hiddenDriveFiles.push(job.rawDriveId);
         }
-        if (job.driveFileId && !processedDriveFiles.includes(job.driveFileId)) {
-          processedDriveFiles.push(job.driveFileId);
+        if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) {
+          hiddenDriveFiles.push(job.driveFileId);
         }
         const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-        if (sortedId && !processedDriveFiles.includes(sortedId)) {
-          processedDriveFiles.push(sortedId);
+        if (sortedId && !hiddenDriveFiles.includes(sortedId)) {
+          hiddenDriveFiles.push(sortedId);
         }
       }
     }
@@ -998,24 +1000,15 @@ function loadJobs() {
       // Prüfe, ob der Job vor dem Neustart in Verarbeitung oder Warteschlange war, oder durch vorherigen Neustart unterbrochen wurde
       const wasInterrupted = job.status === "processing" || job.status === "pending" || job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
       if (wasInterrupted) {
-        if (job.filePath && fs.existsSync(job.filePath)) {
-          // Datei existiert noch: Job zurücksetzen und automatisch wieder in die Pipeline stellen
-          job.status = "pending";
-          job.inAiPipeline = true;
-          job.error = null;
-          job.aiPipelineStartedAt = new Date().toISOString();
-          if (!uploadQueue.includes(jobId)) {
-            uploadQueue.push(jobId);
-          }
-          recoveredCount++;
-          changed = true;
-        } else {
-          // Datei existiert nicht mehr
-          job.status = "error";
-          job.inAiPipeline = false;
-          job.error = "Quelldatei nach Neustart nicht mehr vorhanden.";
-          changed = true;
+        // Status auf 'pending' zurücksetzen und zurück in die Queue schieben
+        job.status = "pending";
+        job.error = null;
+        job.inAiPipeline = true;
+        if (!uploadQueue.includes(jobId)) {
+          uploadQueue.push(jobId);
         }
+        changed = true;
+        recoveredCount++;
       }
     }
     // Bereinige Queue auf gültige IDs
@@ -1043,7 +1036,7 @@ function saveJobs() {
       }
     }
 
-    fs.promises.writeFile(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles })).catch((err) => {
+    fs.promises.writeFile(JOBS_FILE, JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles, hiddenDriveFiles })).catch((err) => {
       console.error("[SYSTEM] Fehler beim asynchronen Speichern der Jobs:", err);
     });
   } catch (e) { }
@@ -1553,15 +1546,16 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
         return false;
       });
 
-      if (processedDriveFiles.includes(file.id) || (matchingJob && matchingJob.isHidden)) {
-        if (!processedDriveFiles.includes(file.id)) {
-          processedDriveFiles.push(file.id);
+      const isManuallyHidden = hiddenDriveFiles.includes(file.id) || (matchingJob && matchingJob.isHidden);
+      if (isManuallyHidden) {
+        if (!hiddenDriveFiles.includes(file.id)) {
+          hiddenDriveFiles.push(file.id);
           saveJobs();
         }
         skipped.push({
           id: file.id,
           name: file.name,
-          reason: matchingJob?.isHidden ? "Datei manuell ausgeblendet" : "Bereits verarbeitet / ausgeblendet",
+          reason: "Manuell ausgeblendet",
           size: file.size,
           webViewLink: file.webViewLink,
         });
@@ -1634,17 +1628,17 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
 app.post("/api/drive/ignore-file", requireAdmin, (req, res) => {
   const { fileId } = req.body;
   if (!fileId) return res.status(400).json({ success: false, error: "fileId erforderlich." });
-  if (!processedDriveFiles.includes(fileId)) {
-    processedDriveFiles.push(fileId);
+  if (!hiddenDriveFiles.includes(fileId)) {
+    hiddenDriveFiles.push(fileId);
     saveJobs();
   }
-  res.json({ success: true, message: "Datei dauerhaft für Google Drive Sync ignoriert." });
+  res.json({ success: true, message: "Datei dauerhaft für Google Drive Sync ausgeblendet." });
 });
 
 app.post("/api/drive/unignore-file", requireAdmin, (req, res) => {
   const { fileId } = req.body;
   if (!fileId) return res.status(400).json({ success: false, error: "fileId erforderlich." });
-  processedDriveFiles = processedDriveFiles.filter((id) => id !== fileId);
+  hiddenDriveFiles = hiddenDriveFiles.filter((id) => id !== fileId);
   saveJobs();
   res.json({ success: true, message: "Datei wird beim nächsten Sync wieder berücksichtigt." });
 });
@@ -2496,16 +2490,16 @@ app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
   if (fs.existsSync(thumbPath)) await fs.promises.unlink(thumbPath).catch(() => {});
   if (job.filePath && fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
 
-  // Ensure the Drive file ID is tracked in processedDriveFiles so it won't be re-imported on Drive sync
-  if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) {
-    processedDriveFiles.push(job.rawDriveId);
+  // Ensure the Drive file ID is tracked in hiddenDriveFiles so it won't be re-imported on Drive sync
+  if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
+    hiddenDriveFiles.push(job.rawDriveId);
   }
-  if (job.driveFileId && !processedDriveFiles.includes(job.driveFileId)) {
-    processedDriveFiles.push(job.driveFileId);
+  if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) {
+    hiddenDriveFiles.push(job.driveFileId);
   }
   const sortedDriveId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-  if (sortedDriveId && !processedDriveFiles.includes(sortedDriveId)) {
-    processedDriveFiles.push(sortedDriveId);
+  if (sortedDriveId && !hiddenDriveFiles.includes(sortedDriveId)) {
+    hiddenDriveFiles.push(sortedDriveId);
   }
 
   delete uploadJobs[jobId];
@@ -2524,15 +2518,18 @@ app.post("/api/jobs/:id/hide", requireAdmin, (req, res) => {
   const isHidden = req.body.isHidden === true || req.body.isHidden === "true";
   job.isHidden = isHidden;
 
-  // Ensure the Drive file ID is tracked in processedDriveFiles so it won't be re-imported on Drive sync
+  const driveIds = [
+    job.rawDriveId,
+    job.driveFileId,
+    job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1],
+  ].filter(Boolean);
+
   if (isHidden) {
-    if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) {
-      processedDriveFiles.push(job.rawDriveId);
+    for (const dId of driveIds) {
+      if (!hiddenDriveFiles.includes(dId)) hiddenDriveFiles.push(dId);
     }
-    const sortedDriveId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-    if (sortedDriveId && !processedDriveFiles.includes(sortedDriveId)) {
-      processedDriveFiles.push(sortedDriveId);
-    }
+  } else {
+    hiddenDriveFiles = hiddenDriveFiles.filter((id) => !driveIds.includes(id));
   }
 
   saveJobs();
