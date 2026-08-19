@@ -346,7 +346,31 @@ app.get("/api/config", async (req, res) => {
   }
 });
 
-app.get("/api/settings", (req, res) => res.json({ success: true, settings: appSettings }));
+app.get("/api/settings", (req, res) => {
+  const isAdmin = checkIsAdmin(req);
+  if (isAdmin) {
+    return res.json({ success: true, settings: appSettings });
+  }
+
+  // Safe masked view for non-admin users
+  const safeSettings = { ...appSettings };
+  const sensitiveKeys = [
+    "ADMIN_PIN",
+    "ADMIN_PASSWORD",
+    "LEXOFFICE_KEY_WIREWIRE",
+    "LEXOFFICE_KEY_POLYXO",
+    "BUTTLER_KEY_THEWIRE_CLIENT",
+    "BUTTLER_KEY_THEWIRE_SECRET",
+    "BUTTLER_KEY_THEWIRE_KEY",
+    "CLICKUP_API_KEY",
+  ];
+  for (const k of sensitiveKeys) {
+    if (safeSettings[k]) {
+      safeSettings[k] = "********";
+    }
+  }
+  res.json({ success: true, settings: safeSettings });
+});
 
 app.post("/api/settings", requireAdmin, async (req, res) => {
   [
@@ -785,6 +809,10 @@ async function syncClickupStatusForJobs(targetJobs = null) {
 app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
   try {
     const id = req.params.id;
+    const job = uploadJobs[id];
+    if (job && job.isPrivate && !checkIsAdmin(req)) {
+      return res.status(403).send("Forbidden");
+    }
     const thumbPath = await getOrGenerateThumbnailPath(id);
     if (thumbPath && fs.existsSync(thumbPath)) {
       res.setHeader("Content-Type", "image/jpeg");
@@ -802,6 +830,9 @@ app.get(["/api/jobs/:id/preview", "/api/preview/:id"], async (req, res) => {
   try {
     const id = req.params.id;
     const job = uploadJobs[id];
+    if (job && job.isPrivate && !checkIsAdmin(req)) {
+      return res.status(403).send("Forbidden");
+    }
     const targetPreviewPath = path.join(localDownloadFolder, `preview_${id}.jpg`);
 
     // 1. Direct match on disk
