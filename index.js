@@ -30,6 +30,7 @@ process.on("uncaughtException", (error) => {
 
 const aiAgent = require("./app/aiAgent.js");
 const DriveAPI = require("./app/driveApi.js");
+const GmailAPI = require("./app/gmailApi.js");
 const ClickUpAPI = require("./app/clickupApi.js");
 const butlerApi = require("./app/butlerApi.js");
 
@@ -74,16 +75,40 @@ if (!fs.existsSync(localDownloadFolder)) fs.mkdirSync(localDownloadFolder, { rec
 const SETTINGS_FILE = path.join(storeFolder, "settings.json");
 const TOKEN_PATH = path.join(storeFolder, "token.json");
 const JOBS_FILE = path.join(storeFolder, "jobs.json");
+const SKIPPED_EMAILS_FILE = path.join(storeFolder, "skipped_emails.json");
 const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json"); // Secret usually stays in root or via env
 const thumbsFolder = path.join(storeFolder, "thumbs");
 if (!fs.existsSync(thumbsFolder)) fs.mkdirSync(thumbsFolder, { recursive: true });
 
 const driveApi = new DriveAPI(TOKEN_PATH, CREDENTIALS_PATH);
+const gmailApi = new GmailAPI(TOKEN_PATH, CREDENTIALS_PATH);
+
+let skippedEmails = {};
+function loadSkippedEmails() {
+  if (fs.existsSync(SKIPPED_EMAILS_FILE)) {
+    try {
+      skippedEmails = JSON.parse(fs.readFileSync(SKIPPED_EMAILS_FILE, "utf8"));
+    } catch (e) {
+      console.error("[GMAIL] Fehler beim Laden der skipped_emails.json:", e);
+    }
+  }
+}
+function saveSkippedEmails() {
+  try {
+    fs.promises.writeFile(SKIPPED_EMAILS_FILE, JSON.stringify(skippedEmails, null, 2)).catch((err) => {
+      console.error("[GMAIL] Fehler beim Speichern von skipped_emails.json:", err);
+    });
+  } catch (e) { }
+}
+loadSkippedEmails();
 
 const appSettings = {
   FOLDER_ID: process.env.DRIVE_FOLDER_ID,
   FOLDER_ID_SORTED: process.env.DRIVE_FOLDER_ID_SORTED,
   MONITOR_DRIVE: false,
+  MONITOR_GMAIL: false,
+  GMAIL_AUTO_ARCHIVE: true,
+  GMAIL_SCAN_QUERY: "in:inbox filename:pdf",
   AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
   AI_CATEGORIES:
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
@@ -194,6 +219,7 @@ app.get("/api/admin/backup", requireAdmin, (req, res) => {
       createdAt: new Date().toISOString(),
       settings: settingsData || appSettings,
       jobs: jobsData || { uploadJobs, uploadQueue, processedDriveFiles },
+      skippedEmails: skippedEmails || {},
       token: tokenData || null,
     };
 
@@ -328,6 +354,9 @@ app.post("/api/settings", requireAdmin, async (req, res) => {
     "AI_COMPANY",
     "AI_CATEGORIES",
     "MONITOR_DRIVE",
+    "MONITOR_GMAIL",
+    "GMAIL_AUTO_ARCHIVE",
+    "GMAIL_SCAN_QUERY",
     "LEXOFFICE_KEY_WIREWIRE",
     "LEXOFFICE_KEY_THEWIRE",
     "LEXOFFICE_KEY_POLYXO",
@@ -352,6 +381,9 @@ app.post("/api/settings", requireAdmin, async (req, res) => {
     // Starte Überwachung asynchron sofort nach dem Speichern
     checkDriveForNewFiles().catch(console.error);
   }
+  if (appSettings.MONITOR_GMAIL) {
+    checkGmailForNewFiles().catch(console.error);
+  }
 });
 
 // Drive Auth Workflow
@@ -366,19 +398,23 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
 
+    let existingToken = {};
+    if (fs.existsSync(TOKEN_PATH)) {
+      try {
+        existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH, "utf8"));
+      } catch (e) {}
+    }
+
+    const refreshToken = tokens.refresh_token || existingToken.refresh_token;
     const payload = JSON.stringify({
       type: "authorized_user",
       client_id: key.client_id,
       client_secret: key.client_secret,
-      refresh_token: tokens.refresh_token || undefined,
-    });
+      refresh_token: refreshToken,
+    }, null, 2);
 
-    let existingToken = {};
-    if (fs.existsSync(TOKEN_PATH)) existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH));
-
-    if (tokens.refresh_token || !existingToken.refresh_token) {
-      await fs.promises.writeFile(TOKEN_PATH, payload);
-    }
+    await fs.promises.writeFile(TOKEN_PATH, payload);
+    console.log("[AUTH] Google OAuth Token erfolgreich gespeichert.");
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -1285,6 +1321,354 @@ app.post("/api/drive/sync-execute", requireAdmin, async (req, res) => {
   }
 });
 
+// ==========================================
+// --- Google Mail (Workmail) Endpoints ---
+// ==========================================
+
+// 1. GET /api/gmail/inbox
+app.get("/api/gmail/inbox", async (req, res) => {
+  try {
+    if (!fs.existsSync(TOKEN_PATH)) {
+      return res.status(400).json({ success: false, error: "Google Konto ist nicht authentifiziert." });
+    }
+
+    const query = req.query.query || appSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
+    const allEmails = await gmailApi.listInboxEmailsWithPdfs({ query });
+
+    // Filtere übersprungene Mails heraus
+    const activeEmails = [];
+    for (const email of allEmails) {
+      if (skippedEmails[email.id]) {
+        continue;
+      }
+      activeEmails.push(email);
+    }
+
+    res.json({
+      success: true,
+      emails: activeEmails,
+      totalFound: allEmails.length,
+      skippedCount: Object.keys(skippedEmails).length,
+    });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/inbox:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Abrufen der Posteingangs-Mails." });
+  }
+});
+
+// 2. GET /api/gmail/skipped
+app.get("/api/gmail/skipped", (req, res) => {
+  try {
+    const list = Object.values(skippedEmails).sort(
+      (a, b) => new Date(b.skippedAt || b.date) - new Date(a.skippedAt || a.date)
+    );
+    res.json({ success: true, skippedEmails: list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. POST /api/gmail/skip
+app.post("/api/gmail/skip", (req, res) => {
+  try {
+    const { messageId, subject, from, fromName, fromEmail, date, snippet, attachments } = req.body;
+    if (!messageId) {
+      return res.status(400).json({ success: false, error: "messageId erforderlich" });
+    }
+
+    skippedEmails[messageId] = {
+      id: messageId,
+      subject: subject || "(Kein Betreff)",
+      from: from || fromName || fromEmail || "Unbekannt",
+      fromName: fromName || "",
+      fromEmail: fromEmail || "",
+      date: date || new Date().toISOString(),
+      snippet: snippet || "",
+      attachments: attachments || [],
+      skippedAt: new Date().toISOString(),
+    };
+    saveSkippedEmails();
+
+    console.log(`[GMAIL] E-Mail ${messageId} zu übersprungenen Mails hinzugefügt.`);
+    res.json({ success: true, skippedCount: Object.keys(skippedEmails).length });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/skip:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. POST /api/gmail/unskip
+app.post("/api/gmail/unskip", (req, res) => {
+  try {
+    const { messageId } = req.body;
+    if (!messageId) {
+      return res.status(400).json({ success: false, error: "messageId erforderlich" });
+    }
+
+    if (skippedEmails[messageId]) {
+      delete skippedEmails[messageId];
+      saveSkippedEmails();
+      console.log(`[GMAIL] E-Mail ${messageId} aus übersprungenen Mails entfernt.`);
+    }
+
+    res.json({ success: true, skippedCount: Object.keys(skippedEmails).length });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/unskip:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. POST /api/gmail/process
+app.post("/api/gmail/process", async (req, res) => {
+  try {
+    const { messageId, subject, fromName, fromEmail, date, attachmentIds, archive } = req.body;
+    if (!messageId) {
+      return res.status(400).json({ success: false, error: "messageId erforderlich" });
+    }
+
+    const shouldArchive = archive !== undefined ? !!archive : appSettings.GMAIL_AUTO_ARCHIVE !== false;
+
+    // Falls attachmentIds nicht explizit übergeben wurden, Anhänge aus Mail laden
+    let attachmentsToProcess = [];
+    if (Array.isArray(attachmentIds) && attachmentIds.length > 0) {
+      attachmentsToProcess = attachmentIds;
+    } else {
+      const gmail = await gmailApi.getClient();
+      const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+      const foundAttachments = [];
+      gmailApi.extractPdfParts(msg.data.payload?.parts || [], foundAttachments);
+      attachmentsToProcess = foundAttachments;
+    }
+
+    if (attachmentsToProcess.length === 0) {
+      return res.status(400).json({ success: false, error: "Keine PDF-Anhänge in dieser E-Mail gefunden." });
+    }
+
+    const createdJobs = [];
+
+    for (const att of attachmentsToProcess) {
+      const attId = typeof att === "string" ? att : att.attachmentId;
+      const attName = typeof att === "object" && att.filename ? att.filename : `Email_Anhang_${Date.now()}.pdf`;
+
+      // Dateinamen bereinigen
+      const safeFilename = attName.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+      const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
+
+      // Buffer herunterladen & speichern
+      const buffer = await gmailApi.downloadAttachment(messageId, attId);
+      await fs.promises.writeFile(localFilePath, buffer);
+
+      const job = {
+        id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+        originalName: attName,
+        status: "pending",
+        source: "gmail",
+        gmailMessageId: messageId,
+        emailSubject: subject || "",
+        emailSender: fromName ? `${fromName} <${fromEmail}>` : fromEmail || "",
+        emailDate: date || new Date().toISOString(),
+        inAiPipeline: true,
+        aiPipelineStartedAt: new Date().toISOString(),
+        result: null,
+        error: null,
+        filePath: localFilePath,
+        uploadDate: new Date().toISOString(),
+      };
+
+      uploadJobs[job.id] = job;
+      uploadQueue.push(job.id);
+      createdJobs.push(job);
+    }
+
+    saveJobs();
+    processQueue();
+
+    // Falls vorher übersprungen, aus der Liste entfernen
+    if (skippedEmails[messageId]) {
+      delete skippedEmails[messageId];
+      saveSkippedEmails();
+    }
+
+    // Optional: Archivieren
+    let archived = false;
+    if (shouldArchive) {
+      try {
+        await gmailApi.archiveEmail(messageId);
+        archived = true;
+      } catch (archErr) {
+        console.error(`[GMAIL] Archivieren für Mail ${messageId} fehlgeschlagen:`, archErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      jobs: createdJobs,
+      archived: archived,
+      message: `${createdJobs.length} Beleg(e) in Pipeline gestellt.${archived ? " E-Mail wurde archiviert." : ""}`,
+    });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/process:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der E-Mail-Verarbeitung." });
+  }
+});
+
+// 6. POST /api/gmail/process-batch
+app.post("/api/gmail/process-batch", async (req, res) => {
+  try {
+    const { items, archive } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: "Keine E-Mails zum Verarbeiten übergeben." });
+    }
+
+    const shouldArchive = archive !== undefined ? !!archive : appSettings.GMAIL_AUTO_ARCHIVE !== false;
+    const createdJobs = [];
+    const errors = [];
+    let archivedCount = 0;
+
+    for (const item of items) {
+      const messageId = item.messageId || item.id;
+      if (!messageId) continue;
+
+      try {
+        let attachments = item.attachments || [];
+        if (attachments.length === 0) {
+          const gmail = await gmailApi.getClient();
+          const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+          const found = [];
+          gmailApi.extractPdfParts(msg.data.payload?.parts || [], found);
+          attachments = found;
+        }
+
+        for (const att of attachments) {
+          const attId = att.attachmentId;
+          const attName = att.filename || "Anhang.pdf";
+          const safeFilename = attName.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+          const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
+
+          const buffer = await gmailApi.downloadAttachment(messageId, attId);
+          await fs.promises.writeFile(localFilePath, buffer);
+
+          const job = {
+            id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+            originalName: attName,
+            status: "pending",
+            source: "gmail",
+            gmailMessageId: messageId,
+            emailSubject: item.subject || "",
+            emailSender: item.fromName ? `${item.fromName} <${item.fromEmail}>` : item.from || item.fromEmail || "",
+            emailDate: item.date || new Date().toISOString(),
+            inAiPipeline: true,
+            aiPipelineStartedAt: new Date().toISOString(),
+            result: null,
+            error: null,
+            filePath: localFilePath,
+            uploadDate: new Date().toISOString(),
+          };
+
+          uploadJobs[job.id] = job;
+          uploadQueue.push(job.id);
+          createdJobs.push(job);
+        }
+
+        if (skippedEmails[messageId]) {
+          delete skippedEmails[messageId];
+        }
+
+        if (shouldArchive) {
+          try {
+            await gmailApi.archiveEmail(messageId);
+            archivedCount++;
+          } catch (archErr) {
+            console.error(`[GMAIL BATCH] Archivieren für Mail ${messageId} fehlgeschlagen:`, archErr.message);
+          }
+        }
+      } catch (itemErr) {
+        console.error(`[GMAIL BATCH] Fehler bei Mail ${messageId}:`, itemErr);
+        errors.push({ messageId, error: itemErr.message });
+      }
+    }
+
+    saveJobs();
+    saveSkippedEmails();
+    processQueue();
+
+    res.json({
+      success: true,
+      processedCount: items.length - errors.length,
+      totalJobs: createdJobs.length,
+      archivedCount: archivedCount,
+      errors: errors,
+    });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/process-batch:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Verarbeiten der E-Mails." });
+  }
+});
+
+// Prepared background monitoring function
+async function checkGmailForNewFiles() {
+  if (!appSettings.MONITOR_GMAIL || !fs.existsSync(TOKEN_PATH)) return;
+
+  try {
+    const unarchivedEmails = await gmailApi.listInboxEmailsWithPdfs({ query: appSettings.GMAIL_SCAN_QUERY });
+    if (!unarchivedEmails || unarchivedEmails.length === 0) return;
+
+    let newCount = 0;
+    for (const email of unarchivedEmails) {
+      if (skippedEmails[email.id]) continue;
+
+      // Check if already processed
+      const alreadyProcessed = Object.values(uploadJobs).some(
+        (j) => j.source === "gmail" && j.gmailMessageId === email.id
+      );
+      if (alreadyProcessed) continue;
+
+      for (const att of email.attachments) {
+        const safeFilename = att.filename.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+        const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
+        const buffer = await gmailApi.downloadAttachment(email.id, att.attachmentId);
+        await fs.promises.writeFile(localFilePath, buffer);
+
+        const job = {
+          id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+          originalName: att.filename,
+          status: "pending",
+          source: "gmail",
+          gmailMessageId: email.id,
+          emailSubject: email.subject || "",
+          emailSender: email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail || "",
+          emailDate: email.date || new Date().toISOString(),
+          inAiPipeline: true,
+          aiPipelineStartedAt: new Date().toISOString(),
+          result: null,
+          error: null,
+          filePath: localFilePath,
+          uploadDate: new Date().toISOString(),
+        };
+
+        uploadJobs[job.id] = job;
+        uploadQueue.push(job.id);
+        newCount++;
+      }
+
+      if (appSettings.GMAIL_AUTO_ARCHIVE !== false) {
+        try {
+          await gmailApi.archiveEmail(email.id);
+        } catch (e) { }
+      }
+    }
+
+    if (newCount > 0) {
+      saveJobs();
+      processQueue();
+      console.log(`[GMAIL MONITOR] ${newCount} neue Anhänge aus Posteingang in Pipeline gestellt.`);
+    }
+  } catch (err) {
+    if (debug) console.error("[GMAIL MONITOR] Fehler:", err.message);
+  }
+}
+
+
 app.post("/api/jobs/:id/private", requireAdmin, async (req, res) => {
   const jobId = req.params.id;
   const isPrivate = req.body.isPrivate;
@@ -2026,6 +2410,8 @@ async function init() {
     aiAgent.init(debug);
     setInterval(checkDriveForNewFiles, 15 * 1000); // 15 Sekunden Intervall für schnellen Upload-Sync
     setTimeout(checkDriveForNewFiles, 10000);
+    setInterval(checkGmailForNewFiles, 60 * 1000); // 60 Sekunden Intervall für vorbereiteten Gmail-Monitor
+    setTimeout(checkGmailForNewFiles, 15000);
   }
   if (testrun) {
     await aiAgent.getPdfName("./samples-scanner/1.pdf", appSettings);

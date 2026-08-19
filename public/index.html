@@ -64,6 +64,11 @@
               <span class="material-symbols-outlined" style="font-size: 20px;">receipt_long</span>
               <span class="d-none d-sm-inline">Rechnungen</span>
             </button>
+            <button class="nav-link d-flex align-items-center gap-1 py-1 px-3" id="nav-inbox-tab" type="button" title="Google Mail Inbox Scanner">
+              <span class="material-symbols-outlined" style="font-size: 20px;">mail</span>
+              <span class="d-none d-sm-inline">E-Mail Inbox</span>
+              <span id="nav-inbox-badge" class="badge rounded-pill bg-danger ms-1" style="display: none; font-size: 11px;">0</span>
+            </button>
           </div>
         </div>
         <div class="d-flex gap-2">
@@ -270,6 +275,126 @@
           <!-- Document List Container -->
           <div id="rechnungen-list" class="d-flex flex-column gap-3"></div>
         </div>
+
+        <!-- View 3: Google Mail (Workmail) Inbox Scanner -->
+        <div id="view-inbox" class="container" style="position: relative; display: none;">
+          <div class="d-flex justify-content-between align-items-center mt-3 mb-3 flex-wrap gap-2">
+            <div>
+              <h2 class="m-0 d-flex align-items-center gap-2">
+                <span class="material-symbols-outlined text-primary" style="font-size: 28px;">mail</span>
+                E-Mail Inbox Scanner
+              </h2>
+              <div class="text-muted small">Offene E-Mails nach PDF-Anhängen durchsuchen und verarbeiten</div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button id="inbox-refresh-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 20px;">
+                <span class="material-symbols-outlined" style="font-size: 18px;">refresh</span>
+                <span>Aktualisieren</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter & Batch Toolbar Card -->
+          <div class="card p-3 mb-3 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
+            <!-- Tabs: Offen vs Übersprungen -->
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 pb-2 border-bottom">
+              <div class="d-flex gap-2">
+                <button type="button" id="inbox-tab-active" class="btn btn-sm btn-primary active inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">inbox</span>
+                  Posteingang (<span id="inbox-count-active">0</span>)
+                </button>
+                <button type="button" id="inbox-tab-skipped" class="btn btn-sm btn-outline-secondary inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">playlist_remove</span>
+                  Übersprungen (<span id="inbox-count-skipped">0</span>)
+                </button>
+              </div>
+
+              <!-- Archive Checkbox Option -->
+              <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
+                <input class="form-check-input" type="checkbox" id="inbox-archive-toggle" checked style="cursor: pointer;" />
+                <label class="form-check-label small fw-medium text-muted" for="inbox-archive-toggle" style="cursor: pointer; font-size: 12px;">
+                  Nach Verarbeitung archivieren
+                </label>
+              </div>
+            </div>
+
+            <!-- Search & Batch Action Row -->
+            <div class="row g-2 align-items-center">
+              <div class="col-12 col-md-7">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
+                    <span class="material-symbols-outlined text-muted" style="font-size: 18px;">search</span>
+                  </span>
+                  <input
+                    type="text"
+                    id="inbox-search-input"
+                    class="form-control border-start-0"
+                    placeholder="E-Mails suchen (Absender, Betreff, Dateiname, Datum...)"
+                    style="border-radius: 0 8px 8px 0; font-size: 13px;"
+                  />
+                </div>
+              </div>
+
+              <div class="col-12 col-md-5 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
+                <div class="d-flex align-items-center gap-1" id="inbox-selection-controls">
+                  <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer;" />
+                  <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 12px;">Alle auswählen</label>
+                </div>
+                <button
+                  id="inbox-batch-process-btn"
+                  type="button"
+                  class="btn btn-sm btn-primary d-flex align-items-center gap-1"
+                  style="border-radius: 20px; font-size: 12px; padding: 4px 12px;"
+                  disabled
+                >
+                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+                  <span>Ausgewählte verarbeiten (<span id="inbox-selected-count">0</span>)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading State -->
+          <div id="inbox-loading-container" class="text-center py-5" style="display: none;">
+            <div class="spinner-border text-primary mb-2" role="status"></div>
+            <div class="text-muted small">Durchsuche Posteingang nach E-Mails mit PDFs...</div>
+          </div>
+
+          <!-- Permission / Auth Banner -->
+          <div id="inbox-permission-card" class="card p-4 mb-3 border shadow-sm text-center" style="display: none; background: #fff8e1; border-color: #ffe082 !important; border-radius: 14px;">
+            <div class="d-flex flex-column align-items-center gap-2">
+              <div style="width: 52px; height: 52px; border-radius: 50%; background: #ffe082; display: flex; align-items: center; justify-content: center; color: #b78103;">
+                <span class="material-symbols-outlined" style="font-size: 30px;">lock_open</span>
+              </div>
+              <h5 class="fw-bold m-0 text-dark" style="font-size: 16px;">Gmail-Berechtigung erforderlich</h5>
+              <p class="text-muted small m-0" style="max-width: 500px; font-size: 13px;">
+                Dein Google-Konto ist aktuell noch nicht für Gmail freigegeben (oder die Berechtigung muss erneuert werden). Klicke auf den Button, um den Zugriff zu autorisieren.
+              </p>
+              <button id="inbox-grant-permission-btn" type="button" class="btn btn-primary d-inline-flex align-items-center gap-2 mt-2 px-4 py-2" style="border-radius: 20px; font-weight: 600;">
+                <span class="material-symbols-outlined" style="font-size: 20px;">key</span>
+                <span>Gmail-Berechtigung jetzt erteilen</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Error Alert Banner -->
+          <div id="inbox-error-alert" class="alert alert-danger p-3 mb-3 border-0 shadow-sm" style="display: none; border-radius: 12px;">
+            <div class="d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined text-danger">error</span>
+              <span id="inbox-error-text">Fehler beim Laden der E-Mails.</span>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div id="inbox-empty-container" class="text-center py-5 text-muted" style="display: none;">
+            <span class="material-symbols-outlined" style="font-size: 48px; color: #aaa;">mark_email_read</span>
+            <div class="mt-2 fw-medium">Keine offenen E-Mails mit PDF-Anhängen gefunden.</div>
+            <div class="small text-muted">Dein Posteingang ist auf dem aktuellen Stand!</div>
+          </div>
+
+          <!-- Email List Container -->
+          <div id="inbox-email-list" class="d-flex flex-column gap-3 mb-4"></div>
+        </div>
       </div>
 
       <!-- Settings Modal -->
@@ -363,6 +488,33 @@
             >
               <span class="material-symbols-outlined" style="font-size: 20px;">sync</span>
               <span>Google Drive Belege nachladen & synchronisieren</span>
+            </button>
+          </div>
+
+          <div class="setting-group" id="gmail-settings-container" style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
+            <label><strong>Google Mail (Workmail) Inbox Scanner:</strong></label>
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="gmail-auto-archive-checkbox" checked style="width: 18px; height: 18px;" />
+                E-Mails nach der Verarbeitung standardmäßig archivieren
+              </label>
+              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="monitor-gmail-checkbox" style="width: 18px; height: 18px;" />
+                Posteingang automatisch im Hintergrund überwachen (alle 60 Sek)
+              </label>
+            </div>
+            <div style="margin-top: 10px;">
+              <label style="font-size: 0.85em; color: #555;">Gmail-Suchabfrage (Filter):</label>
+              <input
+                type="text"
+                id="gmail-scan-query-input"
+                style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px;"
+                placeholder="in:inbox filename:pdf"
+              />
+            </div>
+            <button id="gmail-reauth-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 mt-3" style="border-radius: 8px; padding: 8px 12px;">
+              <span class="material-symbols-outlined" style="font-size: 18px;">key</span>
+              <span>Gmail- & Drive-Berechtigungen jetzt aktualisieren</span>
             </button>
           </div>
 
@@ -873,7 +1025,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260818_8"></script>
+      <script src="/index.js?v=20260819_gmail_v3"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

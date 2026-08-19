@@ -58,7 +58,8 @@ openSettingsBtn.addEventListener("click", async () => {
       // Initialize Google Auth Implicit flow client
       authClientCode = window.google.accounts.oauth2.initCodeClient({
         client_id: googleClientId,
-        scope: "https://www.googleapis.com/auth/drive",
+        scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify",
+        prompt: "consent",
         ux_mode: "popup",
         callback: async (response) => {
           if (response.code) {
@@ -72,6 +73,9 @@ openSettingsBtn.addEventListener("click", async () => {
               document.getElementById("auth-status").innerText = "Erfolgreich verbunden!";
               document.getElementById("auth-btn").style.display = "none";
               loadFolders();
+              if (typeof loadInboxData === "function") {
+                loadInboxData(false);
+              }
             } else {
               document.getElementById("auth-status").innerText = "Fehler bei der Verbindung.";
             }
@@ -166,6 +170,17 @@ async function loadFolders() {
         document.getElementById("admin-backup-container").style.display = "block";
         const driveSyncContainer = document.getElementById("drive-sync-settings-container");
         if (driveSyncContainer) driveSyncContainer.style.display = "block";
+
+        const gmailSettingsContainer = document.getElementById("gmail-settings-container");
+        if (gmailSettingsContainer) {
+          gmailSettingsContainer.style.display = "block";
+          const autoArchCb = document.getElementById("gmail-auto-archive-checkbox");
+          if (autoArchCb) autoArchCb.checked = window.currentSettings.GMAIL_AUTO_ARCHIVE !== false;
+          const monGmailCb = document.getElementById("monitor-gmail-checkbox");
+          if (monGmailCb) monGmailCb.checked = window.currentSettings.MONITOR_GMAIL === true;
+          const queryInput = document.getElementById("gmail-scan-query-input");
+          if (queryInput) queryInput.value = window.currentSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
+        }
 
         const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
         if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
@@ -342,6 +357,10 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
   const clickupAutoTask = document.getElementById("clickup-auto-task").checked;
   const clickupFilterPrivate = document.getElementById("clickup-filter-private").checked;
 
+  const gmailAutoArchive = document.getElementById("gmail-auto-archive-checkbox")?.checked;
+  const monitorGmailState = document.getElementById("monitor-gmail-checkbox")?.checked;
+  const gmailScanQuery = document.getElementById("gmail-scan-query-input")?.value?.trim() || "in:inbox filename:pdf";
+
   const res = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -351,6 +370,9 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
       AI_CATEGORIES: aiCategories,
       AI_COMPANY: aiCompany,
       MONITOR_DRIVE: monitorDriveState,
+      MONITOR_GMAIL: monitorGmailState || false,
+      GMAIL_AUTO_ARCHIVE: gmailAutoArchive !== undefined ? gmailAutoArchive : true,
+      GMAIL_SCAN_QUERY: gmailScanQuery,
       LEXOFFICE_KEY_WIREWIRE: lexKeyWirewire,
       BUTTLER_KEY_THEWIRE_CLIENT: butlerKeyClient,
       BUTTLER_KEY_THEWIRE_SECRET: butlerKeySecret,
@@ -1442,32 +1464,40 @@ document.addEventListener('click', (e) => {
 });
 
 // ==========================================
-// --- Rechnungsverarbeitung & Lexoffice ---
+// --- Navigation & View Switching ---
 // ==========================================
 
 const navUploadTab = document.getElementById("nav-upload-tab");
 const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+const navInboxTab = document.getElementById("nav-inbox-tab");
 const viewUpload = document.getElementById("view-upload");
 const viewRechnungen = document.getElementById("view-rechnungen");
+const viewInbox = document.getElementById("view-inbox");
 
-if (navUploadTab && navRechnungenTab) {
-  navUploadTab.addEventListener("click", () => {
-    navUploadTab.classList.add("active");
-    navRechnungenTab.classList.remove("active");
-    viewUpload.style.display = "block";
-    viewRechnungen.style.display = "none";
-    startPolling();
-  });
+function switchMainTab(tab) {
+  if (navUploadTab) navUploadTab.classList.toggle("active", tab === "upload");
+  if (navRechnungenTab) navRechnungenTab.classList.toggle("active", tab === "rechnungen");
+  if (navInboxTab) navInboxTab.classList.toggle("active", tab === "inbox");
 
-  navRechnungenTab.addEventListener("click", () => {
-    if (!window.isAdmin) return;
-    navRechnungenTab.classList.add("active");
-    navUploadTab.classList.remove("active");
-    viewUpload.style.display = "none";
-    viewRechnungen.style.display = "block";
-    loadRechnungenView();
-  });
+  if (viewUpload) viewUpload.style.display = tab === "upload" ? "block" : "none";
+  if (viewRechnungen) viewRechnungen.style.display = tab === "rechnungen" ? "block" : "none";
+  if (viewInbox) viewInbox.style.display = tab === "inbox" ? "block" : "none";
+
+  if (tab === "upload") startPolling();
+  if (tab === "rechnungen") loadRechnungenView();
+  if (tab === "inbox") loadInboxData();
 }
+
+if (navUploadTab) navUploadTab.addEventListener("click", () => switchMainTab("upload"));
+if (navRechnungenTab) navRechnungenTab.addEventListener("click", () => {
+  if (!window.isAdmin) return;
+  switchMainTab("rechnungen");
+});
+if (navInboxTab) navInboxTab.addEventListener("click", () => switchMainTab("inbox"));
+
+// ==========================================
+// --- Rechnungsverarbeitung & Lexoffice ---
+// ==========================================
 
 let allRechnungenJobs = [];
 let pendingLexofficeTransferTarget = null; // { jobId, companyKey, card, transferBtn }
@@ -2853,5 +2883,588 @@ async function checkDriveSyncStatus() {
 
 // Check background status on initial load
 startDriveBackgroundPoller();
+
+// ==========================================
+// --- Google Mail (Workmail) Inbox Scanner ---
+// ==========================================
+
+let inboxActiveEmails = [];
+let inboxSkippedEmails = [];
+let currentInboxSubtab = "active"; // "active" | "skipped"
+let selectedInboxMessageIds = new Set();
+let isProcessingInboxBatch = false;
+
+const inboxRefreshBtn = document.getElementById("inbox-refresh-btn");
+const inboxTabActive = document.getElementById("inbox-tab-active");
+const inboxTabSkipped = document.getElementById("inbox-tab-skipped");
+const inboxArchiveToggle = document.getElementById("inbox-archive-toggle");
+const inboxSearchInput = document.getElementById("inbox-search-input");
+const inboxSelectAllCb = document.getElementById("inbox-select-all-cb");
+const inboxBatchProcessBtn = document.getElementById("inbox-batch-process-btn");
+const inboxSelectedCount = document.getElementById("inbox-selected-count");
+const inboxLoadingContainer = document.getElementById("inbox-loading-container");
+const inboxErrorAlert = document.getElementById("inbox-error-alert");
+const inboxErrorText = document.getElementById("inbox-error-text");
+const inboxEmptyContainer = document.getElementById("inbox-empty-container");
+const inboxEmailList = document.getElementById("inbox-email-list");
+const navInboxBadge = document.getElementById("nav-inbox-badge");
+const inboxCountActive = document.getElementById("inbox-count-active");
+const inboxCountSkipped = document.getElementById("inbox-count-skipped");
+const inboxSelectionControls = document.getElementById("inbox-selection-controls");
+
+if (inboxTabActive && inboxTabSkipped) {
+  inboxTabActive.addEventListener("click", () => {
+    currentInboxSubtab = "active";
+    inboxTabActive.classList.add("btn-primary", "active");
+    inboxTabActive.classList.remove("btn-outline-secondary");
+    inboxTabSkipped.classList.remove("btn-primary", "active");
+    inboxTabSkipped.classList.add("btn-outline-secondary");
+    if (inboxSelectionControls) inboxSelectionControls.style.display = "flex";
+    if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "inline-flex";
+    renderInboxList();
+  });
+
+  inboxTabSkipped.addEventListener("click", () => {
+    currentInboxSubtab = "skipped";
+    inboxTabSkipped.classList.add("btn-primary", "active");
+    inboxTabSkipped.classList.remove("btn-outline-secondary");
+    inboxTabActive.classList.remove("btn-primary", "active");
+    inboxTabActive.classList.add("btn-outline-secondary");
+    if (inboxSelectionControls) inboxSelectionControls.style.display = "none";
+    if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "none";
+    renderInboxList();
+  });
+}
+
+const inboxGrantPermissionBtn = document.getElementById("inbox-grant-permission-btn");
+if (inboxGrantPermissionBtn) {
+  inboxGrantPermissionBtn.addEventListener("click", () => {
+    if (authClientCode) {
+      authClientCode.requestCode();
+    } else {
+      const settingsModalEl = document.getElementById("settings-modal");
+      if (settingsModalEl) settingsModalEl.style.display = "flex";
+    }
+  });
+}
+
+const gmailReauthBtn = document.getElementById("gmail-reauth-btn");
+if (gmailReauthBtn) {
+  gmailReauthBtn.addEventListener("click", () => {
+    if (authClientCode) {
+      authClientCode.requestCode();
+    }
+  });
+}
+
+if (inboxRefreshBtn) {
+  inboxRefreshBtn.addEventListener("click", () => loadInboxData(false));
+}
+
+if (inboxSearchInput) {
+  inboxSearchInput.addEventListener("input", renderInboxList);
+}
+
+if (inboxSelectAllCb) {
+  inboxSelectAllCb.addEventListener("change", () => {
+    const visibleActive = getVisibleInboxEmails();
+    if (inboxSelectAllCb.checked) {
+      visibleActive.forEach((m) => selectedInboxMessageIds.add(m.id));
+    } else {
+      selectedInboxMessageIds.clear();
+    }
+    updateInboxBatchButton();
+    renderInboxList();
+  });
+}
+
+if (inboxBatchProcessBtn) {
+  inboxBatchProcessBtn.addEventListener("click", processBatchSelectedEmails);
+}
+
+function updateInboxBatchButton() {
+  const count = selectedInboxMessageIds.size;
+  if (inboxSelectedCount) inboxSelectedCount.innerText = count;
+  if (inboxBatchProcessBtn) {
+    inboxBatchProcessBtn.disabled = count === 0 || isProcessingInboxBatch;
+  }
+  if (inboxSelectAllCb) {
+    const visibleActive = getVisibleInboxEmails();
+    inboxSelectAllCb.checked = visibleActive.length > 0 && visibleActive.every((m) => selectedInboxMessageIds.has(m.id));
+  }
+}
+
+function getVisibleInboxEmails() {
+  const sourceList = currentInboxSubtab === "active" ? inboxActiveEmails : inboxSkippedEmails;
+  const q = inboxSearchInput ? inboxSearchInput.value.trim().toLowerCase() : "";
+  if (!q) return sourceList;
+
+  return sourceList.filter((m) => {
+    const subject = (m.subject || "").toLowerCase();
+    const fromName = (m.fromName || "").toLowerCase();
+    const fromEmail = (m.fromEmail || "").toLowerCase();
+    const snippet = (m.snippet || "").toLowerCase();
+    const attNames = (m.attachments || []).map((a) => (a.filename || "").toLowerCase()).join(" ");
+    return (
+      subject.includes(q) ||
+      fromName.includes(q) ||
+      fromEmail.includes(q) ||
+      snippet.includes(q) ||
+      attNames.includes(q)
+    );
+  });
+}
+
+async function loadInboxData(silent = false) {
+  const inboxPermissionCard = document.getElementById("inbox-permission-card");
+
+  if (!silent) {
+    if (inboxLoadingContainer) inboxLoadingContainer.style.display = "block";
+    if (inboxEmailList) inboxEmailList.style.display = "none";
+    if (inboxEmptyContainer) inboxEmptyContainer.style.display = "none";
+    if (inboxErrorAlert) inboxErrorAlert.style.display = "none";
+    if (inboxPermissionCard) inboxPermissionCard.style.display = "none";
+  }
+
+  try {
+    const [inboxRes, skippedRes] = await Promise.all([
+      fetch("/api/gmail/inbox"),
+      fetch("/api/gmail/skipped"),
+    ]);
+
+    const inboxData = await inboxRes.json();
+    const skippedData = await skippedRes.json();
+
+    if (!inboxData.success) {
+      throw new Error(inboxData.error || "Fehler beim Laden des Posteingangs.");
+    }
+
+    inboxActiveEmails = inboxData.emails || [];
+    inboxSkippedEmails = skippedData.skippedEmails || [];
+
+    // Badges & Counters aktualisieren
+    const activeCount = inboxActiveEmails.length;
+    const skippedCount = inboxSkippedEmails.length;
+
+    if (inboxCountActive) inboxCountActive.innerText = activeCount;
+    if (inboxCountSkipped) inboxCountSkipped.innerText = skippedCount;
+
+    if (navInboxBadge) {
+      navInboxBadge.innerText = activeCount;
+      navInboxBadge.style.display = activeCount > 0 ? "inline-block" : "none";
+    }
+
+    // Unbekannte Auswahlen bereinigen
+    const validIds = new Set(inboxActiveEmails.map((m) => m.id));
+    for (const id of selectedInboxMessageIds) {
+      if (!validIds.has(id)) selectedInboxMessageIds.delete(id);
+    }
+    updateInboxBatchButton();
+
+    if (inboxLoadingContainer) inboxLoadingContainer.style.display = "none";
+    if (inboxPermissionCard) inboxPermissionCard.style.display = "none";
+    renderInboxList();
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei loadInboxData:", err);
+    if (inboxLoadingContainer) inboxLoadingContainer.style.display = "none";
+
+    const errStr = (err.message || "").toLowerCase();
+    const isPermissionError =
+      errStr.includes("insufficient permission") ||
+      errStr.includes("insufficientpermissions") ||
+      errStr.includes("nicht authentifiziert") ||
+      errStr.includes("403");
+
+    if (isPermissionError && inboxPermissionCard) {
+      inboxPermissionCard.style.display = "block";
+      if (inboxEmailList) inboxEmailList.style.display = "none";
+      if (inboxEmptyContainer) inboxEmptyContainer.style.display = "none";
+      if (inboxErrorAlert) inboxErrorAlert.style.display = "none";
+    } else if (inboxErrorAlert) {
+      inboxErrorAlert.style.display = "block";
+      if (inboxErrorText) inboxErrorText.innerText = err.message || "Fehler beim Laden der E-Mails.";
+    }
+  }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function formatDateDisplay(isoString) {
+  if (!isoString) return "-";
+  try {
+    const d = new Date(isoString);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) {
+      return `Heute, ${d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`;
+    }
+    return d.toLocaleDateString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch (e) {
+    return isoString;
+  }
+}
+
+function renderInboxList() {
+  if (!inboxEmailList) return;
+
+  const visibleEmails = getVisibleInboxEmails();
+
+  if (visibleEmails.length === 0) {
+    inboxEmailList.style.display = "none";
+    if (inboxEmptyContainer) inboxEmptyContainer.style.display = "block";
+    return;
+  }
+
+  if (inboxEmptyContainer) inboxEmptyContainer.style.display = "none";
+  inboxEmailList.style.display = "flex";
+  inboxEmailList.innerHTML = "";
+
+  visibleEmails.forEach((mail) => {
+    const isSelected = selectedInboxMessageIds.has(mail.id);
+    const attachments = mail.attachments || [];
+
+    const card = document.createElement("div");
+    card.className = "card p-3 shadow-sm border";
+    card.style.cssText = `
+      background-color: #ffffff;
+      border-radius: 14px;
+      border-color: ${isSelected ? "#0d6efd" : "#e9ecef"} !important;
+      transition: all 0.2s ease;
+    `;
+
+    // Attachments HTML
+    const attachmentsHtml = attachments
+      .map(
+        (att) => `
+        <div class="d-inline-flex align-items-center gap-1 p-1 px-2 rounded border bg-light small" style="font-size: 12px;" title="${att.filename}">
+          <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
+          <span class="text-truncate fw-medium" style="max-width: 220px;">${att.filename || "Anhang.pdf"}</span>
+          <span class="text-muted" style="font-size: 11px;">(${formatFileSize(att.size)})</span>
+        </div>
+      `
+      )
+      .join("");
+
+    const isSkippedTab = currentInboxSubtab === "skipped";
+
+    card.innerHTML = `
+      <div class="d-flex gap-3 align-items-start">
+        ${
+          !isSkippedTab
+            ? `
+          <div class="pt-1">
+            <input type="checkbox" class="form-check-input inbox-item-cb" data-id="${mail.id}" ${
+                isSelected ? "checked" : ""
+              } style="cursor: pointer; width: 18px; height: 18px;" />
+          </div>
+        `
+            : ""
+        }
+        <div class="flex-grow-1" style="min-width: 0;">
+          <!-- Top Row: Sender & Date -->
+          <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
+            <div class="d-flex align-items-center gap-2 text-truncate">
+              <span class="material-symbols-outlined text-secondary" style="font-size: 20px;">account_circle</span>
+              <strong class="text-dark" style="font-size: 14px;">${mail.fromName || mail.fromEmail || "Unbekannter Absender"}</strong>
+              ${
+                mail.fromName && mail.fromEmail && mail.fromEmail !== mail.fromName
+                  ? `<span class="text-muted small text-truncate" style="font-size: 12px;">&lt;${mail.fromEmail}&gt;</span>`
+                  : ""
+              }
+            </div>
+            <div class="text-muted small flex-shrink-0" style="font-size: 12px;">
+              ${formatDateDisplay(mail.date)}
+            </div>
+          </div>
+
+          <!-- Subject Line -->
+          <div class="fw-bold text-dark mb-1" style="font-size: 15px;">
+            ${mail.subject || "(Kein Betreff)"}
+          </div>
+
+          <!-- Snippet / Email Preview -->
+          ${
+            mail.snippet
+              ? `
+            <div class="text-muted small mb-2" style="font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+              ${mail.snippet}
+            </div>
+          `
+              : ""
+          }
+
+          <!-- PDF Attachments Pills -->
+          <div class="d-flex flex-wrap gap-1 mb-3 pt-1">
+            ${attachmentsHtml}
+          </div>
+
+          <!-- Action Buttons Row -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2 border-top">
+            <div class="small text-muted">
+              ${attachments.length} ${attachments.length === 1 ? "PDF-Anhang" : "PDF-Anhänge"}
+            </div>
+            <div class="d-flex gap-2">
+              ${
+                !isSkippedTab
+                  ? `
+                <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1 inbox-skip-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">playlist_remove</span>
+                  <span>Überspringen</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+                  <span>Verarbeiten</span>
+                </button>
+              `
+                  : `
+                <button type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1 inbox-unskip-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">undo</span>
+                  <span>Wiederherstellen</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+                  <span>Trotzdem Verarbeiten</span>
+                </button>
+              `
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Checkbox event
+    const cb = card.querySelector(".inbox-item-cb");
+    if (cb) {
+      cb.addEventListener("change", (e) => {
+        if (e.target.checked) {
+          selectedInboxMessageIds.add(mail.id);
+        } else {
+          selectedInboxMessageIds.delete(mail.id);
+        }
+        updateInboxBatchButton();
+        card.style.borderColor = e.target.checked ? "#0d6efd" : "#e9ecef";
+      });
+    }
+
+    // Process button
+    const procBtn = card.querySelector(".inbox-process-btn");
+    if (procBtn) {
+      procBtn.addEventListener("click", () => processSingleInboxEmail(mail, procBtn));
+    }
+
+    // Skip button
+    const skipBtn = card.querySelector(".inbox-skip-btn");
+    if (skipBtn) {
+      skipBtn.addEventListener("click", () => skipInboxEmail(mail));
+    }
+
+    // Unskip button
+    const unskipBtn = card.querySelector(".inbox-unskip-btn");
+    if (unskipBtn) {
+      unskipBtn.addEventListener("click", () => unskipInboxEmail(mail.id));
+    }
+
+    inboxEmailList.appendChild(card);
+  });
+}
+
+async function processSingleInboxEmail(mail, btnEl) {
+  const originalHtml = btnEl.innerHTML;
+  btnEl.disabled = true;
+  btnEl.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
+
+  const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+
+  try {
+    const res = await fetch("/api/gmail/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messageId: mail.id,
+        subject: mail.subject,
+        fromName: mail.fromName,
+        fromEmail: mail.fromEmail,
+        date: mail.date,
+        attachments: mail.attachments,
+        archive: shouldArchive,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || "Fehler bei der E-Mail-Verarbeitung.");
+    }
+
+    // Entferne aus aktiver Liste
+    inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+    inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
+    selectedInboxMessageIds.delete(mail.id);
+
+    // Update Counter & Badge
+    if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+    if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+    if (navInboxBadge) {
+      navInboxBadge.innerText = inboxActiveEmails.length;
+      navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
+    }
+
+    updateInboxBatchButton();
+    renderInboxList();
+
+    // Trigger Status-Polling auf Hauptseite
+    fetchStatus();
+
+    // Erfolgsbenachrichtigung
+    if (typeof showToast === "function") {
+      showToast(data.message || "Belege erfolgreich zur KI-Pipeline hinzugefügt!", "success");
+    }
+  } catch (err) {
+    console.error("[GMAIL] Fehler beim Verarbeiten der E-Mail:", err);
+    alert("Fehler beim Verarbeiten: " + err.message);
+    btnEl.disabled = false;
+    btnEl.innerHTML = originalHtml;
+  }
+}
+
+async function processBatchSelectedEmails() {
+  const visibleActive = getVisibleInboxEmails();
+  const selectedEmails = visibleActive.filter((m) => selectedInboxMessageIds.has(m.id));
+
+  if (selectedEmails.length === 0) {
+    alert("Keine E-Mails ausgewählt.");
+    return;
+  }
+
+  if (
+    !confirm(
+      `${selectedEmails.length} ausgewählte E-Mail(s) jetzt verarbeiten${
+        inboxArchiveToggle?.checked ? " und im Posteingang archivieren" : ""
+      }?`
+    )
+  ) {
+    return;
+  }
+
+  isProcessingInboxBatch = true;
+  if (inboxBatchProcessBtn) {
+    inboxBatchProcessBtn.disabled = true;
+    inboxBatchProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite Stapel...</span>`;
+  }
+
+  try {
+    const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+    const res = await fetch("/api/gmail/process-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: selectedEmails,
+        archive: shouldArchive,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || "Fehler bei der Stapelverarbeitung.");
+    }
+
+    selectedInboxMessageIds.clear();
+    await loadInboxData(false);
+    fetchStatus();
+
+    alert(
+      `Stapelverarbeitung abgeschlossen!\n` +
+        `• Verarbeitet: ${data.processedCount} E-Mails (${data.totalJobs} PDF-Dokumente)\n` +
+        `• Archiviert: ${data.archivedCount} E-Mails`
+    );
+  } catch (err) {
+    console.error("[GMAIL BATCH] Fehler:", err);
+    alert("Fehler bei Stapelverarbeitung: " + err.message);
+  } finally {
+    isProcessingInboxBatch = false;
+    updateInboxBatchButton();
+    if (inboxBatchProcessBtn) {
+      inboxBatchProcessBtn.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+        <span>Ausgewählte verarbeiten (<span id="inbox-selected-count">0</span>)</span>
+      `;
+    }
+  }
+}
+
+async function skipInboxEmail(mail) {
+  try {
+    const res = await fetch("/api/gmail/skip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messageId: mail.id,
+        subject: mail.subject,
+        from: mail.fromRaw || mail.fromName || mail.fromEmail,
+        fromName: mail.fromName,
+        fromEmail: mail.fromEmail,
+        date: mail.date,
+        snippet: mail.snippet,
+        attachments: mail.attachments,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Fehler beim Überspringen.");
+
+    // Aus aktiver Liste entfernen und zu übersprungen hinzufügen
+    inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+    inboxSkippedEmails.unshift(mail);
+    selectedInboxMessageIds.delete(mail.id);
+
+    if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+    if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+    if (navInboxBadge) {
+      navInboxBadge.innerText = inboxActiveEmails.length;
+      navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
+    }
+
+    updateInboxBatchButton();
+    renderInboxList();
+  } catch (err) {
+    console.error("[GMAIL] Fehler beim Überspringen:", err);
+    alert("Fehler beim Überspringen: " + err.message);
+  }
+}
+
+async function unskipInboxEmail(messageId) {
+  try {
+    const res = await fetch("/api/gmail/unskip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messageId }),
+    });
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Fehler beim Wiederherstellen.");
+
+    await loadInboxData(false);
+  } catch (err) {
+    console.error("[GMAIL] Fehler beim Wiederherstellen:", err);
+    alert("Fehler beim Wiederherstellen: " + err.message);
+  }
+}
+
+// Initialer Abruf der offenen E-Mails im Hintergrund (für den Badge-Zähler)
+setTimeout(() => {
+  loadInboxData(true);
+}, 3000);
 
 
