@@ -4131,10 +4131,11 @@ if (inboxPdfQuickProcessBtn) {
     inboxPdfQuickProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
 
     try {
-      const selectedAttIds = selectedInboxAttachments[mail.id]
+      const selectedIndices = selectedInboxAttachments[mail.id]
         ? Array.from(selectedInboxAttachments[mail.id])
-        : (mail.attachments || []).map((a) => a.attachmentId);
-      const selectedAttachments = (mail.attachments || []).filter((a) => selectedAttIds.includes(a.attachmentId));
+        : (mail.attachments || []).map((_, idx) => idx);
+      const selectedAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
+      const selectedAttIds = selectedAttachments.map((a) => a.attachmentId);
 
       if (selectedAttachments.length === 0) {
         alert("Bitte wählen Sie mindestens einen PDF-Anhang zum Verarbeiten aus.");
@@ -4657,11 +4658,14 @@ function renderInboxList() {
     const isSelected = selectedInboxMessageIds.has(mail.id);
     const attachments = mail.attachments || [];
 
-    // Initialisiere ausgewählte Anhänge für diese Mail (standardmäßig alle)
+    // Initialisiere ausgewählte Anhänge für diese Mail (standardmäßig alle Indizes)
     if (!selectedInboxAttachments[mail.id]) {
-      selectedInboxAttachments[mail.id] = new Set(attachments.map((a) => a.attachmentId));
+      selectedInboxAttachments[mail.id] = new Set(attachments.map((_, idx) => idx));
     }
     const currentSelectedAtts = selectedInboxAttachments[mail.id];
+    const initialActiveCount = currentSelectedAtts.size;
+    const initialTotalCount = attachments.length;
+    const initialBtnSuffix = initialActiveCount < initialTotalCount || initialActiveCount === 0 ? ` (${initialActiveCount})` : "";
 
     const card = document.createElement("div");
     card.className = "card p-3 shadow-sm border";
@@ -4674,14 +4678,14 @@ function renderInboxList() {
 
     // Attachments HTML (Selektierbare PDF-Pills mit Checkbox & Vorschau-Button)
     const attachmentsHtml = attachments
-      .map((att) => {
-        const isAttChecked = currentSelectedAtts.has(att.attachmentId);
+      .map((att, idx) => {
+        const isAttChecked = currentSelectedAtts.has(idx);
         return `
         <div class="inbox-attachment-item d-inline-flex align-items-center gap-1 border rounded p-1 px-2 small" 
           style="background-color: ${isAttChecked ? '#f0f7ff' : '#f8f9fa'}; border-color: ${isAttChecked ? '#b6d4fe' : '#dee2e6'} !important; transition: all 0.15s ease;">
           <input type="checkbox" class="form-check-input m-0 inbox-att-cb" 
             data-message-id="${mail.id}"
-            data-att-id="${att.attachmentId}"
+            data-att-idx="${idx}"
             ${isAttChecked ? "checked" : ""}
             style="cursor: pointer; width: 15px; height: 15px;" 
             title="Diesen Anhang für die Verarbeitung auswählen/abwählen" />
@@ -4689,7 +4693,7 @@ function renderInboxList() {
           <span class="text-truncate fw-medium inbox-pdf-pill" 
             data-message-id="${mail.id}"
             data-account-id="${mail.accountId || ''}"
-            data-att-id="${att.attachmentId}"
+            data-att-idx="${idx}"
             data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
             data-size="${att.size || 0}"
             data-subject="${encodeURIComponent(mail.subject || '')}"
@@ -4699,7 +4703,7 @@ function renderInboxList() {
           <button type="button" class="btn btn-sm p-0 border-0 text-primary inbox-pdf-pill d-inline-flex align-items-center" 
             data-message-id="${mail.id}"
             data-account-id="${mail.accountId || ''}"
-            data-att-id="${att.attachmentId}"
+            data-att-idx="${idx}"
             data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
             data-size="${att.size || 0}"
             data-subject="${encodeURIComponent(mail.subject || '')}"
@@ -4797,9 +4801,9 @@ function renderInboxList() {
                   <span class="material-symbols-outlined" style="font-size: 16px;">playlist_remove</span>
                   <span>Überspringen</span>
                 </button>
-                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" ${initialActiveCount === 0 ? "disabled" : ""} style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
                   <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
-                  <span>Verarbeiten</span>
+                  <span>Verarbeiten${initialBtnSuffix}</span>
                 </button>
               `
                   : `
@@ -4807,9 +4811,9 @@ function renderInboxList() {
                   <span class="material-symbols-outlined" style="font-size: 16px;">undo</span>
                   <span>Wiederherstellen</span>
                 </button>
-                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" ${initialActiveCount === 0 ? "disabled" : ""} style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
                   <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
-                  <span>Trotzdem Verarbeiten</span>
+                  <span>Trotzdem Verarbeiten${initialBtnSuffix}</span>
                 </button>
               `
               }
@@ -4852,14 +4856,14 @@ function renderInboxList() {
       attCb.addEventListener("change", (e) => {
         e.stopPropagation();
         const mId = attCb.getAttribute("data-message-id");
-        const aId = attCb.getAttribute("data-att-id");
+        const idx = parseInt(attCb.getAttribute("data-att-idx"), 10);
         if (!selectedInboxAttachments[mId]) {
-          selectedInboxAttachments[mId] = new Set((mail.attachments || []).map((a) => a.attachmentId));
+          selectedInboxAttachments[mId] = new Set((mail.attachments || []).map((_, i) => i));
         }
         if (e.target.checked) {
-          selectedInboxAttachments[mId].add(aId);
+          selectedInboxAttachments[mId].add(idx);
         } else {
-          selectedInboxAttachments[mId].delete(aId);
+          selectedInboxAttachments[mId].delete(idx);
         }
 
         const parentItem = attCb.closest(".inbox-attachment-item");
@@ -4868,13 +4872,17 @@ function renderInboxList() {
           parentItem.style.borderColor = e.target.checked ? "#b6d4fe" : "#dee2e6";
         }
 
+        const totalCount = (mail.attachments || []).length;
         const activeCount = selectedInboxAttachments[mId].size;
         const procBtn = card.querySelector(".inbox-process-btn");
         if (procBtn) {
           procBtn.disabled = activeCount === 0;
+          const isSkipped = currentInboxSubtab === "skipped";
+          const labelPrefix = isSkipped ? "Trotzdem Verarbeiten" : "Verarbeiten";
+          const countSuffix = activeCount < totalCount || activeCount === 0 ? ` (${activeCount})` : "";
           procBtn.innerHTML = `
             <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
-            <span>Verarbeiten${activeCount > 1 ? ` (${activeCount})` : activeCount === 0 ? " (0)" : ""}</span>
+            <span>${labelPrefix}${countSuffix}</span>
           `;
         }
       });
@@ -4910,10 +4918,11 @@ async function processSingleInboxEmail(mail, btnEl) {
   const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
 
   try {
-    const selectedAttIds = selectedInboxAttachments[mail.id]
+    const selectedIndices = selectedInboxAttachments[mail.id]
       ? Array.from(selectedInboxAttachments[mail.id])
-      : (mail.attachments || []).map((a) => a.attachmentId);
-    const selectedAttachments = (mail.attachments || []).filter((a) => selectedAttIds.includes(a.attachmentId));
+      : (mail.attachments || []).map((_, i) => i);
+    const selectedAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
+    const selectedAttIds = selectedAttachments.map((a) => a.attachmentId);
 
     if (selectedAttachments.length === 0) {
       alert("Bitte wählen Sie mindestens einen PDF-Anhang zum Verarbeiten aus.");
@@ -5004,10 +5013,11 @@ async function processBatchSelectedEmails() {
   try {
     const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
     const payloadItems = selectedEmails.map((m) => {
-      const selectedAttIds = selectedInboxAttachments[m.id]
+      const selectedIndices = selectedInboxAttachments[m.id]
         ? Array.from(selectedInboxAttachments[m.id])
-        : (m.attachments || []).map((a) => a.attachmentId);
-      const selectedAtts = (m.attachments || []).filter((a) => selectedAttIds.includes(a.attachmentId));
+        : (m.attachments || []).map((_, i) => i);
+      const selectedAtts = (m.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
+      const selectedAttIds = selectedAtts.map((a) => a.attachmentId);
       return {
         id: m.id,
         messageId: m.id,
