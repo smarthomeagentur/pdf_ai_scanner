@@ -2306,7 +2306,56 @@ async function checkLexofficeTarget(jobId, companyKey) {
       return;
     }
 
-    // API is valid! Now check if already transferred
+    // 1. Check if Live Match found in accounting system (Lexoffice / BuchhaltungsButler)
+    const hasLiveMatch = data.liveSearch && data.liveSearch.found && data.liveSearch.matches && data.liveSearch.matches.length > 0;
+    
+    let liveMatchHtml = "";
+    if (hasLiveMatch) {
+      const topMatch = data.liveSearch.matches[0];
+      const matchBadge = `<span class="badge bg-warning text-dark border border-warning-subtle">${topMatch.matchReasons.length} Übereinstimmungen</span>`;
+      
+      const reasonsList = topMatch.matchReasons.map(r => `<li><span class="text-success fw-medium">✓</span> ${r}</li>`).join("");
+
+      liveMatchHtml = `
+        <div class="p-3 mb-2 rounded-3 border bg-warning-subtle text-dark" style="border-color: #ffc107 !important;">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-1 mb-2">
+            <div class="d-flex align-items-center gap-1 fw-bold" style="font-size: 13.5px; color: #664d03;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">find_in_page</span>
+              <span>Beleg bereits in ${providerName} gefunden!</span>
+            </div>
+            ${matchBadge}
+          </div>
+          
+          <div class="p-2 rounded bg-white border mb-2" style="font-size: 12.5px; line-height: 1.5;">
+            <div class="d-flex justify-content-between flex-wrap gap-2">
+              <div><strong>Gefundener Beleg:</strong> ${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : topMatch.fileName}</div>
+              <div><strong>Betrag:</strong> <span class="font-monospace text-success fw-bold">${topMatch.amount || topMatch.totalAmount}</span></div>
+            </div>
+            <div class="text-muted small mt-1">
+              <span>Datum: <strong>${topMatch.date || topMatch.voucherDate}</strong></span>
+              ${topMatch.partner || topMatch.contactName ? ` | <span>Partner: <strong>${topMatch.partner || topMatch.contactName}</strong></span>` : ''}
+              ${topMatch.voucherStatus ? ` | Status: <span class="badge bg-light text-dark border">${topMatch.voucherStatus}</span>` : ''}
+            </div>
+            <div class="mt-2 pt-2 border-top">
+              <span class="text-muted fw-bold small" style="font-size: 11px;">Abgeglichene Datenpunkte:</span>
+              <ul class="mb-0 ps-0 mt-1 small" style="font-size: 12px; list-style-type: none;">
+                ${reasonsList}
+              </ul>
+            </div>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-1">
+            <span class="small text-muted" style="font-size: 11.5px;">⚠️ Dokument existiert schon im Portal.</span>
+            <button type="button" class="btn btn-sm btn-success btn-mark-synced-direct d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-file-id="${topMatch.id}" style="border-radius: 12px; font-size: 12px; padding: 3px 10px;">
+              <span class="material-symbols-outlined" style="font-size: 15px;">check_circle</span>
+              <span>Als synchronisiert markieren</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // 2. Check if already marked as transferred locally or found via live search
     if (data.alreadyTransferred && data.transferredInfo) {
       const dateFormatted = new Date(data.transferredInfo.transferredAt).toLocaleString("de-DE", {
         day: "2-digit",
@@ -2317,6 +2366,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
       });
       const fileId = data.transferredInfo.fileId || data.transferredInfo.lexofficeFileId || "-";
       lexModalStatusContainer.innerHTML = `
+        ${liveMatchHtml}
         <div class="p-2 rounded bg-success-subtle text-success-emphasis border border-success-subtle d-flex align-items-start gap-2">
           <span class="material-symbols-outlined text-success flex-shrink-0" style="font-size: 20px;">check_circle</span>
           <div style="font-size: 13px;">
@@ -2329,6 +2379,11 @@ async function checkLexofficeTarget(jobId, companyKey) {
       lexModalSubmitBtn.disabled = false;
       lexModalSubmitBtn.className = "btn btn-outline-primary px-4 d-flex align-items-center gap-2";
       if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem erneut übertragen";
+    } else if (hasLiveMatch) {
+      lexModalStatusContainer.innerHTML = liveMatchHtml;
+      lexModalSubmitBtn.disabled = false;
+      lexModalSubmitBtn.className = "btn btn-outline-warning text-dark px-4 d-flex align-items-center gap-2";
+      if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem übertragen (Duplikat)";
     } else {
       lexModalStatusContainer.innerHTML = `
         <div class="p-2 rounded bg-info-subtle text-info-emphasis border border-info-subtle d-flex align-items-start gap-2">
@@ -2336,7 +2391,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
           <div style="font-size: 13px;">
             <strong>Bereit zum Upload:</strong><br>
             API verbunden mit <strong>${data.organizationName || providerName}</strong>.<br>
-            Dokument liegt noch nicht bei ${providerName}.
+            <span class="text-success small fw-medium">✓ Kein übereinstimmender Beleg in ${providerName} gefunden.</span>
           </div>
         </div>
       `;
@@ -2598,14 +2653,39 @@ document.addEventListener("click", (e) => {
     return;
   }
 
-  const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync") || e.target.closest(".rechnung-lexoffice-btn");
-  if (lexofficeBtn) {
+  const markSyncedBtn = e.target.closest(".btn-mark-synced-direct");
+  if (markSyncedBtn) {
     e.stopPropagation();
     e.preventDefault();
-    const jobId = lexofficeBtn.getAttribute("data-job-id") || lexofficeBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => lexofficeBtn.closest(".job-item") && lexofficeBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
-    if (jobId) {
-      openLexofficeSyncModal(jobId);
-    }
+    const jobId = markSyncedBtn.getAttribute("data-job-id");
+    const companyKey = markSyncedBtn.getAttribute("data-company");
+    const fileId = markSyncedBtn.getAttribute("data-file-id");
+
+    markSyncedBtn.disabled = true;
+    markSyncedBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> <span>Speichere...</span>`;
+
+    fetch("/api/accounting/mark-synced", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, companyKey, fileId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          if (typeof showToast === "function") {
+            showToast("✓ Beleg erfolgreich als synchronisiert markiert!", "success");
+          }
+          closeLexofficeModal();
+          startPolling();
+        } else {
+          alert("Fehler beim Speichern: " + (data.error || "Unbekannt"));
+          markSyncedBtn.disabled = false;
+        }
+      })
+      .catch((err) => {
+        alert("Netzwerkfehler: " + err.message);
+        markSyncedBtn.disabled = false;
+      });
     return;
   }
 });

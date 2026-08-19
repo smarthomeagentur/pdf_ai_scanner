@@ -1958,6 +1958,93 @@ app.post("/api/jobs/:id/target-company", requireAdmin, (req, res) => {
   }
 });
 
+async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amountInCents, documentDate, company }) {
+  if (!apiKey) return { found: false, matches: [] };
+
+  try {
+    const cleanInvNum = invoiceNumber && invoiceNumber !== "none" && invoiceNumber !== "-" ? invoiceNumber.trim() : null;
+    const targetAmountEuro = amountInCents !== undefined && amountInCents !== null ? amountInCents / 100 : null;
+    const cleanFileName = fileName ? fileName.trim().toLowerCase() : null;
+    const cleanCompany = company && company !== "-" ? company.trim().toLowerCase() : null;
+
+    let url = "https://api.lexoffice.io/v1/voucherlist?voucherType=purchaseinvoice,purchasecreditnote,salesinvoice,salescreditnote&page=0&size=100";
+    if (cleanInvNum) {
+      url = `https://api.lexoffice.io/v1/voucherlist?voucherNumber=${encodeURIComponent(cleanInvNum)}`;
+    }
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!res.ok) {
+      if (cleanInvNum) {
+        const fbRes = await fetch("https://api.lexoffice.io/v1/voucherlist?voucherType=purchaseinvoice,purchasecreditnote,salesinvoice,salescreditnote&page=0&size=100", {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (!fbRes.ok) return { found: false, matches: [], error: `Lexoffice API Status ${res.status}` };
+        const fbData = await fbRes.json();
+        return matchLexofficeList(fbData.content || [], { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany });
+      }
+      return { found: false, matches: [], error: `Lexoffice API Status ${res.status}` };
+    }
+
+    const data = await res.json();
+    return matchLexofficeList(data.content || [], { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany });
+  } catch (err) {
+    return { found: false, matches: [], error: err.message };
+  }
+}
+
+function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany }) {
+  const matches = [];
+
+  for (const v of vouchers) {
+    const matchReasons = [];
+    const vNum = (v.voucherNumber || "").toLowerCase();
+    const vDate = v.voucherDate || "";
+    const vAmount = parseFloat(v.totalAmount || "0");
+    const vContact = (v.contactName || "").toLowerCase();
+    const vStatus = v.voucherStatus || "offen";
+
+    // 1. Invoice Number Match
+    if (cleanInvNum && vNum && (vNum.includes(cleanInvNum.toLowerCase()) || cleanInvNum.toLowerCase().includes(vNum))) {
+      matchReasons.push(`Rechnungsnummer stimmt überein (${v.voucherNumber})`);
+    }
+
+    // 2. Amount Match
+    if (targetAmountEuro !== null && vAmount > 0 && Math.abs(vAmount - targetAmountEuro) < 0.02) {
+      matchReasons.push(`Betrag stimmt überein (${vAmount.toFixed(2).replace(".", ",")} €)`);
+    }
+
+    // 3. Date Match
+    if (documentDate && documentDate !== "-" && documentDate !== "unknown" && vDate.startsWith(documentDate)) {
+      matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+    }
+
+    // 4. Contact / Company Match
+    if (cleanCompany && vContact && (vContact.includes(cleanCompany) || cleanCompany.includes(vContact))) {
+      matchReasons.push(`Lieferant / Kontakt stimmt überein (${v.contactName})`);
+    }
+
+    if (matchReasons.length > 0) {
+      matches.push({
+        id: v.id,
+        voucherNumber: v.voucherNumber || "-",
+        voucherDate: v.voucherDate || "-",
+        voucherStatus: vStatus,
+        totalAmount: vAmount > 0 ? `${vAmount.toFixed(2).replace(".", ",")} €` : "-",
+        contactName: v.contactName || "-",
+        voucherType: v.voucherType || "Rechnung",
+        matchReasons,
+        score: matchReasons.length,
+      });
+    }
+  }
+
+  matches.sort((a, b) => b.score - a.score);
+  return { found: matches.length > 0, matches };
+}
+
 // Accounting Endpoints (Lexoffice & BuchhaltungsButler) - Admin only
 app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async (req, res) => {
   const { jobId, companyKey } = req.body;
@@ -1997,6 +2084,13 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
   let apiValid = false;
   let apiError = null;
   let organizationName = null;
+  let liveSearch = { performed: false, found: false, matches: [] };
+
+  const invNum = job.result?.invoiceNumber || job.invoiceNumber || "";
+  const docDate = job.result?.documentDate || "";
+  const invAmt = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : (job.invoiceAmmount || 0);
+  const compName = job.result?.company || "";
+  const fileName = job.result?.full || job.originalName || "";
 
   if (targetComp === "thewire") {
     provider = "buchhaltungsbutler";
@@ -2010,6 +2104,26 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
       apiValid = verifyRes.valid;
       apiError = verifyRes.error || null;
       organizationName = verifyRes.organizationName || "The Wire UG";
+
+      if (apiValid) {
+        // Live search for matching vouchers in BuchhaltungsButler
+        const searchRes = await butlerApi.searchReceipts({
+          client,
+          secret,
+          key,
+          invoiceNumber: invNum,
+          fileName,
+          amountInCents: invAmt,
+          documentDate: docDate,
+          company: compName,
+        });
+        liveSearch = {
+          performed: true,
+          found: searchRes.found,
+          matches: searchRes.matches || [],
+          error: searchRes.error,
+        };
+      }
     } else {
       apiValid = false;
       apiError = "BuchhaltungsButler Zugangsdaten (Client, Secret, Key) für The Wire fehlen in den Einstellungen.";
@@ -2030,6 +2144,21 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
           apiValid = true;
           const profData = await apiRes.json().catch(() => ({}));
           organizationName = profData.companyName || profData.name || null;
+
+          // Live search for matching vouchers in Lexoffice
+          const searchRes = await searchLexofficeVouchers(apiKey, {
+            invoiceNumber: invNum,
+            fileName,
+            amountInCents: invAmt,
+            documentDate: docDate,
+            company: compName,
+          });
+          liveSearch = {
+            performed: true,
+            found: searchRes.found,
+            matches: searchRes.matches || [],
+            error: searchRes.error,
+          };
         } else {
           apiValid = false;
           apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
@@ -2059,6 +2188,7 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
     organizationName,
     alreadyTransferred,
     transferredInfo,
+    liveSearch,
     allTransfers: job.lexofficeTransfers || {},
     documentDetails: {
       title: job.result?.full || job.originalName,
@@ -2073,6 +2203,23 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
       rawDriveId: job.rawDriveId,
     },
   });
+});
+
+app.post("/api/accounting/mark-synced", requireAdmin, async (req, res) => {
+  const { jobId, companyKey, fileId } = req.body;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
+
+  if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+  const provider = companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice";
+  job.lexofficeTransfers[companyKey] = {
+    provider,
+    fileId: fileId || `manual_${Date.now()}`,
+    transferredAt: new Date().toISOString(),
+    manuallyMatched: true,
+  };
+  saveJobs();
+  res.json({ success: true, allTransfers: job.lexofficeTransfers });
 });
 
 app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, async (req, res) => {

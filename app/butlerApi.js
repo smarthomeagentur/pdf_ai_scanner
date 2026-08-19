@@ -137,7 +137,110 @@ async function uploadReceipt({ fileBuffer, fileName, client, secret, key, type =
   }
 }
 
+/**
+ * Searches / retrieves existing receipts in BuchhaltungsButler to match against a document.
+ * @param {Object} params
+ * @param {string} params.client
+ * @param {string} params.secret
+ * @param {string} params.key
+ * @param {string} [params.invoiceNumber]
+ * @param {string} [params.fileName]
+ * @param {number} [params.amountInCents]
+ * @param {string} [params.documentDate]
+ * @param {string} [params.company]
+ * @returns {Promise<{ found: boolean, matches: Array<Object>, error?: string }>}
+ */
+async function searchReceipts({ client, secret, key, invoiceNumber, fileName, amountInCents, documentDate, company }) {
+  if (!client || !secret || !key) return { found: false, matches: [] };
+  const basicAuth = Buffer.from(`${client.trim()}:${secret.trim()}`).toString("base64");
+
+  try {
+    const res = await fetch(`${BUTLER_API_BASE}/receipts/get`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        api_key: key.trim(),
+        list_direction: "inbound",
+        limit: 100,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success || !Array.isArray(data.receipts)) {
+      return { found: false, matches: [], error: data.message || `API Status ${res.status}` };
+    }
+
+    const targetAmountEuro = amountInCents ? amountInCents / 100 : null;
+    const cleanInvNum = invoiceNumber && invoiceNumber !== "none" && invoiceNumber !== "-" ? invoiceNumber.trim().toLowerCase() : null;
+    const cleanFileName = fileName ? fileName.trim().toLowerCase() : null;
+    const cleanCompany = company && company !== "-" ? company.trim().toLowerCase() : null;
+
+    const matches = [];
+
+    for (const receipt of data.receipts) {
+      const matchReasons = [];
+      const rId = receipt.id || receipt.receipt_id || receipt.id_by_customer || "-";
+      const rFile = (receipt.file_name || "").toLowerCase();
+      const rNum = (receipt.invoice_number || receipt.number || receipt.receipt_number || "").toLowerCase();
+      const rAmount = parseFloat(receipt.amount || receipt.total_amount || receipt.net_amount || "0");
+      const rDate = receipt.date || receipt.receipt_date || receipt.created_at || "";
+      const rPartner = (receipt.customer_name || receipt.partner || receipt.comment || "").toLowerCase();
+
+      // 1. Invoice Number Match
+      if (cleanInvNum && rNum && (rNum.includes(cleanInvNum) || cleanInvNum.includes(rNum))) {
+        matchReasons.push(`Rechnungsnummer stimmt überein (${receipt.invoice_number || receipt.number})`);
+      }
+
+      // 2. Filename Match
+      if (cleanFileName && rFile && (rFile.includes(cleanFileName) || cleanFileName.includes(rFile))) {
+        matchReasons.push(`Dateiname stimmt überein (${receipt.file_name})`);
+      }
+
+      // 3. Amount Match
+      if (targetAmountEuro !== null && rAmount > 0 && Math.abs(rAmount - targetAmountEuro) < 0.02) {
+        matchReasons.push(`Betrag stimmt überein (${rAmount.toFixed(2).replace(".", ",")} €)`);
+      }
+
+      // 4. Date Match
+      if (documentDate && documentDate !== "-" && documentDate !== "unknown" && rDate.startsWith(documentDate)) {
+        matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+      }
+
+      // 5. Company Match
+      if (cleanCompany && rPartner && (rPartner.includes(cleanCompany) || cleanCompany.includes(rPartner))) {
+        matchReasons.push(`Unternehmen / Partner stimmt überein (${receipt.customer_name || receipt.partner || cleanCompany})`);
+      }
+
+      if (matchReasons.length > 0) {
+        matches.push({
+          id: rId,
+          fileName: receipt.file_name || "Unbekannt",
+          invoiceNumber: receipt.invoice_number || receipt.number || "-",
+          amount: rAmount > 0 ? `${rAmount.toFixed(2).replace(".", ",")} €` : "-",
+          date: rDate || "-",
+          partner: receipt.customer_name || receipt.partner || "-",
+          matchReasons,
+          score: matchReasons.length,
+        });
+      }
+    }
+
+    matches.sort((a, b) => b.score - a.score);
+
+    return {
+      found: matches.length > 0,
+      matches,
+    };
+  } catch (err) {
+    return { found: false, matches: [], error: err.message };
+  }
+}
+
 module.exports = {
   verifyConnection,
   uploadReceipt,
+  searchReceipts,
 };
