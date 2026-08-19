@@ -1311,7 +1311,13 @@ ${lexofficeDetailsHtml}
                     </div>
                 `;
     } else if (job.status === "error") {
-      resultHtml = `<div class="job-result error">${job.error || "Unbekannter Fehler"}</div>`;
+      resultHtml = `
+        <div class="job-result error d-flex align-items-center justify-content-between gap-2" style="flex-wrap: wrap;">
+          <span style="word-break: break-word;">${job.error || "Unbekannter Fehler"}</span>
+          <button class="btn btn-sm btn-outline-danger retry-job-btn py-0 px-2 d-flex align-items-center gap-1" data-job-id="${job.id}" style="font-size: 11px; height: 26px; border-radius: 6px; white-space: nowrap; flex-shrink: 0;" title="Verarbeitung erneut starten">
+            <span class="material-symbols-outlined" style="font-size: 14px;">replay</span> Wiederholen
+          </button>
+        </div>`;
     } else if (job.status === "processing") {
       let progressStyles = "";
       if (job.processingStartedAt) {
@@ -3173,6 +3179,35 @@ document.addEventListener("click", (e) => {
             deleteDupBtn.disabled = false;
           });
       }
+    }
+    return;
+  }
+
+  const retryBtn = e.target.closest(".retry-job-btn");
+  if (retryBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = retryBtn.getAttribute("data-job-id");
+    if (jobId) {
+      retryBtn.disabled = true;
+      retryBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" style="width: 12px; height: 12px;"></span>`;
+      fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success) {
+            if (typeof showToast === "function") showToast("✓ Job wird erneut verarbeitet.", "info");
+            updateStatus();
+          } else {
+            alert("Fehler beim Wiederholen: " + (data.error || "Unbekannt"));
+            retryBtn.disabled = false;
+            retryBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">replay</span> Wiederholen`;
+          }
+        })
+        .catch((err) => {
+          alert("Netzwerkfehler: " + err.message);
+          retryBtn.disabled = false;
+          retryBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">replay</span> Wiederholen`;
+        });
     }
     return;
   }

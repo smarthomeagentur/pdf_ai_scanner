@@ -964,26 +964,52 @@ function loadJobs() {
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
 
-    // Entferne alte base64 localThumbnails aus jobs.json & bereinige Crash-Status
+    // Entferne alte base64 localThumbnails aus jobs.json & stelle unterbrochene Jobs nach Neustart automatisch wieder her
     let changed = false;
+    let recoveredCount = 0;
     for (const jobId in uploadJobs) {
-      if (uploadJobs[jobId].result && uploadJobs[jobId].result.localThumbnail) {
-        delete uploadJobs[jobId].result.localThumbnail;
+      const job = uploadJobs[jobId];
+      if (job.result && job.result.localThumbnail) {
+        delete job.result.localThumbnail;
         changed = true;
       }
-      if (uploadJobs[jobId].localThumbnail) {
-        delete uploadJobs[jobId].localThumbnail;
+      if (job.localThumbnail) {
+        delete job.localThumbnail;
         changed = true;
       }
-      if (uploadJobs[jobId].status === "processing" || uploadJobs[jobId].status === "pending") {
-        uploadJobs[jobId].status = "error";
-        uploadJobs[jobId].inAiPipeline = false;
-        uploadJobs[jobId].error = uploadJobs[jobId].error || "Verarbeitung durch Server-Neustart unterbrochen.";
-        changed = true;
+
+      // Prüfe, ob der Job vor dem Neustart in Verarbeitung oder Warteschlange war, oder durch vorherigen Neustart unterbrochen wurde
+      const wasInterrupted = job.status === "processing" || job.status === "pending" || job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
+      if (wasInterrupted) {
+        if (job.filePath && fs.existsSync(job.filePath)) {
+          // Datei existiert noch: Job zurücksetzen und automatisch wieder in die Pipeline stellen
+          job.status = "pending";
+          job.inAiPipeline = true;
+          job.error = null;
+          job.aiPipelineStartedAt = new Date().toISOString();
+          if (!uploadQueue.includes(jobId)) {
+            uploadQueue.push(jobId);
+          }
+          recoveredCount++;
+          changed = true;
+        } else {
+          // Datei existiert nicht mehr
+          job.status = "error";
+          job.inAiPipeline = false;
+          job.error = "Quelldatei nach Neustart nicht mehr vorhanden.";
+          changed = true;
+        }
       }
     }
+    // Bereinige Queue auf gültige IDs
+    uploadQueue = [...new Set(uploadQueue)].filter(id => uploadJobs[id] && uploadJobs[id].status === "pending");
+    if (recoveredCount > 0) {
+      console.log(`[SYSTEM] ${recoveredCount} durch Server-Neustart unterbrochene Jobs automatisch wieder in die Queue aufgenommen.`);
+    }
     if (changed) saveJobs();
-  } catch (e) { }
+  } catch (e) {
+    console.error("[SYSTEM] Fehler beim Laden von jobs.json:", e);
+  }
 }
 function saveJobs() {
   try {
@@ -2184,6 +2210,28 @@ app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
   res.json({ success: true });
 });
 
+app.post("/api/jobs/:id/retry", (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  if (!job.filePath || !fs.existsSync(job.filePath)) {
+    return res.status(400).json({ success: false, error: "Quelldatei existiert nicht mehr auf dem Server." });
+  }
+
+  job.status = "pending";
+  job.inAiPipeline = true;
+  job.error = null;
+  job.aiPipelineStartedAt = new Date().toISOString();
+  if (!uploadQueue.includes(jobId)) {
+    uploadQueue.push(jobId);
+  }
+  saveJobs();
+  processQueue();
+  console.log(`[RETRY] Job ${jobId} (${job.originalName}) manuell erneut in die Queue eingereiht.`);
+  res.json({ success: true, message: "Job wird erneut verarbeitet." });
+});
+
 app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
   const jobId = req.params.id;
   const job = uploadJobs[jobId];
@@ -3240,6 +3288,13 @@ async function init() {
     if (args.includes("--test")) testrun = true;
 
     aiAgent.init(debug);
+
+    // Starte sofort die Queue, falls noch wiederhergestellte Jobs vorliegen
+    if (uploadQueue.length > 0) {
+      console.log(`[SYSTEM] Starte Verarbeitung von ${uploadQueue.length} Job(s) in der Queue nach Neustart...`);
+      processQueue();
+    }
+
     setInterval(checkDriveForNewFiles, 15 * 1000); // 15 Sekunden Intervall für schnellen Upload-Sync
     setTimeout(checkDriveForNewFiles, 10000);
     setInterval(checkGmailForNewFiles, 60 * 1000); // 60 Sekunden Intervall für vorbereiteten Gmail-Monitor
