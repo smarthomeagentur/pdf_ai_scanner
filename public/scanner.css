@@ -199,6 +199,12 @@ input[type="range"].modern-slider::-moz-range-thumb {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
+/* Sticky Top Header */
+.scanner-header {
+  flex-shrink: 0 !important;
+  z-index: 1020;
+}
+
 /* ==========================================================================
    Manual Review Section Styles (Fixed Viewport, Auto-Scaling Canvas)
    ========================================================================== */
@@ -207,9 +213,10 @@ input[type="range"].modern-slider::-moz-range-thumb {
 .manual-review-section {
   display: none;
   width: 100%;
-  flex: 1 1 0;
-  min-height: 0;
-  height: 100%;
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  height: 0 !important; /* Critical: in CSS flexbox, flex-grow child needs height: 0 to not overflow */
+  max-height: 100%;
   position: relative;
   top: auto;
   left: auto;
@@ -230,29 +237,32 @@ input[type="range"].modern-slider::-moz-range-thumb {
 }
 
 .review-preview-container {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  height: 0 !important;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  overflow: hidden;
-  padding: 2px;
+  overflow: hidden !important;
+  padding: 8px 12px;
   box-sizing: border-box;
-  background: #fff;
+  background: #f1f2f4;
 }
 
 .review-canvas-wrapper {
   position: relative;
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
   border: none !important;
   border-radius: 0 !important;
   overflow: visible;
   background: transparent !important;
   box-shadow: none !important;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
@@ -264,9 +274,9 @@ input[type="range"].modern-slider::-moz-range-thumb {
   width: auto;
   display: block;
   object-fit: contain;
-  border-radius: 0 !important;
+  border-radius: 6px !important;
   border: none !important;
-  box-shadow: none !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.2) !important;
 }
 
 #reviewOverlay {
@@ -277,7 +287,7 @@ input[type="range"].modern-slider::-moz-range-thumb {
   height: 100%;
   z-index: 20;
   touch-action: none;
-  border-radius: 0 !important;
+  border-radius: 6px !important;
 }
 
 /* Floating Kantenerkennung Button */
@@ -306,18 +316,19 @@ input[type="range"].modern-slider::-moz-range-thumb {
   background: rgba(0, 0, 0, 0.9);
 }
 
-/* Bottom Controls Container */
+/* Bottom Controls Container - ALWAYS PINNED AT THE BOTTOM WITH SAFE AREA SPACING */
 .review-controls-container {
   width: 100%;
   max-width: 800px;
   margin: 0 auto;
-  flex-shrink: 0;
+  flex-shrink: 0 !important;
   padding: 8px 12px;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  padding-bottom: max(14px, env(safe-area-inset-bottom, 14px));
   background: #fff;
   border-top: 1px solid #dee2e6;
   border-radius: 0;
   box-sizing: border-box;
+  z-index: 1020;
 }
 
 .review-action-row {
