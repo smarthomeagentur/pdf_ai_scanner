@@ -1726,27 +1726,42 @@ function updateConfirmBtnText() {
   }
 }
 
-// Event Listener für den neuen Schließen-Button am Panel-Rand
-document.getElementById("cancelReviewCrossBtn").addEventListener("click", () => {
-  document.getElementById("manual-review-section").style.display = "none";
-  document.getElementById("filterMenu").style.display = "block";
-  document.getElementById("video-wrapper").style.display = "flex";
-  document.getElementById("captureBtn").style.display = "block";
-  document.getElementById("captureBtn").disabled = false;
+// Handler für Abbrechen / Schließen des Review-Panels
+const closeReviewPanel = () => {
+  const reviewSec = document.getElementById("manual-review-section");
+  if (reviewSec) reviewSec.style.display = "none";
+  const filterMenu = document.getElementById("filterMenu");
+  if (filterMenu) filterMenu.style.display = "block";
+  const vidWrap = document.getElementById("video-wrapper");
+  if (vidWrap) vidWrap.style.display = "flex";
+  if (captureBtn) {
+    captureBtn.style.display = "block";
+    captureBtn.disabled = false;
+  }
 
   scanPagesArray = []; // Alle gesammelten Seiten resetten
   updateConfirmBtnText();
-});
+};
 
-// Neu hinzugefügter DownloadBtn Handler
-document.getElementById("downloadOnlyBtn").addEventListener("click", () => {
-  finishScanProcess(false);
-});
+const cancelCrossBtn = document.getElementById("cancelReviewCrossBtn");
+if (cancelCrossBtn) cancelCrossBtn.addEventListener("click", closeReviewPanel);
 
-// Neu hinzugefügter Finish-KI Btn Handler
-document.getElementById("finishScanBtn").addEventListener("click", () => {
-  finishScanProcess(true);
-});
+const cancelReviewBtn = document.getElementById("cancelReviewBtn");
+if (cancelReviewBtn) cancelReviewBtn.addEventListener("click", closeReviewPanel);
+
+const downloadOnlyBtn = document.getElementById("downloadOnlyBtn");
+if (downloadOnlyBtn) {
+  downloadOnlyBtn.addEventListener("click", () => {
+    finishScanProcess(false);
+  });
+}
+
+const finishScanBtn = document.getElementById("finishScanBtn");
+if (finishScanBtn) {
+  finishScanBtn.addEventListener("click", () => {
+    finishScanProcess(true);
+  });
+}
 
 function extractCroppedBlob() {
   return new Promise((resolve) => {
@@ -1813,24 +1828,35 @@ function extractCroppedBlob() {
   });
 }
 
-// Neu: Als Seite zwischenspeichern
-document.getElementById("addPageBtn").addEventListener("click", async () => {
-  document.getElementById("manual-review-section").style.display = "none";
-  loader.style.display = "block";
-  loaderStatus.innerText = "Seite zwischengespeichert. Mache Platz für die nächste...";
+// Seite hinzufügen (nextPageBtn oder addPageBtn)
+const handleAddPageAction = async () => {
+  const reviewSec = document.getElementById("manual-review-section");
+  if (reviewSec) reviewSec.style.display = "none";
+  if (loader) loader.style.display = "block";
+  if (loaderStatus) loaderStatus.innerText = "Seite zwischengespeichert. Mache Platz für die nächste...";
 
   const blob = await extractCroppedBlob();
   scanPagesArray.push(blob);
 
   setTimeout(() => {
-    loader.style.display = "none";
-    document.getElementById("filterMenu").style.display = "block";
-    document.getElementById("video-wrapper").style.display = "flex";
-    document.getElementById("captureBtn").style.display = "block";
-    document.getElementById("captureBtn").disabled = false;
+    if (loader) loader.style.display = "none";
+    const filterMenu = document.getElementById("filterMenu");
+    if (filterMenu) filterMenu.style.display = "block";
+    const vidWrap = document.getElementById("video-wrapper");
+    if (vidWrap) vidWrap.style.display = "flex";
+    if (captureBtn) {
+      captureBtn.style.display = "block";
+      captureBtn.disabled = false;
+    }
     updateConfirmBtnText();
   }, 500);
-});
+};
+
+const addPageBtn = document.getElementById("addPageBtn");
+if (addPageBtn) addPageBtn.addEventListener("click", handleAddPageAction);
+
+const nextPageBtn = document.getElementById("nextPageBtn");
+if (nextPageBtn) nextPageBtn.addEventListener("click", handleAddPageAction);
 
 // Klick auf "Abschließen" (KI) o. "Download" -> Abschließende Berechnung und Hochladen aller Seiten
 async function finishScanProcess(sendToAI) {
