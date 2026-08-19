@@ -990,6 +990,102 @@
         </div>
       </div>
 
+      <!-- Accounting Side-by-Side Compare Modal -->
+      <div id="accounting-compare-modal" class="modal-overlay" style="z-index: 3100; display: none;">
+        <div class="modal-content" style="max-width: 1100px; width: 96%; max-height: 92vh; display: flex; flex-direction: column; padding: 20px; border-radius: 16px;">
+          <!-- Header -->
+          <div class="d-flex justify-content-between align-items-center pb-2 mb-3 border-bottom">
+            <div class="d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined text-primary" style="font-size: 26px;">compare</span>
+              <div>
+                <h5 class="m-0 fw-bold text-dark" style="font-size: 16px;">Beleg-Gegenüberstellung & Detailvergleich</h5>
+                <div class="text-muted small" style="font-size: 12px;">Vergleiche den aktuellen Upload direkt mit dem in der Buchhaltung gefundenen Beleg.</div>
+              </div>
+            </div>
+            <button id="compare-modal-close-btn" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <!-- Split View Columns -->
+          <div class="row g-3 flex-grow-1 overflow-auto mb-3" style="min-height: 480px;">
+            <!-- Left: Local Upload -->
+            <div class="col-12 col-md-6 d-flex flex-column">
+              <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa;">
+                <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+                  <span class="fw-bold text-dark small d-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined text-primary" style="font-size: 18px;">upload_file</span>
+                    <span>Aktueller Upload (Lokale Datei)</span>
+                  </span>
+                  <span id="compare-local-badge" class="badge bg-primary-subtle text-primary border border-primary-subtle small">Lokal</span>
+                </div>
+                <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+                  <div class="d-flex justify-content-between flex-wrap gap-1">
+                    <span id="compare-local-inv">Rechnung: <strong>-</strong></span>
+                    <span id="compare-local-amt" class="text-success fw-bold font-monospace">Betrag: -</span>
+                  </div>
+                  <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+                    <span id="compare-local-date">Datum: -</span>
+                    <span id="compare-local-comp">Firma: -</span>
+                  </div>
+                </div>
+                <div class="card-body p-1 flex-grow-1" style="min-height: 420px; background: #444; border-radius: 0 0 12px 12px; overflow: hidden;">
+                  <iframe id="compare-local-iframe" src="about:blank" style="width: 100%; height: 100%; min-height: 420px; border: none; border-radius: 0 0 8px 8px;"></iframe>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Accounting Portal Voucher -->
+            <div class="col-12 col-md-6 d-flex flex-column">
+              <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa;">
+                <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+                  <span class="fw-bold text-dark small d-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined text-success" style="font-size: 18px;">account_balance</span>
+                    <span id="compare-remote-header">Beleg in Buchhaltung</span>
+                  </span>
+                  <span id="compare-remote-status-badge" class="badge bg-success-subtle text-success border border-success-subtle small">Gefunden</span>
+                </div>
+                <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+                  <div class="d-flex justify-content-between flex-wrap gap-1">
+                    <span id="compare-remote-inv">Beleg-Nr: <strong>-</strong></span>
+                    <span id="compare-remote-amt" class="text-success fw-bold font-monospace">Betrag: -</span>
+                  </div>
+                  <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+                    <span id="compare-remote-date">Datum: -</span>
+                    <span id="compare-remote-contact">Kontakt: -</span>
+                  </div>
+                </div>
+                <div class="card-body p-1 flex-grow-1" style="min-height: 420px; background: #444; border-radius: 0 0 12px 12px; overflow: hidden; position: relative;">
+                  <div id="compare-remote-loading" class="text-white text-center py-5" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); z-index: 10;">
+                    <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
+                    <div class="small">Lade Dokument aus Lexoffice...</div>
+                  </div>
+                  <iframe id="compare-remote-iframe" src="about:blank" style="width: 100%; height: 100%; min-height: 420px; border: none; border-radius: 0 0 8px 8px;"></iframe>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Action Bar -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2 border-top">
+            <button id="compare-modal-back-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">arrow_back</span>
+              <span>Zurück zum Upload-Dialog</span>
+            </button>
+            <div class="d-flex align-items-center gap-2">
+              <button id="compare-modal-mark-btn" type="button" class="btn btn-sm btn-success d-flex align-items-center gap-1 px-3" style="border-radius: 8px; font-weight: 500;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
+                <span>Als synchronisiert markieren</span>
+              </button>
+              <button id="compare-modal-upload-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">cloud_upload</span>
+                <span>Trotzdem neu übertragen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Google Drive Sync Review Modal -->
       <div id="drive-sync-modal" class="modal-overlay" style="z-index: 2050; display: none;">
         <div class="modal-content" style="max-width: 820px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; border-radius: 16px; padding: 24px;">
@@ -1169,7 +1265,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v19"></script>
+      <script src="/index.js?v=20260819_gmail_v20"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

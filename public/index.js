@@ -2346,9 +2346,12 @@ async function checkLexofficeTarget(jobId, companyKey) {
           </div>
 
           <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-1">
-            <span class="small text-muted" style="font-size: 11.5px;">⚠️ Dokument existiert schon im Portal.</span>
-            <button type="button" class="btn btn-sm btn-success btn-mark-synced-direct d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-file-id="${topMatch.id}" style="border-radius: 12px; font-size: 12px; padding: 3px 10px;">
-              <span class="material-symbols-outlined" style="font-size: 15px;">check_circle</span>
+            <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-match-index="0" style="border-radius: 12px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">compare</span>
+              <span>Belege gegenüberstellen (Vorschau)</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-success btn-mark-synced-direct d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-file-id="${topMatch.id}" style="border-radius: 12px; font-size: 12px; padding: 4px 12px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
               <span>Als synchronisiert markieren</span>
             </button>
           </div>
@@ -2468,11 +2471,13 @@ if (lexModalSubmitBtn) {
         lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined">check</span> <span>Erledigt</span>`;
 
         renderJobs();
-        if (typeof renderRechnungenList === "function") renderRechnungenList();
+        if (typeof renderRechnungenList === "function") {
+          renderRechnungenList();
+        }
 
         setTimeout(() => {
           closeLexofficeModal();
-        }, 1200);
+        }, 1500);
       } else {
         lexModalStatusContainer.innerHTML = `
           <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-center gap-2">
@@ -2494,6 +2499,165 @@ if (lexModalSubmitBtn) {
       lexModalSubmitBtn.disabled = false;
       if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
       lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Erneut versuchen</span>`;
+    }
+  });
+}
+
+// --- Accounting Side-by-Side Compare Modal Logic ---
+const accountingCompareModal = document.getElementById("accounting-compare-modal");
+const compareModalCloseBtn = document.getElementById("compare-modal-close-btn");
+const compareModalBackBtn = document.getElementById("compare-modal-back-btn");
+const compareModalMarkBtn = document.getElementById("compare-modal-mark-btn");
+const compareModalUploadBtn = document.getElementById("compare-modal-upload-btn");
+
+const compareLocalIframe = document.getElementById("compare-local-iframe");
+const compareRemoteIframe = document.getElementById("compare-remote-iframe");
+const compareRemoteLoading = document.getElementById("compare-remote-loading");
+
+const compareLocalInv = document.getElementById("compare-local-inv");
+const compareLocalAmt = document.getElementById("compare-local-amt");
+const compareLocalDate = document.getElementById("compare-local-date");
+const compareLocalComp = document.getElementById("compare-local-comp");
+
+const compareRemoteHeader = document.getElementById("compare-remote-header");
+const compareRemoteStatusBadge = document.getElementById("compare-remote-status-badge");
+const compareRemoteInv = document.getElementById("compare-remote-inv");
+const compareRemoteAmt = document.getElementById("compare-remote-amt");
+const compareRemoteDate = document.getElementById("compare-remote-date");
+const compareRemoteContact = document.getElementById("compare-remote-contact");
+
+let currentCompareJobId = null;
+let currentCompareCompany = null;
+let currentCompareMatch = null;
+
+function closeAccountingCompareModal() {
+  if (accountingCompareModal) accountingCompareModal.style.display = "none";
+  if (compareLocalIframe) compareLocalIframe.src = "about:blank";
+  if (compareRemoteIframe) compareRemoteIframe.src = "about:blank";
+  currentCompareJobId = null;
+  currentCompareCompany = null;
+  currentCompareMatch = null;
+}
+
+function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
+  if (!currentLexCheckData || !currentLexCheckData.liveSearch || !currentLexCheckData.liveSearch.matches) return;
+  const match = currentLexCheckData.liveSearch.matches[matchIndex] || currentLexCheckData.liveSearch.matches[0];
+  if (!match) return;
+
+  const doc = currentLexCheckData.documentDetails || {};
+  currentCompareJobId = jobId;
+  currentCompareCompany = companyKey;
+  currentCompareMatch = match;
+
+  // 1. Populate Local Upload Info
+  if (compareLocalInv) compareLocalInv.innerHTML = `Rechnung: <strong>${doc.invoiceNumber && doc.invoiceNumber !== 'none' ? doc.invoiceNumber : '-'}</strong>`;
+  let amtStr = "-";
+  if (doc.invoiceAmmount && doc.invoiceAmmount > 0) {
+    amtStr = (doc.invoiceAmmount / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  }
+  if (compareLocalAmt) compareLocalAmt.innerText = `Betrag: ${amtStr}`;
+  if (compareLocalDate) compareLocalDate.innerText = `Datum: ${doc.documentDate || '-'}`;
+  if (compareLocalComp) compareLocalComp.innerText = `Firma: ${doc.company || '-'}`;
+
+  if (compareLocalIframe) {
+    compareLocalIframe.src = `/api/jobs/${jobId}/file`;
+  }
+
+  // 2. Populate Remote Portal Voucher Info
+  const isButler = companyKey === "thewire";
+  const providerName = isButler ? "BuchhaltungsButler" : "Lexoffice";
+
+  if (compareRemoteHeader) compareRemoteHeader.innerText = `Beleg in ${providerName} (${companyKey})`;
+  if (compareRemoteStatusBadge) {
+    compareRemoteStatusBadge.innerText = match.voucherStatus || "vorhanden";
+    compareRemoteStatusBadge.className = match.voucherStatus === "paid"
+      ? "badge bg-success text-white small"
+      : "badge bg-warning text-dark border border-warning-subtle small";
+  }
+
+  if (compareRemoteInv) compareRemoteInv.innerHTML = `Beleg-Nr: <strong>${match.voucherNumber && match.voucherNumber !== '-' ? match.voucherNumber : (match.invoiceNumber || match.fileName)}</strong>`;
+  if (compareRemoteAmt) compareRemoteAmt.innerText = `Betrag: ${match.totalAmount || match.amount || '-'}`;
+  if (compareRemoteDate) compareRemoteDate.innerText = `Datum: ${match.voucherDate || match.date || '-'}`;
+  if (compareRemoteContact) compareRemoteContact.innerText = `Kontakt: ${match.contactName || match.partner || '-'}`;
+
+  if (compareRemoteLoading) compareRemoteLoading.style.display = "flex";
+  if (compareRemoteIframe) {
+    if (isButler) {
+      if (compareRemoteLoading) compareRemoteLoading.style.display = "none";
+      compareRemoteIframe.srcdoc = `
+        <div style="font-family: sans-serif; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 20px;">
+          <span class="material-symbols-outlined" style="font-size: 48px; color: #17a2b8;">description</span>
+          <h3 style="margin: 10px 0 5px;">BuchhaltungsButler Beleg</h3>
+          <p style="color: #ccc; font-size: 14px;">Beleg <strong>${match.invoiceNumber || match.fileName}</strong> liegt im BuchhaltungsButler Portal vor.</p>
+        </div>
+      `;
+    } else {
+      compareRemoteIframe.onload = () => {
+        if (compareRemoteLoading) compareRemoteLoading.style.display = "none";
+      };
+      compareRemoteIframe.src = `/api/accounting/voucher-file?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}`;
+    }
+  }
+
+  if (lexSyncModal) lexSyncModal.style.display = "none";
+  if (accountingCompareModal) accountingCompareModal.style.display = "flex";
+}
+
+if (compareModalCloseBtn) {
+  compareModalCloseBtn.addEventListener("click", closeAccountingCompareModal);
+}
+
+if (compareModalBackBtn) {
+  compareModalBackBtn.addEventListener("click", () => {
+    closeAccountingCompareModal();
+    if (lexSyncModal) lexSyncModal.style.display = "flex";
+  });
+}
+
+if (compareModalMarkBtn) {
+  compareModalMarkBtn.addEventListener("click", async () => {
+    if (!currentCompareJobId || !currentCompareCompany || !currentCompareMatch) return;
+    const jobId = currentCompareJobId;
+    const companyKey = currentCompareCompany;
+    const fileId = currentCompareMatch.id;
+
+    compareModalMarkBtn.disabled = true;
+    compareModalMarkBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> <span>Speichere...</span>`;
+
+    try {
+      const res = await fetch("/api/accounting/mark-synced", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, companyKey, fileId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (typeof showToast === "function") {
+          showToast("✓ Beleg erfolgreich als synchronisiert markiert!", "success");
+        }
+        closeAccountingCompareModal();
+        closeLexofficeModal();
+        startPolling();
+      } else {
+        alert("Fehler beim Speichern: " + (data.error || "Unbekannt"));
+        compareModalMarkBtn.disabled = false;
+      }
+    } catch (err) {
+      alert("Netzwerkfehler: " + err.message);
+      compareModalMarkBtn.disabled = false;
+    }
+  });
+}
+
+if (compareModalUploadBtn) {
+  compareModalUploadBtn.addEventListener("click", async () => {
+    if (!currentCompareJobId || !currentCompareCompany) return;
+    const jobId = currentCompareJobId;
+    const companyKey = currentCompareCompany;
+    closeAccountingCompareModal();
+    if (lexSyncModal) lexSyncModal.style.display = "flex";
+    if (lexModalSubmitBtn) {
+      lexModalSubmitBtn.click();
     }
   });
 }
@@ -2662,6 +2826,17 @@ document.addEventListener("click", (e) => {
     if (jobId) {
       openLexofficeSyncModal(jobId);
     }
+    return;
+  }
+
+  const compareBtn = e.target.closest(".btn-open-compare-modal");
+  if (compareBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = compareBtn.getAttribute("data-job-id");
+    const companyKey = compareBtn.getAttribute("data-company");
+    const matchIdx = parseInt(compareBtn.getAttribute("data-match-index") || "0", 10);
+    openAccountingCompareModal(jobId, companyKey, matchIdx);
     return;
   }
 

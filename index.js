@@ -2253,6 +2253,70 @@ app.post("/api/accounting/mark-synced", requireAdmin, async (req, res) => {
   res.json({ success: true, allTransfers: job.lexofficeTransfers });
 });
 
+app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
+  try {
+    const { companyKey, voucherId, fileId } = req.query;
+    if (!companyKey) return res.status(400).send("companyKey erforderlich");
+
+    if (companyKey === "thewire") {
+      return res.status(404).send("Vorschau für BuchhaltungsButler derzeit nicht als Datei verfügbar");
+    }
+
+    const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    if (!apiKey) return res.status(400).send("Kein API-Key für " + companyKey);
+
+    let targetFileId = fileId;
+    if (!targetFileId && voucherId) {
+      try {
+        const vRes = await fetch(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (vRes.ok) {
+          const vData = await vRes.json();
+          if (vData.files && vData.files.length > 0) {
+            targetFileId = vData.files[0].id || vData.files[0];
+          }
+        }
+      } catch (e) {}
+
+      if (!targetFileId) {
+        try {
+          const invRes = await fetch(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          });
+          if (invRes.ok) {
+            const invData = await invRes.json();
+            if (invData.documentFileId) targetFileId = invData.documentFileId;
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (!targetFileId) {
+      targetFileId = voucherId;
+    }
+
+    const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!fileRes.ok) {
+      return res.status(fileRes.status).send("Dokument in Lexoffice nicht abrufbar (Status: " + fileRes.status + ")");
+    }
+
+    const contentType = fileRes.headers.get("content-type") || "application/pdf";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", "inline");
+
+    const arrayBuffer = await fileRes.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (err) {
+    console.error("[ACCOUNTING FILE] Fehler:", err);
+    res.status(500).send("Fehler beim Abrufen der Datei: " + err.message);
+  }
+});
+
 app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, async (req, res) => {
   const { jobId, companyKey, force } = req.body;
   const validCompanies = ["wirewire", "thewire", "polyxo"];
