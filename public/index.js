@@ -824,7 +824,8 @@ function renderStartCategoryBubbles() {
   const defaultCats = [
     "Rechnungen", "Dokumente", "Administration", "Personal",
     "Projekte", "Verträge", "Marketing", "Förderung",
-    "Buchhaltung", "Vertrieb", "Privat", "Sonstige"
+    "Buchhaltung", "Vertrieb", "Privat", "Sonstige",
+    "⚠️ Duplikat-Verdacht"
   ];
 
   const dynamicCatsStr = window.currentSettings?.AI_CATEGORIES;
@@ -833,7 +834,7 @@ function renderStartCategoryBubbles() {
     dynamicCatsStr.split(",").forEach(c => {
       const trimmed = c.trim();
       if (trimmed && !allCats.some(ac => ac.toLowerCase() === trimmed.toLowerCase())) {
-        allCats.push(trimmed);
+        allCats.splice(allCats.length - 1, 0, trimmed);
       }
     });
   }
@@ -842,6 +843,7 @@ function renderStartCategoryBubbles() {
   allCats.forEach(cat => {
     const isSelected = startSelectedCategories.has(cat.toLowerCase());
     const catLower = cat.toLowerCase();
+    const isDupBadge = cat.includes("Duplikat");
 
     // Count available documents for this category
     const count = (activeJobs || []).filter((job) => {
@@ -850,6 +852,7 @@ function renderStartCategoryBubbles() {
       const isInvoice = res.isInvoice === true || jobCat.includes("rechnung");
       const isPrivat = job.isPrivate === true || jobCat.includes("privat");
 
+      if (catLower.includes("duplikat")) return job.suspectedDuplicate === true;
       if (catLower === "rechnungen" || catLower === "rechnung") return isInvoice;
       if (catLower === "dokumente" || catLower === "dokument") return !isInvoice;
       if (catLower === "privat") return isPrivat;
@@ -858,9 +861,13 @@ function renderStartCategoryBubbles() {
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
+    if (isDupBadge) {
+      btn.className = `btn btn-sm ${isSelected ? 'btn-warning text-dark fw-bold shadow-sm' : 'btn-outline-warning text-dark'} start-cat-bubble`;
+    } else {
+      btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
+    }
     btn.style.cssText = "border-radius: 16px; font-size: 12px; padding: 2px 10px; transition: all 0.15s ease;";
-    btn.innerHTML = `${cat} <span class="badge ${isSelected ? 'bg-white text-primary' : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
+    btn.innerHTML = `${cat} <span class="badge ${isSelected ? (isDupBadge ? 'bg-dark text-white' : 'bg-white text-primary') : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
     
     btn.addEventListener("click", () => {
       const key = cat.toLowerCase();
@@ -952,7 +959,9 @@ function filterActiveJobs(jobs) {
 
       let catMatch = false;
       for (const selCat of startSelectedCategories) {
-        if (selCat === "rechnungen" || selCat === "rechnung") {
+        if (selCat.includes("duplikat")) {
+          if (job.suspectedDuplicate === true) { catMatch = true; break; }
+        } else if (selCat === "rechnungen" || selCat === "rechnung") {
           if (isInvoice) { catMatch = true; break; }
         } else if (selCat === "dokumente" || selCat === "dokument") {
           if (!isInvoice) { catMatch = true; break; }
@@ -2011,6 +2020,7 @@ function renderRechnungenList() {
 
       if (selectedStatus === "uebertragen" && !isTransferred) return false;
       if (selectedStatus === "nicht_uebertragen" && isTransferred) return false;
+      if (selectedStatus === "duplikat" && !job.suspectedDuplicate) return false;
     }
 
     // 4. Year & Quarter filter
