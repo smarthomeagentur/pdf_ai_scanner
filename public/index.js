@@ -2193,6 +2193,7 @@ async function openLexofficeSyncModal(jobId) {
   }
 
   currentLexJobId = jobId;
+  const res = job.result || {};
   if (lexSyncModal) lexSyncModal.style.display = "flex";
 
   // Pre-fill Document preview info

@@ -1958,6 +1958,10 @@ app.post("/api/jobs/:id/target-company", requireAdmin, (req, res) => {
   }
 });
 
+function normalizeAlphaNum(s) {
+  return (s || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+}
+
 async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amountInCents, documentDate, company }) {
   if (!apiKey) return { found: false, matches: [] };
 
@@ -1967,58 +1971,85 @@ async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amount
     const cleanFileName = fileName ? fileName.trim().toLowerCase() : null;
     const cleanCompany = company && company !== "-" ? company.trim().toLowerCase() : null;
 
-    let url = "https://api.lexoffice.io/v1/voucherlist?voucherType=purchaseinvoice,purchasecreditnote,salesinvoice,salescreditnote&page=0&size=100";
+    const allVouchers = [];
+    const seenVoucherIds = new Set();
+
+    const voucherStatuses = "draft,open,paid,paidoff,voided,transferred,sepadebit";
+    const voucherTypes = "purchaseinvoice,purchasecreditnote,salesinvoice,salescreditnote,invoice,downpaymentinvoice,creditnote";
+
+    // 1. Direct query by voucherNumber if available
     if (cleanInvNum) {
-      url = `https://api.lexoffice.io/v1/voucherlist?voucherNumber=${encodeURIComponent(cleanInvNum)}`;
-    }
-
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-
-    if (!res.ok) {
-      if (cleanInvNum) {
-        const fbRes = await fetch("https://api.lexoffice.io/v1/voucherlist?voucherType=purchaseinvoice,purchasecreditnote,salesinvoice,salescreditnote&page=0&size=100", {
+      try {
+        const directUrl = `https://api.lexoffice.io/v1/voucherlist?voucherNumber=${encodeURIComponent(cleanInvNum)}&voucherStatus=${voucherStatuses}&voucherType=${voucherTypes}&page=0&size=100`;
+        const directRes = await fetch(directUrl, {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
-        if (!fbRes.ok) return { found: false, matches: [], error: `Lexoffice API Status ${res.status}` };
-        const fbData = await fbRes.json();
-        return matchLexofficeList(fbData.content || [], { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany });
-      }
-      return { found: false, matches: [], error: `Lexoffice API Status ${res.status}` };
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          (directData.content || []).forEach((v) => {
+            if (v && v.id && !seenVoucherIds.has(v.id)) {
+              seenVoucherIds.add(v.id);
+              allVouchers.push(v);
+            }
+          });
+        }
+      } catch (e) {}
     }
 
-    const data = await res.json();
-    return matchLexofficeList(data.content || [], { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany });
+    // 2. Query general recent vouchers list
+    try {
+      const generalUrl = `https://api.lexoffice.io/v1/voucherlist?voucherStatus=${voucherStatuses}&voucherType=${voucherTypes}&page=0&size=250`;
+      const genRes = await fetch(generalUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (genRes.ok) {
+        const genData = await genRes.json();
+        (genData.content || []).forEach((v) => {
+          if (v && v.id && !seenVoucherIds.has(v.id)) {
+            seenVoucherIds.add(v.id);
+            allVouchers.push(v);
+          }
+        });
+      }
+    } catch (e) {}
+
+    return matchLexofficeList(allVouchers, { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany });
   } catch (err) {
+    console.error("[LEXOFFICE SEARCH] Fehler:", err);
     return { found: false, matches: [], error: err.message };
   }
 }
 
 function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany }) {
   const matches = [];
+  const normSearchInv = cleanInvNum ? normalizeAlphaNum(cleanInvNum) : null;
 
   for (const v of vouchers) {
     const matchReasons = [];
-    const vNum = (v.voucherNumber || "").toLowerCase();
+    const vNum = v.voucherNumber || "";
+    const normVoucherNum = normalizeAlphaNum(vNum);
     const vDate = v.voucherDate || "";
     const vAmount = parseFloat(v.totalAmount || "0");
     const vContact = (v.contactName || "").toLowerCase();
     const vStatus = v.voucherStatus || "offen";
 
-    // 1. Invoice Number Match
-    if (cleanInvNum && vNum && (vNum.includes(cleanInvNum.toLowerCase()) || cleanInvNum.toLowerCase().includes(vNum))) {
+    // 1. Invoice Number Match (exact or normalized substring)
+    if (normSearchInv && normVoucherNum && (normSearchInv.includes(normVoucherNum) || normVoucherNum.includes(normSearchInv))) {
       matchReasons.push(`Rechnungsnummer stimmt überein (${v.voucherNumber})`);
     }
 
-    // 2. Amount Match
+    // 2. Amount Match (within 2 cents tolerance)
     if (targetAmountEuro !== null && vAmount > 0 && Math.abs(vAmount - targetAmountEuro) < 0.02) {
       matchReasons.push(`Betrag stimmt überein (${vAmount.toFixed(2).replace(".", ",")} €)`);
     }
 
     // 3. Date Match
-    if (documentDate && documentDate !== "-" && documentDate !== "unknown" && vDate.startsWith(documentDate)) {
-      matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+    if (documentDate && documentDate !== "-" && documentDate !== "unknown") {
+      const cleanDocDate = documentDate.replace(/[^0-9]/g, "");
+      const cleanVDate = vDate.replace(/[^0-9]/g, "");
+      if (vDate.startsWith(documentDate) || (cleanDocDate.length >= 6 && cleanVDate.includes(cleanDocDate))) {
+        matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+      }
     }
 
     // 4. Contact / Company Match
