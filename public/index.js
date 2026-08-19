@@ -2890,13 +2890,18 @@ startDriveBackgroundPoller();
 
 let inboxActiveEmails = [];
 let inboxSkippedEmails = [];
-let currentInboxSubtab = "active"; // "active" | "skipped"
+let inboxAccounts = [];
+let currentInboxSubtab = "detected"; // "detected" | "active" | "skipped"
 let selectedInboxMessageIds = new Set();
 let isProcessingInboxBatch = false;
 
 const inboxRefreshBtn = document.getElementById("inbox-refresh-btn");
+const inboxTabDetected = document.getElementById("inbox-tab-detected");
 const inboxTabActive = document.getElementById("inbox-tab-active");
 const inboxTabSkipped = document.getElementById("inbox-tab-skipped");
+const inboxAccountSelect = document.getElementById("inbox-account-select");
+const inboxAddAccountBtn = document.getElementById("inbox-add-account-btn");
+const inboxFilterDate = document.getElementById("inbox-filter-date");
 const inboxArchiveToggle = document.getElementById("inbox-archive-toggle");
 const inboxSearchInput = document.getElementById("inbox-search-input");
 const inboxSelectAllCb = document.getElementById("inbox-select-all-cb");
@@ -2908,31 +2913,85 @@ const inboxErrorText = document.getElementById("inbox-error-text");
 const inboxEmptyContainer = document.getElementById("inbox-empty-container");
 const inboxEmailList = document.getElementById("inbox-email-list");
 const navInboxBadge = document.getElementById("nav-inbox-badge");
+const inboxCountDetected = document.getElementById("inbox-count-detected");
 const inboxCountActive = document.getElementById("inbox-count-active");
 const inboxCountSkipped = document.getElementById("inbox-count-skipped");
 const inboxSelectionControls = document.getElementById("inbox-selection-controls");
 
-if (inboxTabActive && inboxTabSkipped) {
-  inboxTabActive.addEventListener("click", () => {
-    currentInboxSubtab = "active";
-    inboxTabActive.classList.add("btn-primary", "active");
-    inboxTabActive.classList.remove("btn-outline-secondary");
-    inboxTabSkipped.classList.remove("btn-primary", "active");
-    inboxTabSkipped.classList.add("btn-outline-secondary");
-    if (inboxSelectionControls) inboxSelectionControls.style.display = "flex";
-    if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "inline-flex";
-    renderInboxList();
+function setInboxSubtab(tabName) {
+  currentInboxSubtab = tabName;
+
+  const tabs = [
+    { name: "detected", btn: inboxTabDetected },
+    { name: "active", btn: inboxTabActive },
+    { name: "skipped", btn: inboxTabSkipped },
+  ];
+
+  tabs.forEach((t) => {
+    if (!t.btn) return;
+    if (t.name === tabName) {
+      t.btn.classList.add("btn-primary", "active");
+      t.btn.classList.remove("btn-outline-secondary");
+    } else {
+      t.btn.classList.remove("btn-primary", "active");
+      t.btn.classList.add("btn-outline-secondary");
+    }
   });
 
-  inboxTabSkipped.addEventListener("click", () => {
-    currentInboxSubtab = "skipped";
-    inboxTabSkipped.classList.add("btn-primary", "active");
-    inboxTabSkipped.classList.remove("btn-outline-secondary");
-    inboxTabActive.classList.remove("btn-primary", "active");
-    inboxTabActive.classList.add("btn-outline-secondary");
+  if (tabName === "skipped") {
     if (inboxSelectionControls) inboxSelectionControls.style.display = "none";
     if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "none";
+  } else {
+    if (inboxSelectionControls) inboxSelectionControls.style.display = "flex";
+    if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "inline-flex";
+  }
+
+  // Bei Wechsel auf "Erkannt" automatisch alle erkannten Rechnungen vorselektieren
+  if (tabName === "detected") {
+    const visible = getVisibleInboxEmails();
+    selectedInboxMessageIds.clear();
+    visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+  }
+
+  updateInboxBatchButton();
+  renderInboxList();
+}
+
+if (inboxTabDetected) {
+  inboxTabDetected.addEventListener("click", () => setInboxSubtab("detected"));
+}
+if (inboxTabActive) {
+  inboxTabActive.addEventListener("click", () => setInboxSubtab("active"));
+}
+if (inboxTabSkipped) {
+  inboxTabSkipped.addEventListener("click", () => setInboxSubtab("skipped"));
+}
+
+if (inboxFilterDate) {
+  inboxFilterDate.addEventListener("change", () => {
+    if (currentInboxSubtab === "detected") {
+      const visible = getVisibleInboxEmails();
+      selectedInboxMessageIds.clear();
+      visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+    }
+    updateInboxBatchButton();
     renderInboxList();
+  });
+}
+
+if (inboxAccountSelect) {
+  inboxAccountSelect.addEventListener("change", () => {
+    loadInboxData(false);
+  });
+}
+
+if (inboxAddAccountBtn) {
+  inboxAddAccountBtn.addEventListener("click", () => {
+    if (authClientCode) {
+      authClientCode.requestCode();
+    } else {
+      alert("Google Authentifizierung wird initialisiert. Bitte kurz warten oder Einstellungen öffnen.");
+    }
   });
 }
 
@@ -2994,25 +3053,153 @@ function updateInboxBatchButton() {
   }
 }
 
+function matchDateFilter(dateStr, filterVal) {
+  if (!filterVal || filterVal === "alle") return true;
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (filterVal === "today") {
+    return d >= today;
+  }
+  if (filterVal === "yesterday_today") {
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return d >= yesterday;
+  }
+  if (filterVal === "7days") {
+    const past7 = new Date(today);
+    past7.setDate(past7.getDate() - 7);
+    return d >= past7;
+  }
+  if (filterVal === "30days") {
+    const past30 = new Date(today);
+    past30.setDate(past30.getDate() - 30);
+    return d >= past30;
+  }
+  if (filterVal === "month") {
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }
+  if (filterVal === "last_month") {
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return d.getFullYear() === lastMonthDate.getFullYear() && d.getMonth() === lastMonthDate.getMonth();
+  }
+  if (filterVal === "year2026") {
+    return d.getFullYear() === 2026;
+  }
+  if (filterVal === "year2025") {
+    return d.getFullYear() === 2025;
+  }
+  if (filterVal === "older") {
+    return d.getFullYear() < 2025;
+  }
+  return true;
+}
+
 function getVisibleInboxEmails() {
-  const sourceList = currentInboxSubtab === "active" ? inboxActiveEmails : inboxSkippedEmails;
+  let sourceList = [];
+  if (currentInboxSubtab === "detected") {
+    sourceList = inboxActiveEmails.filter((m) => m.isDetected);
+  } else if (currentInboxSubtab === "active") {
+    sourceList = inboxActiveEmails;
+  } else if (currentInboxSubtab === "skipped") {
+    sourceList = inboxSkippedEmails;
+  }
+
   const q = inboxSearchInput ? inboxSearchInput.value.trim().toLowerCase() : "";
-  if (!q) return sourceList;
+  const dateFilter = inboxFilterDate ? inboxFilterDate.value : "alle";
 
   return sourceList.filter((m) => {
-    const subject = (m.subject || "").toLowerCase();
-    const fromName = (m.fromName || "").toLowerCase();
-    const fromEmail = (m.fromEmail || "").toLowerCase();
-    const snippet = (m.snippet || "").toLowerCase();
-    const attNames = (m.attachments || []).map((a) => (a.filename || "").toLowerCase()).join(" ");
-    return (
-      subject.includes(q) ||
-      fromName.includes(q) ||
-      fromEmail.includes(q) ||
-      snippet.includes(q) ||
-      attNames.includes(q)
-    );
+    if (!matchDateFilter(m.date, dateFilter)) return false;
+
+    if (q) {
+      const subject = (m.subject || "").toLowerCase();
+      const fromName = (m.fromName || "").toLowerCase();
+      const fromEmail = (m.fromEmail || "").toLowerCase();
+      const snippet = (m.snippet || "").toLowerCase();
+      const attNames = (m.attachments || []).map((a) => (a.filename || "").toLowerCase()).join(" ");
+      const acc = (m.accountEmail || m.accountName || "").toLowerCase();
+      if (
+        !subject.includes(q) &&
+        !fromName.includes(q) &&
+        !fromEmail.includes(q) &&
+        !snippet.includes(q) &&
+        !attNames.includes(q) &&
+        !acc.includes(q)
+      ) {
+        return false;
+      }
+    }
+    return true;
   });
+}
+
+function updateAccountsDropdown(accounts) {
+  inboxAccounts = accounts || [];
+  if (!inboxAccountSelect) return;
+
+  const currentVal = inboxAccountSelect.value || "all";
+  inboxAccountSelect.innerHTML = `<option value="all">📥 Alle Posteingänge (${inboxAccounts.length || 1})</option>`;
+
+  inboxAccounts.forEach((acc) => {
+    const opt = document.createElement("option");
+    opt.value = acc.id || acc.email;
+    opt.innerText = `✉️ ${acc.email}${acc.isPrimary ? " (Hauptkonto)" : ""}`;
+    inboxAccountSelect.appendChild(opt);
+  });
+
+  if (Array.from(inboxAccountSelect.options).some((o) => o.value === currentVal)) {
+    inboxAccountSelect.value = currentVal;
+  }
+
+  // Update Settings Modal accounts container
+  const accountsContainer = document.getElementById("gmail-accounts-container");
+  if (accountsContainer) {
+    accountsContainer.innerHTML = "";
+    if (inboxAccounts.length === 0) {
+      accountsContainer.innerHTML = `<div class="text-muted small">Noch keine separaten Konten registriert (Standard-Konto aktiv).</div>`;
+    } else {
+      inboxAccounts.forEach((acc) => {
+        const item = document.createElement("div");
+        item.className = "d-flex justify-content-between align-items-center p-2 rounded border bg-white small";
+        item.innerHTML = `
+          <div class="d-flex align-items-center gap-2 text-truncate">
+            <span class="material-symbols-outlined text-primary" style="font-size: 18px;">mail</span>
+            <strong class="text-truncate">${acc.email}</strong>
+            ${acc.isPrimary ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 10px;">Hauptkonto</span>` : ""}
+          </div>
+          ${
+            !acc.isPrimary
+              ? `<button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>`
+              : ""
+          }
+        `;
+        const removeBtn = item.querySelector(".remove-gmail-acc-btn");
+        if (removeBtn) {
+          removeBtn.addEventListener("click", async () => {
+            if (confirm(`Möchtest du das Google-Konto "${acc.email}" wirklich trennen?`)) {
+              try {
+                const res = await fetch("/api/gmail/accounts/delete", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ accountId: acc.id }),
+                });
+                const d = await res.json();
+                if (d.success) {
+                  updateAccountsDropdown(d.accounts);
+                  loadInboxData(false);
+                }
+              } catch (e) {
+                alert("Fehler beim Entfernen: " + e.message);
+              }
+            }
+          });
+        }
+        accountsContainer.appendChild(item);
+      });
+    }
+  }
 }
 
 async function loadInboxData(silent = false) {
@@ -3027,8 +3214,9 @@ async function loadInboxData(silent = false) {
   }
 
   try {
+    const selectedAccountId = inboxAccountSelect ? inboxAccountSelect.value : "all";
     const [inboxRes, skippedRes] = await Promise.all([
-      fetch("/api/gmail/inbox"),
+      fetch(`/api/gmail/inbox?accountId=${encodeURIComponent(selectedAccountId)}`),
       fetch("/api/gmail/skipped"),
     ]);
 
@@ -3042,23 +3230,37 @@ async function loadInboxData(silent = false) {
     inboxActiveEmails = inboxData.emails || [];
     inboxSkippedEmails = skippedData.skippedEmails || [];
 
+    if (inboxData.accounts) {
+      updateAccountsDropdown(inboxData.accounts);
+    }
+
     // Badges & Counters aktualisieren
+    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+    const detectedCount = detectedEmails.length;
     const activeCount = inboxActiveEmails.length;
     const skippedCount = inboxSkippedEmails.length;
 
+    if (inboxCountDetected) inboxCountDetected.innerText = detectedCount;
     if (inboxCountActive) inboxCountActive.innerText = activeCount;
     if (inboxCountSkipped) inboxCountSkipped.innerText = skippedCount;
 
     if (navInboxBadge) {
-      navInboxBadge.innerText = activeCount;
+      navInboxBadge.innerText = detectedCount > 0 ? detectedCount : activeCount;
       navInboxBadge.style.display = activeCount > 0 ? "inline-block" : "none";
     }
 
-    // Unbekannte Auswahlen bereinigen
-    const validIds = new Set(inboxActiveEmails.map((m) => m.id));
-    for (const id of selectedInboxMessageIds) {
-      if (!validIds.has(id)) selectedInboxMessageIds.delete(id);
+    // Wenn "Erkannt" ausgewählt ist, alle erkannten E-Mails vorselektieren
+    if (currentInboxSubtab === "detected") {
+      selectedInboxMessageIds.clear();
+      const visible = getVisibleInboxEmails();
+      visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+    } else {
+      const validIds = new Set(inboxActiveEmails.map((m) => m.id));
+      for (const id of selectedInboxMessageIds) {
+        if (!validIds.has(id)) selectedInboxMessageIds.delete(id);
+      }
     }
+
     updateInboxBatchButton();
 
     if (inboxLoadingContainer) inboxLoadingContainer.style.display = "none";
@@ -3138,7 +3340,7 @@ function renderInboxList() {
     const card = document.createElement("div");
     card.className = "card p-3 shadow-sm border";
     card.style.cssText = `
-      background-color: #ffffff;
+      background-color: ${isSelected ? "#f8fbff" : "#ffffff"};
       border-radius: 14px;
       border-color: ${isSelected ? "#0d6efd" : "#e9ecef"} !important;
       transition: all 0.2s ease;
@@ -3173,14 +3375,30 @@ function renderInboxList() {
             : ""
         }
         <div class="flex-grow-1" style="min-width: 0;">
-          <!-- Top Row: Sender & Date -->
+          <!-- Top Row: Badges, Sender & Date -->
           <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
-            <div class="d-flex align-items-center gap-2 text-truncate">
+            <div class="d-flex align-items-center gap-2 text-truncate flex-wrap">
               <span class="material-symbols-outlined text-secondary" style="font-size: 20px;">account_circle</span>
               <strong class="text-dark" style="font-size: 14px;">${mail.fromName || mail.fromEmail || "Unbekannter Absender"}</strong>
               ${
                 mail.fromName && mail.fromEmail && mail.fromEmail !== mail.fromName
                   ? `<span class="text-muted small text-truncate" style="font-size: 12px;">&lt;${mail.fromEmail}&gt;</span>`
+                  : ""
+              }
+              ${
+                mail.isDetected
+                  ? `<span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                      <span class="material-symbols-outlined" style="font-size: 13px;">auto_fix_high</span>
+                      <span>Rechnung / Beleg erkannt</span>
+                    </span>`
+                  : ""
+              }
+              ${
+                mail.accountEmail && inboxAccounts.length > 1
+                  ? `<span class="badge bg-light text-secondary border" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                      <span class="material-symbols-outlined" style="font-size: 12px; vertical-align: middle;">mail</span>
+                      ${mail.accountEmail}
+                    </span>`
                   : ""
               }
             </div>
@@ -3256,6 +3474,7 @@ function renderInboxList() {
         }
         updateInboxBatchButton();
         card.style.borderColor = e.target.checked ? "#0d6efd" : "#e9ecef";
+        card.style.backgroundColor = e.target.checked ? "#f8fbff" : "#ffffff";
       });
     }
 
@@ -3294,6 +3513,7 @@ async function processSingleInboxEmail(mail, btnEl) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messageId: mail.id,
+        accountId: mail.accountId,
         subject: mail.subject,
         fromName: mail.fromName,
         fromEmail: mail.fromEmail,
@@ -3308,26 +3528,27 @@ async function processSingleInboxEmail(mail, btnEl) {
       throw new Error(data.error || "Fehler bei der E-Mail-Verarbeitung.");
     }
 
-    // Entferne aus aktiver Liste
+    // Aus aktiver Liste entfernen
     inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
     inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
     selectedInboxMessageIds.delete(mail.id);
 
     // Update Counter & Badge
+    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+    if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
     if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
     if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
     if (navInboxBadge) {
-      navInboxBadge.innerText = inboxActiveEmails.length;
+      const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+      navInboxBadge.innerText = bCount;
       navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
     }
 
     updateInboxBatchButton();
     renderInboxList();
 
-    // Trigger Status-Polling auf Hauptseite
     fetchStatus();
 
-    // Erfolgsbenachrichtigung
     if (typeof showToast === "function") {
       showToast(data.message || "Belege erfolgreich zur KI-Pipeline hinzugefügt!", "success");
     }
@@ -3411,6 +3632,8 @@ async function skipInboxEmail(mail) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messageId: mail.id,
+        accountId: mail.accountId,
+        accountEmail: mail.accountEmail,
         subject: mail.subject,
         from: mail.fromRaw || mail.fromName || mail.fromEmail,
         fromName: mail.fromName,
@@ -3418,21 +3641,24 @@ async function skipInboxEmail(mail) {
         date: mail.date,
         snippet: mail.snippet,
         attachments: mail.attachments,
+        isDetected: !!mail.isDetected,
       }),
     });
 
     const data = await res.json();
     if (!data.success) throw new Error(data.error || "Fehler beim Überspringen.");
 
-    // Aus aktiver Liste entfernen und zu übersprungen hinzufügen
     inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
     inboxSkippedEmails.unshift(mail);
     selectedInboxMessageIds.delete(mail.id);
 
+    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+    if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
     if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
     if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
     if (navInboxBadge) {
-      navInboxBadge.innerText = inboxActiveEmails.length;
+      const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+      navInboxBadge.innerText = bCount;
       navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
     }
 
@@ -3466,5 +3692,6 @@ async function unskipInboxEmail(messageId) {
 setTimeout(() => {
   loadInboxData(true);
 }, 3000);
+
 
 

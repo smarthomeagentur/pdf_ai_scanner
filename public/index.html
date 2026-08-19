@@ -286,9 +286,16 @@
               </h2>
               <div class="text-muted small">Offene E-Mails nach PDF-Anhängen durchsuchen und verarbeiten</div>
             </div>
-            <div class="d-flex align-items-center gap-2">
-              <button id="inbox-refresh-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 20px;">
-                <span class="material-symbols-outlined" style="font-size: 18px;">refresh</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <select id="inbox-account-select" class="form-select form-select-sm" style="border-radius: 20px; font-size: 13px; min-width: 180px; max-width: 260px;" title="Posteingang auswählen">
+                <option value="all">📥 Alle Posteingänge</option>
+              </select>
+              <button id="inbox-add-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 5px 12px;" title="Weiteres Google-Konto verbinden">
+                <span class="material-symbols-outlined" style="font-size: 16px;">add</span>
+                <span class="d-none d-md-inline">Konto hinzufügen</span>
+              </button>
+              <button id="inbox-refresh-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 5px 12px;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
                 <span>Aktualisieren</span>
               </button>
             </div>
@@ -296,10 +303,14 @@
 
           <!-- Filter & Batch Toolbar Card -->
           <div class="card p-3 mb-3 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
-            <!-- Tabs: Offen vs Übersprungen -->
+            <!-- Tabs: Erkannt vs Posteingang vs Übersprungen -->
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 pb-2 border-bottom">
-              <div class="d-flex gap-2">
-                <button type="button" id="inbox-tab-active" class="btn btn-sm btn-primary active inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+              <div class="d-flex gap-2 flex-wrap">
+                <button type="button" id="inbox-tab-detected" class="btn btn-sm btn-primary active inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">auto_fix_high</span>
+                  Erkannt (<span id="inbox-count-detected">0</span>)
+                </button>
+                <button type="button" id="inbox-tab-active" class="btn btn-sm btn-outline-secondary inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
                   <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">inbox</span>
                   Posteingang (<span id="inbox-count-active">0</span>)
                 </button>
@@ -318,9 +329,9 @@
               </div>
             </div>
 
-            <!-- Search & Batch Action Row -->
+            <!-- Search, Date Filter & Batch Action Row -->
             <div class="row g-2 align-items-center">
-              <div class="col-12 col-md-7">
+              <div class="col-12 col-md-5">
                 <div class="input-group input-group-sm">
                   <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
                     <span class="material-symbols-outlined text-muted" style="font-size: 18px;">search</span>
@@ -335,7 +346,22 @@
                 </div>
               </div>
 
-              <div class="col-12 col-md-5 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
+              <div class="col-6 col-md-3">
+                <select id="inbox-filter-date" class="form-select form-select-sm" style="border-radius: 8px; font-size: 13px;">
+                  <option value="alle">📅 Alle Zeiträume</option>
+                  <option value="today">Heute</option>
+                  <option value="yesterday_today">Gestern & Heute</option>
+                  <option value="7days">Letzte 7 Tage</option>
+                  <option value="30days">Letzte 30 Tage</option>
+                  <option value="month">Dieser Monat</option>
+                  <option value="last_month">Letzter Monat</option>
+                  <option value="year2026">Jahr 2026</option>
+                  <option value="year2025">Jahr 2025</option>
+                  <option value="older">Älter als 2025</option>
+                </select>
+              </div>
+
+              <div class="col-6 col-md-4 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
                 <div class="d-flex align-items-center gap-1" id="inbox-selection-controls">
                   <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer;" />
                   <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 12px;">Alle auswählen</label>
@@ -512,6 +538,15 @@
                 placeholder="in:inbox filename:pdf"
               />
             </div>
+
+            <!-- Connected Accounts List in Settings -->
+            <div style="margin-top: 12px;">
+              <label style="font-size: 0.85em; color: #555; font-weight: 600;">Verbundene Posteingänge:</label>
+              <div id="gmail-accounts-container" class="d-flex flex-column gap-2 mt-1">
+                <!-- Dynamically filled -->
+              </div>
+            </div>
+
             <button id="gmail-reauth-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 mt-3" style="border-radius: 8px; padding: 8px 12px;">
               <span class="material-symbols-outlined" style="font-size: 18px;">key</span>
               <span>Gmail- & Drive-Berechtigungen jetzt aktualisieren</span>
@@ -1025,7 +1060,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v3"></script>
+      <script src="/index.js?v=20260819_gmail_v4"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

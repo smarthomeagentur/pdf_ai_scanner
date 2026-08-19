@@ -398,6 +398,14 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
 
+    let addedAccount = null;
+    try {
+      addedAccount = await gmailApi.addAccountFromTokens(tokens, keys);
+      console.log(`[AUTH] Google-Konto ${addedAccount.email} erfolgreich verknüpft.`);
+    } catch (accErr) {
+      console.warn("[AUTH] Konto-Verknüpfung via Gmail API:", accErr.message);
+    }
+
     let existingToken = {};
     if (fs.existsSync(TOKEN_PATH)) {
       try {
@@ -415,7 +423,7 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
 
     await fs.promises.writeFile(TOKEN_PATH, payload);
     console.log("[AUTH] Google OAuth Token erfolgreich gespeichert.");
-    res.json({ success: true });
+    res.json({ success: true, account: addedAccount });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.toString() });
@@ -1325,6 +1333,28 @@ app.post("/api/drive/sync-execute", requireAdmin, async (req, res) => {
 // --- Google Mail (Workmail) Endpoints ---
 // ==========================================
 
+// 0. Accounts Endpoints
+app.get("/api/gmail/accounts", async (req, res) => {
+  try {
+    const accounts = await gmailApi.getAccountsList();
+    res.json({ success: true, accounts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/gmail/accounts/delete", requireAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.body;
+    if (!accountId) return res.status(400).json({ success: false, error: "accountId erforderlich" });
+    const deleted = await gmailApi.removeAccount(accountId);
+    const accounts = await gmailApi.getAccountsList();
+    res.json({ success: deleted, accounts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 1. GET /api/gmail/inbox
 app.get("/api/gmail/inbox", async (req, res) => {
   try {
@@ -1333,13 +1363,20 @@ app.get("/api/gmail/inbox", async (req, res) => {
     }
 
     const query = req.query.query || appSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
-    const allEmails = await gmailApi.listInboxEmailsWithPdfs({ query });
+    const accountId = req.query.accountId || "all";
+    const allEmails = await gmailApi.listInboxEmailsWithPdfs({ query, accountId });
+    const accountsList = await gmailApi.getAccountsList();
 
     // Filtere übersprungene Mails heraus
     const activeEmails = [];
+    let detectedCount = 0;
+
     for (const email of allEmails) {
       if (skippedEmails[email.id]) {
         continue;
+      }
+      if (email.isDetected) {
+        detectedCount++;
       }
       activeEmails.push(email);
     }
@@ -1347,7 +1384,9 @@ app.get("/api/gmail/inbox", async (req, res) => {
     res.json({
       success: true,
       emails: activeEmails,
+      accounts: accountsList,
       totalFound: allEmails.length,
+      detectedCount: detectedCount,
       skippedCount: Object.keys(skippedEmails).length,
     });
   } catch (err) {
@@ -1371,13 +1410,15 @@ app.get("/api/gmail/skipped", (req, res) => {
 // 3. POST /api/gmail/skip
 app.post("/api/gmail/skip", (req, res) => {
   try {
-    const { messageId, subject, from, fromName, fromEmail, date, snippet, attachments } = req.body;
+    const { messageId, accountId, accountEmail, subject, from, fromName, fromEmail, date, snippet, attachments, isDetected } = req.body;
     if (!messageId) {
       return res.status(400).json({ success: false, error: "messageId erforderlich" });
     }
 
     skippedEmails[messageId] = {
       id: messageId,
+      accountId: accountId || "",
+      accountEmail: accountEmail || "",
       subject: subject || "(Kein Betreff)",
       from: from || fromName || fromEmail || "Unbekannt",
       fromName: fromName || "",
@@ -1385,6 +1426,7 @@ app.post("/api/gmail/skip", (req, res) => {
       date: date || new Date().toISOString(),
       snippet: snippet || "",
       attachments: attachments || [],
+      isDetected: !!isDetected,
       skippedAt: new Date().toISOString(),
     };
     saveSkippedEmails();
@@ -1421,7 +1463,7 @@ app.post("/api/gmail/unskip", (req, res) => {
 // 5. POST /api/gmail/process
 app.post("/api/gmail/process", async (req, res) => {
   try {
-    const { messageId, subject, fromName, fromEmail, date, attachmentIds, archive } = req.body;
+    const { messageId, accountId, subject, fromName, fromEmail, date, attachmentIds, archive } = req.body;
     if (!messageId) {
       return res.status(400).json({ success: false, error: "messageId erforderlich" });
     }
@@ -1433,7 +1475,7 @@ app.post("/api/gmail/process", async (req, res) => {
     if (Array.isArray(attachmentIds) && attachmentIds.length > 0) {
       attachmentsToProcess = attachmentIds;
     } else {
-      const gmail = await gmailApi.getClient();
+      const gmail = await gmailApi.getClient(accountId);
       const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
       const foundAttachments = [];
       gmailApi.extractPdfParts(msg.data.payload?.parts || [], foundAttachments);
@@ -1455,7 +1497,7 @@ app.post("/api/gmail/process", async (req, res) => {
       const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
 
       // Buffer herunterladen & speichern
-      const buffer = await gmailApi.downloadAttachment(messageId, attId);
+      const buffer = await gmailApi.downloadAttachment(messageId, attId, accountId);
       await fs.promises.writeFile(localFilePath, buffer);
 
       const job = {
@@ -1464,6 +1506,7 @@ app.post("/api/gmail/process", async (req, res) => {
         status: "pending",
         source: "gmail",
         gmailMessageId: messageId,
+        gmailAccountId: accountId || "",
         emailSubject: subject || "",
         emailSender: fromName ? `${fromName} <${fromEmail}>` : fromEmail || "",
         emailDate: date || new Date().toISOString(),
@@ -1493,10 +1536,10 @@ app.post("/api/gmail/process", async (req, res) => {
     let archived = false;
     if (shouldArchive) {
       try {
-        await gmailApi.archiveEmail(messageId);
+        await gmailApi.archiveEmail(messageId, accountId);
         archived = true;
       } catch (archErr) {
-        console.error(`[GMAIL] Archivieren für Mail ${messageId} fehlgeschlagen:`, archErr.message);
+        console.error(`[GMAIL] Archivieren für Mail ${messageId} (${accountId}):`, archErr.message);
       }
     }
 
@@ -1527,12 +1570,13 @@ app.post("/api/gmail/process-batch", async (req, res) => {
 
     for (const item of items) {
       const messageId = item.messageId || item.id;
+      const accountId = item.accountId || "";
       if (!messageId) continue;
 
       try {
         let attachments = item.attachments || [];
         if (attachments.length === 0) {
-          const gmail = await gmailApi.getClient();
+          const gmail = await gmailApi.getClient(accountId);
           const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
           const found = [];
           gmailApi.extractPdfParts(msg.data.payload?.parts || [], found);
@@ -1545,7 +1589,7 @@ app.post("/api/gmail/process-batch", async (req, res) => {
           const safeFilename = attName.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
           const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
 
-          const buffer = await gmailApi.downloadAttachment(messageId, attId);
+          const buffer = await gmailApi.downloadAttachment(messageId, attId, accountId);
           await fs.promises.writeFile(localFilePath, buffer);
 
           const job = {
@@ -1554,6 +1598,7 @@ app.post("/api/gmail/process-batch", async (req, res) => {
             status: "pending",
             source: "gmail",
             gmailMessageId: messageId,
+            gmailAccountId: accountId,
             emailSubject: item.subject || "",
             emailSender: item.fromName ? `${item.fromName} <${item.fromEmail}>` : item.from || item.fromEmail || "",
             emailDate: item.date || new Date().toISOString(),
@@ -1576,10 +1621,10 @@ app.post("/api/gmail/process-batch", async (req, res) => {
 
         if (shouldArchive) {
           try {
-            await gmailApi.archiveEmail(messageId);
+            await gmailApi.archiveEmail(messageId, accountId);
             archivedCount++;
           } catch (archErr) {
-            console.error(`[GMAIL BATCH] Archivieren für Mail ${messageId} fehlgeschlagen:`, archErr.message);
+            console.error(`[GMAIL BATCH] Archivieren für Mail ${messageId}:`, archErr.message);
           }
         }
       } catch (itemErr) {
