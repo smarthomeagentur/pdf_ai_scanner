@@ -1557,6 +1557,12 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   // Sync preview combo box with global config
   document.getElementById("previewAlgorithmSelect").value = document.getElementById("algorithmSelect").value;
 
+  fitReviewCanvas();
+  requestAnimationFrame(() => {
+    fitReviewCanvas();
+    drawReviewOverlay();
+  });
+
   // Vermeide den Preview-Lader, falls ohnehin keine klaren Kanten erkannt wurden
   if (hasRealCorners) {
     updatePreviewFilter();
@@ -1566,6 +1572,42 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
 
   drawReviewOverlay();
 }
+
+function fitReviewCanvas() {
+  const reviewSec = document.getElementById("manual-review-section");
+  if (!reviewSec || reviewSec.style.display === "none") return;
+  const container = document.querySelector(".review-preview-container");
+  const wrapper = document.querySelector(".review-canvas-wrapper");
+  const rCv = document.getElementById("reviewCanvas");
+  const oCv = document.getElementById("reviewOverlay");
+  if (!container || !wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
+
+  const pad = 16;
+  const availW = Math.max(10, container.clientWidth - pad);
+  const availH = Math.max(10, container.clientHeight - pad);
+  if (availW <= 0 || availH <= 0) return;
+
+  const aspect = reviewState.cropW / reviewState.cropH;
+  let targetW, targetH;
+
+  if (availW / availH > aspect) {
+    targetH = Math.floor(availH);
+    targetW = Math.floor(targetH * aspect);
+  } else {
+    targetW = Math.floor(availW);
+    targetH = Math.floor(targetW / aspect);
+  }
+
+  wrapper.style.width = targetW + "px";
+  wrapper.style.height = targetH + "px";
+  rCv.style.width = targetW + "px";
+  rCv.style.height = targetH + "px";
+  oCv.style.width = targetW + "px";
+  oCv.style.height = targetH + "px";
+}
+
+window.addEventListener("resize", fitReviewCanvas);
+window.addEventListener("orientationchange", () => setTimeout(fitReviewCanvas, 100));
 
 function drawReviewOverlay() {
   const ctx = document.getElementById("reviewOverlay").getContext("2d");
