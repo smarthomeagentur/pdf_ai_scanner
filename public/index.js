@@ -3711,7 +3711,7 @@ async function openDriveSyncModal() {
 
 function getVisibleDriveItems() {
   if (!driveSyncData) return [];
-  const { toImport = [], needsEnrichment = [], existingComplete = [] } = driveSyncData;
+  const { toImport = [], needsEnrichment = [], existingComplete = [], skipped = [] } = driveSyncData;
   let items = [];
   if (currentDriveFilter === "all") {
     toImport.forEach(i => items.push({ ...i, categoryType: "new" }));
@@ -3723,18 +3723,22 @@ function getVisibleDriveItems() {
     needsEnrichment.forEach(i => items.push({ ...i, categoryType: "enrich" }));
   } else if (currentDriveFilter === "complete") {
     existingComplete.forEach(i => items.push({ ...i, categoryType: "complete" }));
+  } else if (currentDriveFilter === "skipped") {
+    skipped.forEach(i => items.push({ ...i, categoryType: "skipped" }));
   }
   return items;
 }
 
 function renderDriveSyncModal() {
   if (!driveSyncData) return;
-  const { toImport = [], needsEnrichment = [], existingComplete = [], totalDriveFiles = 0 } = driveSyncData;
+  const { toImport = [], needsEnrichment = [], existingComplete = [], skipped = [], totalDriveFiles = 0 } = driveSyncData;
 
   if (driveCountNew) driveCountNew.innerText = toImport.length;
   if (driveCountEnrich) driveCountEnrich.innerText = needsEnrichment.length;
   if (driveCountExisting) driveCountExisting.innerText = existingComplete.length;
   if (driveCountTotal) driveCountTotal.innerText = totalDriveFiles;
+  const driveCountSkippedEl = document.getElementById("drive-count-skipped");
+  if (driveCountSkippedEl) driveCountSkippedEl.innerText = skipped.length;
 
   if (driveSyncLoading) driveSyncLoading.style.display = "none";
   if (driveSyncList) driveSyncList.style.display = "block";
@@ -3759,12 +3763,34 @@ function renderDriveSyncModal() {
     const isChecked = driveSelectedIds.has(item.id);
     let badgeHtml = "";
     let pipelineBadgeHtml = "";
+    let actionBtnHtml = "";
+
     if (item.categoryType === "new") {
       badgeHtml = `<span class="badge bg-success-subtle text-success border border-success-subtle">+ Neu (Fehlt in DB)</span>`;
       pipelineBadgeHtml = `<span class="badge text-white" style="background: linear-gradient(135deg, #4f46e5, #7c3aed); border-radius: 12px; font-size: 11px; padding: 2px 8px; display: inline-flex; align-items: center; gap: 3px;" title="Wird nach Sync durch die KI-Pipeline analysiert & angereichert"><span class="material-symbols-outlined" style="font-size: 12px;">auto_awesome</span> In KI-Pipeline</span>`;
+      actionBtnHtml = `
+        <button type="button" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1 btn-drive-ignore" data-id="${item.id}" style="font-size: 11px; padding: 2px 8px; border-radius: 6px;" title="Diese Datei dauerhaft vom Sync ausschließen">
+          <span class="material-symbols-outlined" style="font-size: 13px;">visibility_off</span>
+          <span>Ausblenden</span>
+        </button>
+      `;
     } else if (item.categoryType === "enrich") {
       badgeHtml = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">⚠️ Metadaten unvollständig</span>`;
       pipelineBadgeHtml = `<span class="badge text-white" style="background: linear-gradient(135deg, #4f46e5, #7c3aed); border-radius: 12px; font-size: 11px; padding: 2px 8px; display: inline-flex; align-items: center; gap: 3px;" title="Wird nach Sync durch die KI-Pipeline analysiert & angereichert"><span class="material-symbols-outlined" style="font-size: 12px;">auto_awesome</span> In KI-Pipeline</span>`;
+      actionBtnHtml = `
+        <button type="button" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1 btn-drive-ignore" data-id="${item.id}" style="font-size: 11px; padding: 2px 8px; border-radius: 6px;" title="Diese Datei dauerhaft vom Sync ausschließen">
+          <span class="material-symbols-outlined" style="font-size: 13px;">visibility_off</span>
+          <span>Ausblenden</span>
+        </button>
+      `;
+    } else if (item.categoryType === "skipped") {
+      badgeHtml = `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">🚫 Ausgeblendet</span>`;
+      actionBtnHtml = `
+        <button type="button" class="btn btn-xs btn-outline-primary d-inline-flex align-items-center gap-1 btn-drive-unignore" data-id="${item.id}" style="font-size: 11px; padding: 2px 8px; border-radius: 6px;" title="Wieder beim Sync berücksichtigen">
+          <span class="material-symbols-outlined" style="font-size: 13px;">visibility</span>
+          <span>Einblenden</span>
+        </button>
+      `;
     } else {
       badgeHtml = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle">✓ Vollständig</span>`;
     }
@@ -3775,7 +3801,7 @@ function renderDriveSyncModal() {
     html += `
       <div class="d-flex align-items-center justify-content-between p-2 mb-1 bg-white rounded border gap-2 drive-sync-item-row" data-id="${item.id}" style="font-size: 13px; cursor: pointer;">
         <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
-          <input type="checkbox" class="form-check-input drive-item-checkbox m-0" data-id="${item.id}" ${isChecked ? 'checked' : ''} />
+          <input type="checkbox" class="form-check-input drive-item-checkbox m-0" data-id="${item.id}" ${isChecked ? 'checked' : ''} ${item.categoryType === 'skipped' ? 'disabled' : ''} />
           <div class="text-truncate" style="max-width: 450px;">
             <div class="fw-bold text-dark text-truncate" title="${item.name}">${item.name}</div>
             <div class="text-muted small d-flex gap-2 flex-wrap">
@@ -3783,18 +3809,75 @@ function renderDriveSyncModal() {
               ${sizeStr ? `<span>💾 ${sizeStr}</span>` : ''}
               ${item.currentCompany ? `<span>🏢 ${item.currentCompany}</span>` : ''}
               ${item.currentCategory ? `<span>📁 ${item.currentCategory}</span>` : ''}
+              ${item.reason ? `<span class="text-secondary fst-italic">(${item.reason})</span>` : ''}
             </div>
           </div>
         </div>
         <div class="d-flex align-items-center gap-1 flex-wrap justify-content-end">
           ${badgeHtml}
           ${pipelineBadgeHtml}
+          ${actionBtnHtml}
         </div>
       </div>
     `;
   });
 
   driveSyncList.innerHTML = html;
+
+  // Action buttons: Ignore / Unignore
+  driveSyncList.querySelectorAll(".btn-drive-ignore").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-id");
+      try {
+        btn.disabled = true;
+        const res = await fetch("/api/drive/ignore-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId: id }),
+        });
+        const d = await res.json();
+        if (d.success) {
+          driveSelectedIds.delete(id);
+          // Move from toImport/needsEnrichment to skipped locally
+          const foundNew = driveSyncData.toImport?.find(i => i.id === id);
+          const foundEnrich = driveSyncData.needsEnrichment?.find(i => i.id === id);
+          const item = foundNew || foundEnrich;
+          if (foundNew) driveSyncData.toImport = driveSyncData.toImport.filter(i => i.id !== id);
+          if (foundEnrich) driveSyncData.needsEnrichment = driveSyncData.needsEnrichment.filter(i => i.id !== id);
+          if (item) {
+            if (!driveSyncData.skipped) driveSyncData.skipped = [];
+            driveSyncData.skipped.push({ ...item, reason: "Manuell ausgeblendet" });
+          }
+          renderDriveSyncModal();
+        }
+      } catch (err) {
+        console.error("Fehler beim Ausblenden:", err);
+      }
+    });
+  });
+
+  driveSyncList.querySelectorAll(".btn-drive-unignore").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-id");
+      try {
+        btn.disabled = true;
+        const res = await fetch("/api/drive/unignore-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId: id }),
+        });
+        const d = await res.json();
+        if (d.success) {
+          // Re-fetch sync preview to place item back accurately
+          openDriveSyncModal();
+        }
+      } catch (err) {
+        console.error("Fehler beim Wieder-Einblenden:", err);
+      }
+    });
+  });
 
   // Checkbox listeners
   driveSyncList.querySelectorAll(".drive-item-checkbox").forEach(cb => {
@@ -3820,9 +3903,9 @@ function renderDriveSyncModal() {
   // Row click listener to toggle checkbox
   driveSyncList.querySelectorAll(".drive-sync-item-row").forEach(row => {
     row.addEventListener("click", (e) => {
-      if (e.target.tagName === "INPUT") return;
+      if (e.target.tagName === "INPUT" || e.target.closest("button")) return;
       const cb = row.querySelector(".drive-item-checkbox");
-      if (cb) {
+      if (cb && !cb.disabled) {
         cb.checked = !cb.checked;
         cb.dispatchEvent(new Event("change"));
       }
