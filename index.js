@@ -2200,6 +2200,7 @@ app.get("/api/jobs/:id/duplicates", async (req, res) => {
     const j = uploadJobs[jId];
     if (j.isPrivate && !checkIsAdmin(req)) continue;
     if (j.status !== "completed" || !j.result) continue;
+    if (j.duplicateDismissed) continue;
 
     const matchReasons = [];
     let score = 0;

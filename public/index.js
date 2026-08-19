@@ -3253,7 +3253,11 @@ document.addEventListener("click", (e) => {
         .then((data) => {
           if (typeof showToast === "function") showToast("✓ Beleg behalten & Duplikat-Verdacht entfernt.", "success");
           const job = activeJobs.find(j => j.id === jobId);
-          if (job) job.suspectedDuplicate = false;
+          if (job) {
+            job.suspectedDuplicate = false;
+            job.duplicateDismissed = true;
+          }
+          renderJobs();
 
           if (jobId === currentDuplicateJobId) {
             closeDuplicateCompareModal();
