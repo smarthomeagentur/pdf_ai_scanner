@@ -2399,10 +2399,11 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
     const safeId = (voucherId || fileId || "doc").replace(/[^a-zA-Z0-9_-]/g, "_");
     const targetThumbPath = path.join(localDownloadFolder, `thumb_lex_${companyKey}_${safeId}.jpg`);
 
-    // 1. Check if already converted and cached on disk
-    if (fs.existsSync(targetThumbPath)) {
+    // Force fresh re-render if requested or if file doesn't exist
+    const isForce = req.query.force === "true" || !!req.query._t || !!req.query.t;
+    if (!isForce && fs.existsSync(targetThumbPath)) {
       res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=864000");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       return res.sendFile(targetThumbPath);
     }
 
@@ -2455,18 +2456,19 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
     if (contentType.includes("image/jpeg") || contentType.includes("image/png") || contentType.includes("image/webp")) {
       await fs.promises.writeFile(targetThumbPath, fileBuffer);
       res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       return res.sendFile(targetThumbPath);
     }
 
     // 5. If PDF, render Page 1 to JPEG
-    const tempPdf = path.join(localDownloadFolder, `temp_lex_${safeId}.pdf`);
+    const tempPdf = path.join(localDownloadFolder, `temp_lex_${safeId}_${Date.now()}.pdf`);
     await fs.promises.writeFile(tempPdf, fileBuffer);
 
     try {
       const rendered = await renderPdfToJpeg(tempPdf, targetThumbPath);
       if (rendered && fs.existsSync(targetThumbPath)) {
         res.setHeader("Content-Type", "image/jpeg");
-        res.setHeader("Cache-Control", "public, max-age=864000");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         return res.sendFile(targetThumbPath);
       }
     } finally {

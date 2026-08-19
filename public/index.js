@@ -2583,7 +2583,7 @@ function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
         }
       }
     };
-    compareLocalImg.src = `/api/jobs/${jobId}/preview`;
+    compareLocalImg.src = `/api/jobs/${jobId}/preview?_t=${Date.now()}`;
   }
 
   // 2. Populate Remote Portal Voucher Info
@@ -2627,7 +2627,7 @@ function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
           compareRemoteLoading.innerHTML = '<span class="material-symbols-outlined text-warning" style="font-size: 40px;">warning</span><div class="small mt-2 text-white-50">Vorschau konnte aus Lexoffice nicht gerendert werden</div>';
         }
       };
-      compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}`;
+      compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}&_t=${Date.now()}`;
     }
   }
 
