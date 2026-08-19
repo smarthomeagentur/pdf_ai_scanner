@@ -1585,8 +1585,8 @@ function fitReviewCanvas() {
   const oCv = document.getElementById("reviewOverlay");
   if (!wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
 
-  const availW = Math.max(50, wrapper.clientWidth);
-  const availH = Math.max(50, wrapper.clientHeight);
+  const availW = Math.max(50, wrapper.clientWidth - 16);
+  const availH = Math.max(50, wrapper.clientHeight - 16);
   if (availW <= 0 || availH <= 0) return;
 
   const aspect = reviewState.cropW / reviewState.cropH;
