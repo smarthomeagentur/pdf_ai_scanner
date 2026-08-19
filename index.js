@@ -17,6 +17,7 @@ const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const { execFile } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
+const pdfParse = require("pdf-parse");
 const { exiftool } = require("exiftool-vendored");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
@@ -464,37 +465,154 @@ app.get("/api/drive/folder/:id", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/drive/search", requireAdmin, async (req, res) => {
+// Local PDF Text Cache for Deep Search
+const localPdfTextCache = new Map();
+
+async function getLocalPdfText(filePath) {
   try {
-    const q = req.query.q;
-    if (!q) return res.json({ success: true, files: [] });
-
-    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
-      ? appSettings.FOLDER_ID_SORTED
-      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
-
-    if (!driveFolderId) {
-      return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
+    if (!fs.existsSync(filePath)) return "";
+    const stat = await fs.promises.stat(filePath);
+    const cached = localPdfTextCache.get(filePath);
+    if (cached && cached.mtime === stat.mtimeMs) {
+      return cached.text;
     }
-
-    const drive = await driveApi.getClient();
-    const safeQ = q.replace(/'/g, "\\'");
-    let query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
-
-    if (!checkIsAdmin(req)) {
-      query += ` and not appProperties has { key='isPrivate' and value='true' }`;
-    }
-
-    const result = await drive.files.list({
-      q: query,
-      fields: "files(id, name, webViewLink, thumbnailLink, createdTime)",
-      pageSize: 30, // Max 30 Ergebnisse, Google sortiert bei fullText automatisch nach Relevanz
-    });
-
-    res.json({ success: true, files: result.data.files || [] });
+    const dataBuffer = await fs.promises.readFile(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = (data.text || "").replace(/\r?\n/g, " ");
+    localPdfTextCache.set(filePath, { mtime: stat.mtimeMs, text });
+    return text;
   } catch (e) {
-    console.error("[SEARCH] Fehler bei Google Drive Suche:", e);
-    res.status(500).json({ error: e.toString() });
+    return "";
+  }
+}
+
+// Deep Document Content Search (OCR & Full-Text)
+app.get("/api/documents/deep-search", async (req, res) => {
+  try {
+    const q = (req.query.q || "").trim();
+    if (!q || q.length < 2) {
+      return res.json({ success: true, results: [], total: 0 });
+    }
+
+    const isAdmin = checkIsAdmin(req);
+    const safeQ = q.replace(/'/g, "\\'");
+    const qLower = q.toLowerCase();
+    const results = [];
+    const seenNames = new Set();
+
+    // 1. Search Google Drive (Fulltext & OCR Search across sorted and target folders)
+    if (fs.existsSync(TOKEN_PATH)) {
+      try {
+        const drive = await driveApi.getClient();
+        let folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+        if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+          folderId = await driveApi.findFolderId(folderId);
+        }
+
+        let driveQuery = `trashed=false and (fullText contains '${safeQ}' or name contains '${safeQ}')`;
+        if (folderId) {
+          driveQuery += ` and '${folderId}' in parents`;
+        }
+        if (!isAdmin) {
+          driveQuery += ` and not appProperties has { key='isPrivate' and value='true' }`;
+        }
+
+        const driveRes = await drive.files.list({
+          q: driveQuery,
+          fields: "files(id, name, webViewLink, thumbnailLink, webContentLink, createdTime, size, mimeType)",
+          pageSize: 30,
+        });
+
+        const driveFiles = driveRes.data.files || [];
+        for (const file of driveFiles) {
+          seenNames.add(file.name.toLowerCase());
+          results.push({
+            id: file.id,
+            name: file.name,
+            source: "Google Drive (Cloud)",
+            type: "gdrive",
+            date: file.createdTime,
+            size: file.size ? parseInt(file.size, 10) : 0,
+            webViewLink: file.webViewLink,
+            downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
+            thumbnailLink: file.thumbnailLink,
+            snippet: `Treffer im Google Drive Dokumenteninhalt / Dateinamen`,
+          });
+        }
+      } catch (driveErr) {
+        console.warn("[DEEP SEARCH] Google Drive Suche Warnung:", driveErr.message);
+      }
+    }
+
+    // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing)
+    const localJobs = Object.values(uploadJobs).filter((job) => !job.isPrivate || isAdmin);
+    for (const job of localJobs) {
+      if (!job.filePath || !fs.existsSync(job.filePath)) continue;
+
+      const fullText = await getLocalPdfText(job.filePath);
+      const resData = job.result || {};
+      const metaText = `${job.originalName || ""} ${resData.full || ""} ${resData.company || ""} ${resData.invoiceNumber || ""} ${resData.category || ""} ${(resData.tags || []).join(" ")}`;
+
+      const lowerFull = fullText.toLowerCase();
+      const lowerMeta = metaText.toLowerCase();
+
+      const matchInPdf = lowerFull.includes(qLower);
+      const matchInMeta = lowerMeta.includes(qLower);
+
+      if (matchInPdf || matchInMeta) {
+        // Snippet mit Kontext um den Treffer generieren
+        let snippet = "";
+        if (matchInPdf) {
+          const idx = lowerFull.indexOf(qLower);
+          const start = Math.max(0, idx - 50);
+          const end = Math.min(fullText.length, idx + q.length + 50);
+          snippet = (start > 0 ? "..." : "") + fullText.substring(start, end).trim() + (end < fullText.length ? "..." : "");
+        } else {
+          snippet = `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`;
+        }
+
+        if (!seenNames.has((job.originalName || "").toLowerCase())) {
+          results.push({
+            id: job.id,
+            jobId: job.id,
+            name: job.result?.full || job.originalName || "Dokument",
+            source: job.source === "gmail" ? "E-Mail Inbox" : "Lokaler Upload / Scanner",
+            type: "local",
+            date: job.uploadDate,
+            size: fs.statSync(job.filePath).size,
+            filePath: job.filePath,
+            thumbnailLink: `/api/thumbnail/${job.id}`,
+            snippet: snippet,
+            isLocal: true,
+          });
+        }
+      }
+    }
+
+    res.json({ success: true, query: q, results, total: results.length });
+  } catch (err) {
+    console.error("[DEEP SEARCH] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// File streaming for local jobs
+app.get("/api/jobs/:id/file", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const job = uploadJobs[id];
+    if (!job || !job.filePath || !fs.existsSync(job.filePath)) {
+      return res.status(404).send("Datei nicht gefunden");
+    }
+    if (job.isPrivate && !checkIsAdmin(req)) {
+      return res.status(403).send("Forbidden");
+    }
+    const filename = job.result?.full || job.originalName || "Dokument.pdf";
+    const safeName = filename.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    res.sendFile(job.filePath);
+  } catch (err) {
+    res.status(500).send("Fehler beim Laden der Datei: " + err.message);
   }
 });
 

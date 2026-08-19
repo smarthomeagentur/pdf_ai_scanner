@@ -1285,78 +1285,157 @@ window.addEventListener("appinstalled", () => {
   console.log("PWA was installed");
 });
 
-// Drive Search Logic
-const searchInput = document.getElementById("drive-search-input");
-const searchBtn = document.getElementById("drive-search-btn");
-const searchResultsContainer = document.getElementById("drive-search-results");
-const searchResultsList = document.getElementById("search-results-list");
-const closeSearchBtn = document.getElementById("close-search-btn");
+// ==========================================
+// --- Deep Document Content Search (OCR & Full-Text) ---
+// ==========================================
+const deepSearchInput = document.getElementById("deep-search-input");
+const deepSearchBtn = document.getElementById("deep-search-btn");
+const deepSearchResultsCard = document.getElementById("deep-search-results-card");
+const deepSearchHeading = document.getElementById("deep-search-heading");
+const deepSearchBadge = document.getElementById("deep-search-badge");
+const deepSearchCloseBtn = document.getElementById("deep-search-close-btn");
+const deepSearchLoading = document.getElementById("deep-search-loading");
+const deepSearchResultsList = document.getElementById("deep-search-results-list");
 
-const performSearch = async () => {
-  if (!searchInput) return;
-  const query = searchInput.value.trim();
-  if (query.length < 2) return;
+function highlightQueryText(text, query) {
+  if (!text || !query) return text || "";
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${escaped})`, "gi");
+  return text.replace(regex, `<mark class="bg-warning-subtle text-dark fw-bold px-1 rounded">$1</mark>`);
+}
 
-  if (searchResultsContainer) searchResultsContainer.style.display = "block";
-  if (searchResultsList) searchResultsList.innerHTML = "<div class='text-center mt-3 mb-3'>Suche in Google Drive läuft...</div>";
+const performDeepSearch = async () => {
+  if (!deepSearchInput) return;
+  const query = deepSearchInput.value.trim();
+  if (query.length < 2) {
+    alert("Bitte mindestens 2 Zeichen für die Volltextsuche eingeben.");
+    return;
+  }
+
+  if (deepSearchResultsCard) deepSearchResultsCard.style.display = "block";
+  if (deepSearchLoading) deepSearchLoading.style.display = "block";
+  if (deepSearchResultsList) deepSearchResultsList.innerHTML = "";
+  if (deepSearchHeading) deepSearchHeading.innerText = `Volltextsuche: "${query}"`;
+  if (deepSearchBadge) deepSearchBadge.innerText = "Suche läuft...";
 
   try {
-    const res = await fetch("/api/drive/search?q=" + encodeURIComponent(query));
+    const res = await fetch("/api/documents/deep-search?q=" + encodeURIComponent(query));
     const data = await res.json();
 
+    if (deepSearchLoading) deepSearchLoading.style.display = "none";
+
     if (!data.success) {
-      if (searchResultsList) searchResultsList.innerHTML = `<div class="text-danger mt-2">${data.error || "Suche fehlgeschlagen."}</div>`;
+      if (deepSearchResultsList) {
+        deepSearchResultsList.innerHTML = `<div class="text-danger p-3">${data.error || "Suche fehlgeschlagen."}</div>`;
+      }
+      if (deepSearchBadge) deepSearchBadge.innerText = "Fehler";
       return;
     }
 
-    if (data.files.length === 0) {
-      if (searchResultsList) searchResultsList.innerHTML =
-        "<div class='text-muted mt-2'>Keine Dokumente für diese Suchbegriffe gefunden.</div>";
+    const results = data.results || [];
+    if (deepSearchBadge) deepSearchBadge.innerText = `${results.length} Treffer`;
+
+    if (results.length === 0) {
+      if (deepSearchResultsList) {
+        deepSearchResultsList.innerHTML = `
+          <div class="text-center py-4 text-muted">
+            <span class="material-symbols-outlined" style="font-size: 36px; color: #aaa;">search_off</span>
+            <div class="mt-2 fw-medium">Keine Dokumente mit diesem Textinhalt gefunden.</div>
+            <div class="small text-muted">Tipp: Probiere alternative Suchbegriffe (z. B. Teile der Rechnungsnummer, Firmenname oder Schlagwörter).</div>
+          </div>
+        `;
+      }
       return;
     }
 
     let html = "";
-    data.files.forEach((file) => {
-      // Datum formatieren
-      const date = new Date(file.createdTime).toLocaleDateString("de-DE", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const thumb = file.thumbnailLink
-        ? `<img src="${file.thumbnailLink}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" onerror="this.style.display='none'">`
-        : `<div style="width: 40px; height: 40px; display:flex; align-items:center; justify-content:center; background:#e9ecef; border-radius:4px;"><span class="material-symbols-outlined text-secondary">description</span></div>`;
+    results.forEach((item) => {
+      const dateFormatted = item.date
+        ? new Date(item.date).toLocaleDateString("de-DE", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "Unbekanntes Datum";
+
+      const isDrive = item.type === "gdrive";
+      const sourceBadge = isDrive
+        ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px;"><span class="material-symbols-outlined" style="font-size: 12px;">cloud</span> Google Drive</span>`
+        : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px;"><span class="material-symbols-outlined" style="font-size: 12px;">upload_file</span> ${item.source}</span>`;
+
+      const titleHighlighted = highlightQueryText(item.name, query);
+      const snippetHighlighted = highlightQueryText(item.snippet, query);
 
       html += `
-        <div style="display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee;">
-          ${thumb}
-          <div style="flex-grow: 1; min-width: 0;">
-            <div style="font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${file.name}">${file.name}</div>
-            <div style="font-size: 12px; color: #777;">${date}</div>
+        <div class="card p-3 border shadow-sm" style="border-radius: 10px; background-color: #fdfdfd; transition: all 0.2s ease;">
+          <div class="d-flex gap-3 align-items-start">
+            <div class="flex-shrink-0 pt-1">
+              ${
+                item.thumbnailLink
+                  ? `<img src="${item.thumbnailLink}" style="width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid #dee2e6;" onerror="this.outerHTML='<span class=\\'material-symbols-outlined text-danger\\' style=\\'font-size: 36px;\\'>picture_as_pdf</span>';" />`
+                  : `<span class="material-symbols-outlined text-danger" style="font-size: 36px;">picture_as_pdf</span>`
+              }
+            </div>
+            <div class="flex-grow-1" style="min-width: 0;">
+              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <strong class="text-dark" style="font-size: 14px;">${titleHighlighted}</strong>
+                  ${sourceBadge}
+                </div>
+                <span class="text-muted small" style="font-size: 12px;">${dateFormatted}</span>
+              </div>
+
+              <!-- Matching Content Snippet -->
+              <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
+                <span class="text-muted small fw-bold">Fundstelle im Text:</span>
+                <div class="mt-1 font-monospace" style="font-size: 12px;">${snippetHighlighted}</div>
+              </div>
+
+              <!-- Action Buttons -->
+              <div class="d-flex justify-content-end align-items-center gap-2 pt-1">
+                ${
+                  item.isLocal
+                    ? `<a href="/api/jobs/${item.jobId}/file" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 6px; font-size: 12px; padding: 3px 10px;">
+                        <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
+                        <span>Dokument öffnen</span>
+                      </a>`
+                    : ""
+                }
+                ${
+                  item.webViewLink
+                    ? `<a href="${item.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 6px; font-size: 12px; padding: 3px 10px;">
+                        <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
+                        <span>In Google Drive öffnen</span>
+                      </a>`
+                    : ""
+                }
+              </div>
+            </div>
           </div>
-          <a href="${file.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary" style="white-space: nowrap;">Öffnen</a>
         </div>
       `;
     });
 
-    if (searchResultsList) searchResultsList.innerHTML = html;
+    if (deepSearchResultsList) deepSearchResultsList.innerHTML = html;
   } catch (e) {
-    if (searchResultsList) searchResultsList.innerHTML = `<div class="text-danger">Netzwerkfehler bei der Suche.</div>`;
+    if (deepSearchLoading) deepSearchLoading.style.display = "none";
+    if (deepSearchResultsList) {
+      deepSearchResultsList.innerHTML = `<div class="text-danger p-3">Netzwerkfehler bei der Volltextsuche: ${e.message}</div>`;
+    }
   }
 };
 
-if (searchBtn) searchBtn.addEventListener("click", performSearch);
-if (searchInput) {
-  searchInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") performSearch();
+if (deepSearchBtn) deepSearchBtn.addEventListener("click", performDeepSearch);
+if (deepSearchInput) {
+  deepSearchInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") performDeepSearch();
   });
 }
-
-if (closeSearchBtn) {
-  closeSearchBtn.addEventListener("click", () => {
-    if (searchResultsContainer) searchResultsContainer.style.display = "none";
+if (deepSearchCloseBtn) {
+  deepSearchCloseBtn.addEventListener("click", () => {
+    if (deepSearchResultsCard) deepSearchResultsCard.style.display = "none";
   });
 }
 
