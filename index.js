@@ -964,6 +964,23 @@ function loadJobs() {
     if (data.uploadQueue) uploadQueue = data.uploadQueue;
     if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
 
+    // Stelle sicher, dass Drive-IDs aller ausgeblendeten Belege (job.isHidden) in processedDriveFiles vorhanden sind
+    for (const jobId in uploadJobs) {
+      const job = uploadJobs[jobId];
+      if (job.isHidden) {
+        if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) {
+          processedDriveFiles.push(job.rawDriveId);
+        }
+        if (job.driveFileId && !processedDriveFiles.includes(job.driveFileId)) {
+          processedDriveFiles.push(job.driveFileId);
+        }
+        const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+        if (sortedId && !processedDriveFiles.includes(sortedId)) {
+          processedDriveFiles.push(sortedId);
+        }
+      }
+    }
+
     // Entferne alte base64 localThumbnails aus jobs.json & stelle unterbrochene Jobs nach Neustart automatisch wieder her
     let changed = false;
     let recoveredCount = 0;
@@ -1328,6 +1345,22 @@ async function checkDriveForNewFiles() {
       });
 
       for (const file of res.data.files || []) {
+        const matchingJob = Object.values(uploadJobs).find((j) => {
+          if (j.rawDriveId === file.id || j.driveFileId === file.id) return true;
+          if (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id)) return true;
+          if (j.originalName === file.name) return true;
+          if (j.result && j.result.full && (j.result.full === file.name || j.result.full + ".pdf" === file.name)) return true;
+          return false;
+        });
+
+        if (processedDriveFiles.includes(file.id) || (matchingJob && matchingJob.isHidden)) {
+          if (!processedDriveFiles.includes(file.id)) {
+            processedDriveFiles.push(file.id);
+            saveJobs();
+          }
+          continue;
+        }
+
         if (!processedDriveFiles.includes(file.id)) {
           processedDriveFiles.push(file.id);
           saveJobs();
@@ -1515,6 +1548,21 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
         if (j.result && j.result.full && (j.result.full === file.name || j.result.full + ".pdf" === file.name)) return true;
         return false;
       });
+
+      if (processedDriveFiles.includes(file.id) || (matchingJob && matchingJob.isHidden)) {
+        if (!processedDriveFiles.includes(file.id)) {
+          processedDriveFiles.push(file.id);
+          saveJobs();
+        }
+        skipped.push({
+          id: file.id,
+          name: file.name,
+          reason: matchingJob?.isHidden ? "Datei manuell ausgeblendet" : "Bereits verarbeitet / ausgeblendet",
+          size: file.size,
+          webViewLink: file.webViewLink,
+        });
+        continue;
+      }
 
       if (matchingJob) {
         if (checkJobNeedsEnrichment(matchingJob)) {
@@ -2424,6 +2472,18 @@ app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
   if (fs.existsSync(previewPath)) await fs.promises.unlink(previewPath).catch(() => {});
   if (fs.existsSync(thumbPath)) await fs.promises.unlink(thumbPath).catch(() => {});
   if (job.filePath && fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
+
+  // Ensure the Drive file ID is tracked in processedDriveFiles so it won't be re-imported on Drive sync
+  if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) {
+    processedDriveFiles.push(job.rawDriveId);
+  }
+  if (job.driveFileId && !processedDriveFiles.includes(job.driveFileId)) {
+    processedDriveFiles.push(job.driveFileId);
+  }
+  const sortedDriveId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+  if (sortedDriveId && !processedDriveFiles.includes(sortedDriveId)) {
+    processedDriveFiles.push(sortedDriveId);
+  }
 
   delete uploadJobs[jobId];
   uploadQueue = uploadQueue.filter(id => id !== jobId);
