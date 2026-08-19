@@ -1029,8 +1029,12 @@
                     <span id="compare-local-comp">Firma: -</span>
                   </div>
                 </div>
-                <div class="card-body p-1 flex-grow-1" style="min-height: 420px; background: #444; border-radius: 0 0 12px 12px; overflow: hidden;">
-                  <iframe id="compare-local-iframe" src="about:blank" style="width: 100%; height: 100%; min-height: 420px; border: none; border-radius: 0 0 8px 8px;"></iframe>
+                <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; border-radius: 0 0 12px 12px; overflow: auto; position: relative;">
+                  <div id="compare-local-loading" class="text-white text-center py-5" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); z-index: 10;">
+                    <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
+                    <div class="small">Lade Vorschau Seite 1...</div>
+                  </div>
+                  <img id="compare-local-img" src="" alt="Vorschau Seite 1" style="max-width: 100%; max-height: 480px; object-fit: contain; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
                 </div>
               </div>
             </div>
@@ -1055,12 +1059,12 @@
                     <span id="compare-remote-contact">Kontakt: -</span>
                   </div>
                 </div>
-                <div class="card-body p-1 flex-grow-1" style="min-height: 420px; background: #444; border-radius: 0 0 12px 12px; overflow: hidden; position: relative;">
+                <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; border-radius: 0 0 12px 12px; overflow: auto; position: relative;">
                   <div id="compare-remote-loading" class="text-white text-center py-5" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); z-index: 10;">
                     <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
-                    <div class="small">Lade Dokument aus Lexoffice...</div>
+                    <div class="small">Lade Beleg Seite 1 aus Lexoffice...</div>
                   </div>
-                  <iframe id="compare-remote-iframe" src="about:blank" style="width: 100%; height: 100%; min-height: 420px; border: none; border-radius: 0 0 8px 8px;"></iframe>
+                  <img id="compare-remote-img" src="" alt="Lexoffice Beleg Seite 1" style="max-width: 100%; max-height: 480px; object-fit: contain; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
                 </div>
               </div>
             </div>
@@ -1265,7 +1269,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v20"></script>
+      <script src="/index.js?v=20260819_gmail_v21"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

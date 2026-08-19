@@ -2510,8 +2510,9 @@ const compareModalBackBtn = document.getElementById("compare-modal-back-btn");
 const compareModalMarkBtn = document.getElementById("compare-modal-mark-btn");
 const compareModalUploadBtn = document.getElementById("compare-modal-upload-btn");
 
-const compareLocalIframe = document.getElementById("compare-local-iframe");
-const compareRemoteIframe = document.getElementById("compare-remote-iframe");
+const compareLocalImg = document.getElementById("compare-local-img");
+const compareLocalLoading = document.getElementById("compare-local-loading");
+const compareRemoteImg = document.getElementById("compare-remote-img");
 const compareRemoteLoading = document.getElementById("compare-remote-loading");
 
 const compareLocalInv = document.getElementById("compare-local-inv");
@@ -2532,8 +2533,14 @@ let currentCompareMatch = null;
 
 function closeAccountingCompareModal() {
   if (accountingCompareModal) accountingCompareModal.style.display = "none";
-  if (compareLocalIframe) compareLocalIframe.src = "about:blank";
-  if (compareRemoteIframe) compareRemoteIframe.src = "about:blank";
+  if (compareLocalImg) {
+    compareLocalImg.src = "";
+    compareLocalImg.style.display = "none";
+  }
+  if (compareRemoteImg) {
+    compareRemoteImg.src = "";
+    compareRemoteImg.style.display = "none";
+  }
   currentCompareJobId = null;
   currentCompareCompany = null;
   currentCompareMatch = null;
@@ -2559,8 +2566,24 @@ function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
   if (compareLocalDate) compareLocalDate.innerText = `Datum: ${doc.documentDate || '-'}`;
   if (compareLocalComp) compareLocalComp.innerText = `Firma: ${doc.company || '-'}`;
 
-  if (compareLocalIframe) {
-    compareLocalIframe.src = `/api/jobs/${jobId}/file`;
+  if (compareLocalLoading) compareLocalLoading.style.display = "flex";
+  if (compareLocalImg) {
+    compareLocalImg.style.display = "none";
+    compareLocalImg.onload = () => {
+      if (compareLocalLoading) compareLocalLoading.style.display = "none";
+      compareLocalImg.style.display = "block";
+    };
+    compareLocalImg.onerror = () => {
+      // Fallback to thumbnail or Drive link
+      if (!compareLocalImg.src.includes("/thumbnail")) {
+        compareLocalImg.src = `/api/jobs/${jobId}/thumbnail`;
+      } else {
+        if (compareLocalLoading) {
+          compareLocalLoading.innerHTML = '<span class="material-symbols-outlined text-muted" style="font-size: 40px;">description</span><div class="small mt-2 text-muted">Keine Bildvorschau verfügbar</div>';
+        }
+      }
+    };
+    compareLocalImg.src = `/api/jobs/${jobId}/preview`;
   }
 
   // 2. Populate Remote Portal Voucher Info
@@ -2580,22 +2603,31 @@ function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
   if (compareRemoteDate) compareRemoteDate.innerText = `Datum: ${match.voucherDate || match.date || '-'}`;
   if (compareRemoteContact) compareRemoteContact.innerText = `Kontakt: ${match.contactName || match.partner || '-'}`;
 
-  if (compareRemoteLoading) compareRemoteLoading.style.display = "flex";
-  if (compareRemoteIframe) {
+  if (compareRemoteLoading) {
+    compareRemoteLoading.style.display = "flex";
+    compareRemoteLoading.innerHTML = '<div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div><div class="small">Lade Beleg Seite 1 aus ' + providerName + '...</div>';
+  }
+  if (compareRemoteImg) {
+    compareRemoteImg.style.display = "none";
     if (isButler) {
-      if (compareRemoteLoading) compareRemoteLoading.style.display = "none";
-      compareRemoteIframe.srcdoc = `
-        <div style="font-family: sans-serif; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 20px;">
+      if (compareRemoteLoading) {
+        compareRemoteLoading.innerHTML = `
           <span class="material-symbols-outlined" style="font-size: 48px; color: #17a2b8;">description</span>
-          <h3 style="margin: 10px 0 5px;">BuchhaltungsButler Beleg</h3>
-          <p style="color: #ccc; font-size: 14px;">Beleg <strong>${match.invoiceNumber || match.fileName}</strong> liegt im BuchhaltungsButler Portal vor.</p>
-        </div>
-      `;
+          <h6 class="mt-2 text-white">BuchhaltungsButler Beleg</h6>
+          <div class="small text-white-50">Beleg <strong>${match.invoiceNumber || match.fileName}</strong> liegt im Portal vor.</div>
+        `;
+      }
     } else {
-      compareRemoteIframe.onload = () => {
+      compareRemoteImg.onload = () => {
         if (compareRemoteLoading) compareRemoteLoading.style.display = "none";
+        compareRemoteImg.style.display = "block";
       };
-      compareRemoteIframe.src = `/api/accounting/voucher-file?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}`;
+      compareRemoteImg.onerror = () => {
+        if (compareRemoteLoading) {
+          compareRemoteLoading.innerHTML = '<span class="material-symbols-outlined text-warning" style="font-size: 40px;">warning</span><div class="small mt-2 text-white-50">Vorschau konnte aus Lexoffice nicht gerendert werden</div>';
+        }
+      };
+      compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}`;
     }
   }
 

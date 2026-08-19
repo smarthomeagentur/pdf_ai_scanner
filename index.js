@@ -798,6 +798,68 @@ app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
   }
 });
 
+app.get(["/api/jobs/:id/preview", "/api/preview/:id"], async (req, res) => {
+  try {
+    const id = req.params.id;
+    const job = uploadJobs[id];
+    const targetPreviewPath = path.join(localDownloadFolder, `preview_${id}.jpg`);
+
+    // 1. Direct match on disk
+    if (fs.existsSync(targetPreviewPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=864000");
+      return res.sendFile(targetPreviewPath);
+    }
+
+    // 2. From local PDF file
+    if (job && job.filePath && fs.existsSync(job.filePath)) {
+      const rendered = await renderPdfToJpeg(job.filePath, targetPreviewPath);
+      if (rendered && fs.existsSync(targetPreviewPath)) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=864000");
+        return res.sendFile(targetPreviewPath);
+      }
+    }
+
+    // 3. Fallback: Check standard thumbnail
+    const thumbPath = await getOrGenerateThumbnailPath(id);
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=864000");
+      return res.sendFile(thumbPath);
+    }
+
+    // 4. Fallback: Google Drive thumbnailLink
+    let driveFileId = job?.rawDriveId || (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null);
+    if (!driveFileId && typeof id === "string" && !id.includes("-") && id.length >= 10) {
+      driveFileId = id;
+    }
+    if (driveFileId && fs.existsSync(TOKEN_PATH)) {
+      try {
+        const drive = await driveApi.getClient();
+        const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
+        if (fileInfo.data && fileInfo.data.thumbnailLink) {
+          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s1200");
+          const imgRes = await fetch(link);
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            if (buf && buf.length > 100) {
+              await fs.promises.writeFile(targetPreviewPath, buf);
+              res.setHeader("Content-Type", "image/jpeg");
+              return res.sendFile(targetPreviewPath);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    return res.status(404).send("Vorschau nicht gefunden");
+  } catch (err) {
+    console.error("[PREVIEW] Fehler beim Ausliefern der Vorschau:", err);
+    return res.status(500).send("Error generating preview");
+  }
+});
+
 app.post("/api/clickup/sync-status", requireAdmin, async (req, res) => {
   const result = await syncClickupStatusForJobs();
   res.json(result);
@@ -2314,6 +2376,103 @@ app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("[ACCOUNTING FILE] Fehler:", err);
     res.status(500).send("Fehler beim Abrufen der Datei: " + err.message);
+  }
+});
+
+app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
+  try {
+    const { companyKey, voucherId, fileId } = req.query;
+    if (!companyKey) return res.status(400).send("companyKey erforderlich");
+
+    if (companyKey === "thewire") {
+      return res.status(404).send("Vorschau für BuchhaltungsButler derzeit nicht als Bild verfügbar");
+    }
+
+    const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    if (!apiKey) return res.status(400).send("Kein API-Key für " + companyKey);
+
+    const safeId = (voucherId || fileId || "doc").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const targetThumbPath = path.join(localDownloadFolder, `thumb_lex_${companyKey}_${safeId}.jpg`);
+
+    // 1. Check if already converted and cached on disk
+    if (fs.existsSync(targetThumbPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=864000");
+      return res.sendFile(targetThumbPath);
+    }
+
+    // 2. Resolve fileId from voucher if needed
+    let targetFileId = fileId;
+    if (!targetFileId && voucherId) {
+      try {
+        const vRes = await fetch(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (vRes.ok) {
+          const vData = await vRes.json();
+          if (vData.files && vData.files.length > 0) {
+            targetFileId = vData.files[0].id || vData.files[0];
+          }
+        }
+      } catch (e) {}
+
+      if (!targetFileId) {
+        try {
+          const invRes = await fetch(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          });
+          if (invRes.ok) {
+            const invData = await invRes.json();
+            if (invData.documentFileId) targetFileId = invData.documentFileId;
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (!targetFileId) {
+      targetFileId = voucherId;
+    }
+
+    // 3. Download binary file from Lexoffice
+    const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!fileRes.ok) {
+      return res.status(fileRes.status).send("Dokument in Lexoffice nicht abrufbar (Status: " + fileRes.status + ")");
+    }
+
+    const contentType = fileRes.headers.get("content-type") || "application/pdf";
+    const arrayBuffer = await fileRes.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
+
+    // 4. If image, save and return directly
+    if (contentType.includes("image/jpeg") || contentType.includes("image/png") || contentType.includes("image/webp")) {
+      await fs.promises.writeFile(targetThumbPath, fileBuffer);
+      res.setHeader("Content-Type", "image/jpeg");
+      return res.sendFile(targetThumbPath);
+    }
+
+    // 5. If PDF, render Page 1 to JPEG
+    const tempPdf = path.join(localDownloadFolder, `temp_lex_${safeId}.pdf`);
+    await fs.promises.writeFile(tempPdf, fileBuffer);
+
+    try {
+      const rendered = await renderPdfToJpeg(tempPdf, targetThumbPath);
+      if (rendered && fs.existsSync(targetThumbPath)) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=864000");
+        return res.sendFile(targetThumbPath);
+      }
+    } finally {
+      if (fs.existsSync(tempPdf)) await fs.promises.unlink(tempPdf).catch(() => {});
+    }
+
+    return res.status(500).send("Konnte Vorschau für Lexoffice Beleg nicht erzeugen.");
+  } catch (err) {
+    console.error("[ACCOUNTING PREVIEW] Fehler:", err);
+    res.status(500).send("Fehler beim Erzeugen der Vorschau: " + err.message);
   }
 });
 
