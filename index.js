@@ -3212,7 +3212,10 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
           if (error) return reject(error);
           const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
-          if (match) res.setHeader("X-Detected-Algorithm", match[1]);
+          if (match) {
+            res.setHeader("X-Detected-Algorithm", match[1]);
+            res.setHeader("Access-Control-Expose-Headers", "X-Detected-Algorithm");
+          }
           resolve(outputJpgPath);
         },
       );

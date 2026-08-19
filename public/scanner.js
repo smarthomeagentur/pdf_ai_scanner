@@ -1469,7 +1469,9 @@ function updatePreviewFilter() {
         const detectedAlgorithm = response.headers.get("X-Detected-Algorithm");
         if (filter === "auto" && detectedAlgorithm) {
           const selectEl = document.getElementById("previewAlgorithmSelect");
-          selectEl.value = detectedAlgorithm;
+          if (selectEl && selectEl.querySelector(`option[value="${detectedAlgorithm}"]`)) {
+            selectEl.value = detectedAlgorithm;
+          }
           document.getElementById("algorithmSelect").value = detectedAlgorithm;
         }
 

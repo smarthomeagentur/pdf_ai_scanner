@@ -176,11 +176,11 @@
                 updatePreviewFilter();
               ">
             <option value="auto">✨ Auto-Erkennung (Empfohlen)</option>
-            <option value="magic_color">🌈 Magic Color</option>
-            <option value="clean_bg">📄 Clean Background (Dokument)</option>
-            <option value="document">📑 Schwarz-Weiß (Text)</option>
-            <option value="photo">🖼️ Foto / Farbe</option>
-            <option value="color">원본 Original (Unverändert)</option>
+            <option value="color_enhanced">🌈 Magic Color (Farbe optimiert)</option>
+            <option value="white_paper">📄 Clean Background (Weißes Papier)</option>
+            <option value="bw_adaptive">📑 Schwarz-Weiß (Hoher Kontrast)</option>
+            <option value="grayscale">🖼️ Graustufen (Foto / Text)</option>
+            <option value="color">📷 Original (Unverändert)</option>
           </select>
         </div>
 
@@ -278,7 +278,7 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
-  <script src="/scanner.js?v=20260819_18"></script>
+  <script src="/scanner.js?v=20260819_19"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
