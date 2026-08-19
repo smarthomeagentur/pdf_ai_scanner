@@ -1726,7 +1726,60 @@ function updateConfirmBtnText() {
   }
 }
 
-// Handler für Abbrechen / Schließen des Review-Panels
+// Aktualisiert den Mini-Vorschau Strip und die Buttons im Live-Kameramodus
+function updateScannedPagesUI() {
+  const strip = document.getElementById("scannedPagesStrip");
+  const countBadge = document.getElementById("scannedCountBadge");
+  const thumbsList = document.getElementById("scannedThumbsList");
+  const captureBtn = document.getElementById("captureBtn");
+  const stripFinishBtn = document.getElementById("stripFinishBtn");
+
+  const count = scanPagesArray.length;
+
+  if (count === 0) {
+    if (strip) strip.style.display = "none";
+    if (captureBtn) {
+      captureBtn.innerHTML = '<span class="material-symbols-outlined pe-2">photo_camera</span> Dokument scannen';
+    }
+  } else {
+    if (strip) strip.style.display = "flex";
+    if (countBadge) countBadge.innerText = count === 1 ? "1 Seite" : `${count} Seiten`;
+    if (captureBtn) {
+      captureBtn.innerHTML = `<span class="material-symbols-outlined pe-2">photo_camera</span> Seite ${count + 1} scannen`;
+    }
+    if (stripFinishBtn) {
+      stripFinishBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span> <span>Abschließen (${count})</span>`;
+    }
+
+    if (thumbsList) {
+      thumbsList.innerHTML = "";
+      scanPagesArray.forEach((item, index) => {
+        const thumbDiv = document.createElement("div");
+        thumbDiv.className = "scanned-thumb-item";
+        thumbDiv.innerHTML = `
+          <img src="${item.previewUrl}" alt="Seite ${index + 1}" />
+          <span class="thumb-page-num">${index + 1}</span>
+          <button class="thumb-delete-btn" title="Seite ${index + 1} entfernen" onclick="event.stopPropagation(); removeScannedPage(${index});">✕</button>
+        `;
+        thumbsList.appendChild(thumbDiv);
+      });
+    }
+  }
+
+  updateConfirmBtnText();
+}
+
+window.removeScannedPage = function (index) {
+  if (index >= 0 && index < scanPagesArray.length) {
+    if (scanPagesArray[index].previewUrl) {
+      URL.revokeObjectURL(scanPagesArray[index].previewUrl);
+    }
+    scanPagesArray.splice(index, 1);
+    updateScannedPagesUI();
+  }
+};
+
+// Handler für Abbrechen / Schließen des Review-Panels (bricht nur den aktuellen Scan ab, behält vorherige Seiten)
 const closeReviewPanel = () => {
   const reviewSec = document.getElementById("manual-review-section");
   if (reviewSec) reviewSec.style.display = "none";
@@ -1739,8 +1792,9 @@ const closeReviewPanel = () => {
     captureBtn.disabled = false;
   }
 
-  scanPagesArray = []; // Alle gesammelten Seiten resetten
-  updateConfirmBtnText();
+  // WICHTIG: Bereits gespeicherte Seiten bleiben erhalten, nur der unbestätigte Snapshot wird verworfen
+  reviewState.highResCanvas = null;
+  updateScannedPagesUI();
 };
 
 const cancelCrossBtn = document.getElementById("cancelReviewCrossBtn");
@@ -1759,6 +1813,14 @@ if (downloadOnlyBtn) {
 const finishScanBtn = document.getElementById("finishScanBtn");
 if (finishScanBtn) {
   finishScanBtn.addEventListener("click", () => {
+    finishScanProcess(true);
+  });
+}
+
+const stripFinishBtn = document.getElementById("stripFinishBtn");
+if (stripFinishBtn) {
+  stripFinishBtn.addEventListener("click", () => {
+    reviewState.highResCanvas = null;
     finishScanProcess(true);
   });
 }
@@ -1836,7 +1898,9 @@ const handleAddPageAction = async () => {
   if (loaderStatus) loaderStatus.innerText = "Seite zwischengespeichert. Mache Platz für die nächste...";
 
   const blob = await extractCroppedBlob();
-  scanPagesArray.push(blob);
+  const previewUrl = URL.createObjectURL(blob);
+  scanPagesArray.push({ blob, previewUrl });
+  reviewState.highResCanvas = null;
 
   setTimeout(() => {
     if (loader) loader.style.display = "none";
@@ -1848,8 +1912,8 @@ const handleAddPageAction = async () => {
       captureBtn.style.display = "block";
       captureBtn.disabled = false;
     }
-    updateConfirmBtnText();
-  }, 500);
+    updateScannedPagesUI();
+  }, 400);
 };
 
 const addPageBtn = document.getElementById("addPageBtn");
@@ -1864,12 +1928,23 @@ async function finishScanProcess(sendToAI) {
   loader.style.display = "block";
   loaderStatus.innerText = "Bereite Seiten vor...";
 
-  const finalBlob = await extractCroppedBlob();
-  scanPagesArray.push(finalBlob);
+  let pagesToUpload = scanPagesArray.map((item) => item.blob);
+
+  // Falls wir uns im Review-Screen befinden, die aktuelle Seite mit einbinden
+  if (reviewState.highResCanvas) {
+    const finalBlob = await extractCroppedBlob();
+    pagesToUpload.push(finalBlob);
+  }
+
+  if (pagesToUpload.length === 0) {
+    loader.style.display = "none";
+    alert("Keine gescannten Seiten zum Abschließen vorhanden.");
+    return;
+  }
 
   // Canvas Array an Server API pushen
   const formData = new FormData();
-  scanPagesArray.forEach((blob, index) => {
+  pagesToUpload.forEach((blob, index) => {
     formData.append("images", blob, `page_${index}.jpg`);
     formData.append("coords", "frontend_cropped");
   });
@@ -1883,7 +1958,7 @@ async function finishScanProcess(sendToAI) {
   const toastHtml = `
             <div id="${toastId}" class="position-fixed start-50 translate-middle-x px-3 py-2 text-center" 
                 style="top: 75px; z-index: 9999; width: max-content; max-width: 90vw; background: var(--md-sys-color-surface-container-high, #E7E0EC); color: var(--md-sys-color-on-surface, #1C1B1F); border-radius: var(--md-sys-shape-corner-extra-large, 28px); box-shadow: var(--md-sys-elevation-2); font-size: 14px; font-weight: 500; transition: all 0.3s ease;">
-                🔄 verarbeite ${scanPagesArray.length} Seite(n)...
+                🔄 verarbeite ${pagesToUpload.length} Seite(n)...
             </div>
         `;
   document.body.insertAdjacentHTML("beforeend", toastHtml);
@@ -1895,8 +1970,13 @@ async function finishScanProcess(sendToAI) {
   document.getElementById("captureBtn").style.display = "block";
   document.getElementById("captureBtn").disabled = false;
 
-  // Letzte Aufräum-Schritte, damit man fröhlich weiterscannen kann
+  // Array leeren und Thumbnails revoken
+  scanPagesArray.forEach((item) => {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  });
   scanPagesArray = [];
+  reviewState.highResCanvas = null;
+  updateScannedPagesUI();
 
   // Der asynchrone Upload-Prozess im Hintergrund
   try {
