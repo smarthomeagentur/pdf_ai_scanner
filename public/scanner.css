@@ -322,12 +322,12 @@ input[type="range"].modern-slider::-moz-range-thumb {
   max-width: 800px;
   margin: 0 auto;
   flex-shrink: 0 !important;
-  padding: 8px 12px;
-  padding-bottom: max(14px, env(safe-area-inset-bottom, 14px));
-  background: #fff;
-  border-top: 1px solid #dee2e6;
-  border-radius: 0;
-  box-sizing: border-box;
+  padding: 8px 12px !important;
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 16px)) !important;
+  background: #fff !important;
+  border-top: 1px solid #dee2e6 !important;
+  border-radius: 0 !important;
+  box-sizing: border-box !important;
   z-index: 1020;
 }
 
@@ -336,54 +336,57 @@ input[type="range"].modern-slider::-moz-range-thumb {
 }
 
 .action-btn-download {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  border-radius: 8px;
-  padding: 0;
-  border: 1.5px solid #ced4da;
-  color: #495057;
-  background: #f8f9fa;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  max-width: 44px !important;
+  border-radius: 8px !important;
+  padding: 0 !important;
+  border: 1.5px solid #ced4da !important;
+  color: #495057 !important;
+  background: #f8f9fa !important;
   transition: all 0.15s ease;
 }
 .action-btn-download:hover {
-  background: #e9ecef;
-  color: #212529;
+  background: #e9ecef !important;
+  color: #212529 !important;
 }
 
 .action-btn-addpage,
 .action-btn-add-page {
-  height: 44px;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  white-space: nowrap;
-  border: 1.5px solid #343a40;
-  color: #212529;
-  background: #fff;
-  flex: 1 1 auto;
+  height: 44px !important;
+  border-radius: 8px !important;
+  font-size: 0.9rem !important;
+  white-space: nowrap !important;
+  border: 1.5px solid #343a40 !important;
+  color: #212529 !important;
+  background: #fff !important;
+  flex: 1 1 auto !important;
+  padding: 6px 14px !important;
   transition: all 0.15s ease;
 }
 .action-btn-addpage:hover,
 .action-btn-add-page:hover {
-  background: #212529;
-  color: #fff;
+  background: #212529 !important;
+  color: #fff !important;
 }
 
 .action-btn-finish {
-  height: 44px;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  white-space: nowrap;
-  background: #28a745;
-  border: 1.5px solid #218838;
-  color: #fff;
-  flex: 1.3 1 auto;
-  box-shadow: 0 2px 6px rgba(40, 167, 69, 0.3);
+  height: 44px !important;
+  border-radius: 8px !important;
+  font-size: 0.95rem !important;
+  white-space: nowrap !important;
+  background: #28a745 !important;
+  border: 1.5px solid #218838 !important;
+  color: #fff !important;
+  flex: 1.3 1 auto !important;
+  padding: 6px 16px !important;
+  box-shadow: 0 2px 6px rgba(40, 167, 69, 0.3) !important;
   transition: all 0.15s ease;
 }
 .action-btn-finish:hover {
-  background: #218838;
-  border-color: #1e7e34;
+  background: #218838 !important;
+  border-color: #1e7e34 !important;
 }
 
 /* Multi-Page Scanned Pages Strip (Overlay unter der Top-Bar) */
