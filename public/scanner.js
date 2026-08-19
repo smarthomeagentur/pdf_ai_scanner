@@ -35,9 +35,6 @@ const engineToggleBtn = document.getElementById("engineToggleBtn");
 const modeIcon = document.getElementById("modeIcon");
 const modeText = document.getElementById("modeText");
 const modeSpinner = document.getElementById("modeSpinner");
-const setModeOnnxBtn = document.getElementById("setModeOnnxBtn");
-const setModeCvBtn = document.getElementById("setModeCvBtn");
-const onnxSettingsNotice = document.getElementById("onnxSettingsNotice");
 const cvSettingsGroup = document.getElementById("cvSettingsGroup");
 const cvAutoThresholds = document.getElementById("cvAutoThresholds");
 const cvManualSliders = document.getElementById("cvManualSliders");
@@ -57,13 +54,10 @@ function updateEngineUI() {
     } else if (onnxLoadFailed) {
       if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-warning d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
       if (modeIcon) modeIcon.innerText = "warning";
-      if (modeText) modeText.innerText = "KI Fehler (CV Fallback)";
+      if (modeText) modeText.innerText = "KI Fehler (OpenCV aktiv)";
       if (modeSpinner) modeSpinner.style.display = "none";
     }
 
-    if (setModeOnnxBtn) setModeOnnxBtn.className = "btn btn-sm btn-primary w-50 d-flex align-items-center justify-content-center gap-1";
-    if (setModeCvBtn) setModeCvBtn.className = "btn btn-sm btn-outline-secondary w-50 d-flex align-items-center justify-content-center gap-1";
-    if (onnxSettingsNotice) onnxSettingsNotice.style.display = "flex";
     if (cvSettingsGroup) cvSettingsGroup.style.display = "none";
   } else {
     if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
@@ -71,9 +65,6 @@ function updateEngineUI() {
     if (modeText) modeText.innerText = cvAutoEnabled ? "OpenCV (Auto)" : "OpenCV";
     if (modeSpinner) modeSpinner.style.display = "none";
 
-    if (setModeOnnxBtn) setModeOnnxBtn.className = "btn btn-sm btn-outline-secondary w-50 d-flex align-items-center justify-content-center gap-1";
-    if (setModeCvBtn) setModeCvBtn.className = "btn btn-sm btn-primary w-50 d-flex align-items-center justify-content-center gap-1";
-    if (onnxSettingsNotice) onnxSettingsNotice.style.display = "none";
     if (cvSettingsGroup) cvSettingsGroup.style.display = "block";
   }
 }
@@ -91,23 +82,6 @@ if (engineToggleBtn) {
   });
 }
 
-if (setModeOnnxBtn) {
-  setModeOnnxBtn.addEventListener("click", () => {
-    currentEngine = "onnx";
-    if (!onnxReady && !onnxLoading) initOnnx();
-    localStorage.setItem("scanner_detection_engine", "onnx");
-    updateEngineUI();
-  });
-}
-
-if (setModeCvBtn) {
-  setModeCvBtn.addEventListener("click", () => {
-    currentEngine = "cv";
-    localStorage.setItem("scanner_detection_engine", "cv");
-    updateEngineUI();
-  });
-}
-
 if (cvAutoThresholds) {
   cvAutoThresholds.addEventListener("change", (e) => {
     cvAutoEnabled = e.target.checked;
@@ -120,13 +94,18 @@ if (cvAutoThresholds) {
 let optBlur = 3;
 let optCanny1 = 40;
 let optCanny2 = 125;
+let onnxSensitivity = 0.85;
 
 const sensitivitySlider = document.getElementById("sensitivitySlider");
 if (sensitivitySlider) {
+  sensitivitySlider.value = 85;
+  const sensVal = document.getElementById("sensitivityVal");
+  if (sensVal) sensVal.innerText = "85%";
   sensitivitySlider.oninput = function () {
     let s = parseInt(this.value);
-    document.getElementById("sensitivityVal").innerText = s + "%";
+    if (sensVal) sensVal.innerText = s + "%";
     let norm = s / 100.0;
+    onnxSensitivity = norm;
     optBlur = norm > 0.8 ? 3 : norm > 0.4 ? 5 : norm > 0.2 ? 7 : 9;
     optCanny1 = 150 - Math.round(norm * 130);
     optCanny2 = 250 - Math.round(norm * 150);
@@ -134,13 +113,16 @@ if (sensitivitySlider) {
 }
 
 const smoothingSlider = document.getElementById("smoothingSlider");
+// SMOOTHING_INERTIA: 0.0 (keine Glättung) bis 1.0 (maximale Stabilisierung)
+let SMOOTHING_INERTIA = 0.75; // 75% Stabilisierung als idealer Standard
+
 if (smoothingSlider) {
-  smoothingSlider.value = 85; // 85% Trägheit als Default
+  smoothingSlider.value = 75;
   const smoothingVal = document.getElementById("smoothingVal");
-  if (smoothingVal) smoothingVal.innerText = "85%";
+  if (smoothingVal) smoothingVal.innerText = "75%";
   smoothingSlider.oninput = function () {
-    SMOOTHING_FACTOR = parseInt(this.value) / 100.0;
-    document.getElementById("smoothingVal").innerText = this.value + "%";
+    SMOOTHING_INERTIA = parseInt(this.value) / 100.0;
+    if (smoothingVal) smoothingVal.innerText = this.value + "%";
   };
 }
 
@@ -169,9 +151,6 @@ let currentRelativeDocumentCorners = null;
 let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
 const MAX_FRAMES_LOSE_TRACK = 12;
-// SMOOTHING_FACTOR: Anteil der neuen Position pro Frame.
-// 0.15 = 85% Trägheit (neue Erkennung hat nur 15% Gewicht → sehr stabiles Polygon)
-let SMOOTHING_FACTOR = 0.85;
 
 function initCvMats() {
   if (typeof cv !== "undefined" && !src && typeof cv.Mat !== "undefined") {
@@ -212,7 +191,215 @@ function sortAndOrderCorners(ptsData) {
   });
 }
 
-// --- ONNX Corner Detection ---
+let cornerHistoryBuffer = [];
+const MAX_HISTORY_FRAMES = 4;
+
+// Plausibilitäts- & Geometrieprüfung für Dokumente:
+// Verhindert komplett verzerrte Trapeze, spitze Dreiecke, Strichformen und unplausible Vierecke
+function isPlausibleDocumentShape(pts) {
+  if (!pts || pts.length !== 4) return false;
+
+  // 1. Mindest- und Maximalfläche (Shoelace formula)
+  const area =
+    0.5 *
+    Math.abs(
+      pts[0].x * (pts[1].y - pts[3].y) +
+      pts[1].x * (pts[2].y - pts[0].y) +
+      pts[2].x * (pts[3].y - pts[1].y) +
+      pts[3].x * (pts[0].y - pts[2].y)
+    );
+  if (area < 0.02 || area > 0.98) return false;
+
+  // 2. Kantenlängen berechnen
+  const d01 = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+  const d12 = Math.hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y);
+  const d23 = Math.hypot(pts[3].x - pts[2].x, pts[3].y - pts[2].y);
+  const d30 = Math.hypot(pts[0].x - pts[3].x, pts[0].y - pts[3].y);
+
+  // Keine extrem winzigen Kanten (< 3% der Bildbreite)
+  if (Math.min(d01, d12, d23, d30) < 0.03) return false;
+
+  // 3. Verhältnis gegenüberliegender Kanten (nur moderate perspektivische Verzerrung erlauben)
+  const ratio02 = Math.max(d01, d23) / (Math.min(d01, d23) + 1e-6);
+  const ratio13 = Math.max(d12, d30) / (Math.min(d12, d30) + 1e-6);
+  if (ratio02 > 2.5 || ratio13 > 2.5) return false;
+
+  // 4. Seitenverhältnis (Aspect Ratio) prüfen (nicht extremer als ca. 1:7 für Kassenbons)
+  const avgW = (d01 + d23) / 2;
+  const avgH = (d12 + d30) / 2;
+  const aspectRatio = Math.min(avgW, avgH) / (Math.max(avgW, avgH) + 1e-6);
+  if (aspectRatio < 0.14) return false;
+
+  // 5. Innenwinkel an allen 4 Ecken prüfen und Konvexitäts-Vorzeichen prüfen
+  let firstCrossSign = 0;
+  for (let i = 0; i < 4; i++) {
+    const prev = pts[(i + 3) % 4];
+    const curr = pts[i];
+    const next = pts[(i + 1) % 4];
+
+    const v1x = prev.x - curr.x;
+    const v1y = prev.y - curr.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+    if (len1 < 1e-5 || len2 < 1e-5) return false;
+
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    // |cos(angle)| < 0.77 (ca. 40° bis 140°)
+    if (Math.abs(dot) > 0.77) return false;
+
+    // Kreuzprodukt: Alle Ecken müssen im Uhrzeigersinn die gleiche Drehrichtung haben
+    const cross = v1x * v2y - v1y * v2x;
+    if (Math.abs(cross) < 1e-5) return false;
+    const sign = cross > 0 ? 1 : -1;
+    if (firstCrossSign === 0) {
+      firstCrossSign = sign;
+    } else if (sign !== firstCrossSign) {
+      return false; // Vorzeichenwechsel = Überkreuzung oder Einbuchtung
+    }
+  }
+
+  return true;
+}
+
+// Corner Alignment / Nearest-Neighbor Association:
+// Verknüpft die neuen 4 Ecken mit den direkten Vorgängerecken (verhindert Eckentausch bei Drehungen)
+function alignCornersWithPrevious(newCorners, prevCorners) {
+  if (!prevCorners || prevCorners.length !== 4) return newCorners;
+
+  let bestPerm = newCorners;
+  let minTotalDist = Infinity;
+
+  for (let shift = 0; shift < 4; shift++) {
+    const perm = [
+      newCorners[shift % 4],
+      newCorners[(shift + 1) % 4],
+      newCorners[(shift + 2) % 4],
+      newCorners[(shift + 3) % 4],
+    ];
+
+    let totalDist = 0;
+    for (let i = 0; i < 4; i++) {
+      const dx = perm[i].x - prevCorners[i].x;
+      const dy = perm[i].y - prevCorners[i].y;
+      totalDist += Math.hypot(dx, dy);
+    }
+
+    if (totalDist < minTotalDist) {
+      minTotalDist = totalDist;
+      bestPerm = perm;
+    }
+  }
+
+  return bestPerm;
+}
+
+// Sprung-Begrenzung & Ausreißer-Schutz:
+// Verhindert, dass einzelne Ecken plötzlich weit wegspringen (z. B. Hand/Schatten/Lichtreflex)
+function filterAndClampJumps(targetCorners, newCorners) {
+  if (!targetCorners || targetCorners.length !== 4) return newCorners;
+
+  const alignedNew = alignCornersWithPrevious(newCorners, targetCorners);
+  const dists = [];
+  for (let i = 0; i < 4; i++) {
+    dists.push(Math.hypot(alignedNew[i].x - targetCorners[i].x, alignedNew[i].y - targetCorners[i].y));
+  }
+
+  const avgDist = dists.reduce((a, b) => a + b, 0) / 4;
+  // Kameraschwenk erlaubt synchrone Bewegung; isolierte Ausreißer werden auf maxAllowedJump begrenzt
+  const maxAllowedJump = Math.max(0.045, avgDist * 2.0);
+
+  const clamped = [];
+  for (let i = 0; i < 4; i++) {
+    const curr = targetCorners[i];
+    const next = alignedNew[i];
+    const d = dists[i];
+
+    if (d > maxAllowedJump) {
+      const scale = maxAllowedJump / d;
+      clamped.push({
+        x: curr.x + (next.x - curr.x) * scale,
+        y: curr.y + (next.y - curr.y) * scale,
+      });
+    } else {
+      clamped.push({ x: next.x, y: next.y });
+    }
+  }
+
+  return clamped;
+}
+
+// Adaptives Multi-Frame-Smoothing mit Ausreißer-Clamping & Trägheits-Mittelung
+function applyAdaptiveSmoothing(targetCorners, newCorners, inertia) {
+  if (!targetCorners) {
+    cornerHistoryBuffer = [newCorners.map((p) => ({ x: p.x, y: p.y }))];
+    return newCorners.map((p) => ({ x: p.x, y: p.y }));
+  }
+
+  // 1. Ausreißer-Clamping: Verhindert abrupte Sprünge einzelner Ecken
+  const clampedNew = filterAndClampJumps(targetCorners, newCorners);
+
+  // 2. Rolling History Buffer für zeitliche Glättung (Mittelung über bis zu 4 Frames)
+  cornerHistoryBuffer.push(clampedNew);
+  if (cornerHistoryBuffer.length > MAX_HISTORY_FRAMES) {
+    cornerHistoryBuffer.shift();
+  }
+
+  // 3. Gewichteter Mittelwert über die Historie (neuere Frames haben mehr Gewicht)
+  const averagedTarget = [
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+  ];
+  let totalWeight = 0;
+
+  for (let f = 0; f < cornerHistoryBuffer.length; f++) {
+    const weight = f + 1; // z.B. 1, 2, 3, 4
+    totalWeight += weight;
+    for (let c = 0; c < 4; c++) {
+      averagedTarget[c].x += cornerHistoryBuffer[f][c].x * weight;
+      averagedTarget[c].y += cornerHistoryBuffer[f][c].y * weight;
+    }
+  }
+
+  for (let c = 0; c < 4; c++) {
+    averagedTarget[c].x /= totalWeight;
+    averagedTarget[c].y /= totalWeight;
+  }
+
+  // 4. Adaptives EMA zwischen aktueller Position und gemitteltem Ziel
+  const result = [];
+  for (let i = 0; i < 4; i++) {
+    const curr = targetCorners[i];
+    const next = averagedTarget[i];
+    const dist = Math.hypot(next.x - curr.x, next.y - curr.y);
+
+    let dynamicAlpha;
+    if (dist < 0.003) {
+      dynamicAlpha = 0.03 * (1 - inertia * 0.9);
+    } else if (dist > 0.05) {
+      dynamicAlpha = Math.min(1.0, 0.6 + (dist - 0.05) * 5);
+    } else {
+      const progress = (dist - 0.003) / 0.047;
+      const baseAlpha = 0.10 + 0.50 * progress;
+      dynamicAlpha = baseAlpha * (1 - inertia * 0.75);
+    }
+
+    dynamicAlpha = Math.max(0.015, Math.min(1.0, dynamicAlpha));
+
+    result.push({
+      x: curr.x * (1 - dynamicAlpha) + next.x * dynamicAlpha,
+      y: curr.y * (1 - dynamicAlpha) + next.y * dynamicAlpha,
+    });
+  }
+
+  return result;
+}
+
+// --- ONNX Corner Detection mit Gauß-gewichteter Subpixel-Interpolation ---
 function extractCornersFromHeatmap(heatmapData, numCorners = 4, mapH = 128, mapW = 128) {
   const corners = [];
   const scores = [];
@@ -233,16 +420,22 @@ function extractCornersFromHeatmap(heatmapData, numCorners = 4, mapH = 128, mapW
     const peakY = Math.floor(maxIdx / mapW);
     const peakX = maxIdx % mapW;
 
+    // Gauß-gewichteter Subpixel-Schwerpunkt (7x7 Fenster um den Peak für stufenlose Positionierung)
     let sumWeight = 0;
     let sumX = 0;
     let sumY = 0;
+    const sigma = 1.4;
+    const twoSigmaSq = 2 * sigma * sigma;
 
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
         const ny = peakY + dy;
         const nx = peakX + dx;
         if (nx >= 0 && nx < mapW && ny >= 0 && ny < mapH) {
-          const w = Math.max(0, heatmapData[channelOffset + ny * mapW + nx]);
+          const rawV = Math.max(0, heatmapData[channelOffset + ny * mapW + nx]);
+          const distSq = dx * dx + dy * dy;
+          const gWeight = Math.exp(-distSq / twoSigmaSq);
+          const w = rawV * gWeight;
           sumWeight += w;
           sumX += nx * w;
           sumY += ny * w;
@@ -293,26 +486,22 @@ async function detectCornersOnnx(source, sx = 0, sy = 0, sWidth = null, sHeight 
     const meanScore = scores.reduce((a, b) => a + b, 0) / scores.length;
     const minScore = Math.min(...scores);
 
-    if (meanScore < 0.08 || minScore < 0.02) {
+    // Dynamische Schwellwerte basierend auf Sensitivität (onnxSensitivity: 0.1 .. 1.0)
+    // Bei 85% Sensitivität: minMean ≈ 0.035, minSingle ≈ 0.008 (sehr empfindlich für schwache Kontraste)
+    const minMeanReq = Math.max(0.015, 0.12 - onnxSensitivity * 0.10);
+    const minSingleReq = Math.max(0.003, 0.03 - onnxSensitivity * 0.026);
+
+    if (meanScore < minMeanReq || minScore < minSingleReq) {
       return null;
     }
 
-    const pts = corners;
-    const area =
-      0.5 *
-      Math.abs(
-        pts[0].x * (pts[1].y - pts[3].y) +
-        pts[1].x * (pts[2].y - pts[0].y) +
-        pts[2].x * (pts[3].y - pts[1].y) +
-        pts[3].x * (pts[0].y - pts[2].y)
-      );
-
-    if (area < 0.04) {
+    const sortedPts = sortAndOrderCorners(corners);
+    if (!isPlausibleDocumentShape(sortedPts)) {
       return null;
     }
 
-    console.log(`[ONNX] Dokument erkannt ✓ mean=${meanScore.toFixed(3)} min=${minScore.toFixed(3)} area=${area.toFixed(3)}`);
-    return corners;
+    console.log(`[ONNX] Dokument erkannt ✓ mean=${meanScore.toFixed(3)} min=${minScore.toFixed(3)} (Schwelle: ${minMeanReq.toFixed(3)})`);
+    return sortedPts;
   } catch (err) {
     console.error("ONNX Inferenzfehler:", err);
     return null;
@@ -478,35 +667,54 @@ async function initOnnx() {
     updateEngineUI();
     onSystemReady();
   } catch (err) {
-    console.error("Fehler beim Laden von ONNX:", err);
+    console.error("Fehler beim Laden von ONNX (wechsle automatisch zu OpenCV):", err);
     onnxLoading = false;
     onnxReady = false;
     onnxLoadFailed = true;
+    currentEngine = "cv";
+    localStorage.setItem("scanner_detection_engine", "cv");
     updateEngineUI();
     onSystemReady();
   }
 }
 
 // Global hook für OpenCV Initialisierung
+window.onOpenCvReady = function () {
+  window.initOpenCvRuntime();
+};
+
 window.initOpenCvRuntime = function () {
+  if (openCvReady) return;
   if (typeof cv !== "undefined") {
-    if (cv.onRuntimeInitialized) {
-      cv["onRuntimeInitialized"] = () => {
-        console.log("OpenCV initialized");
-        openCvReady = true;
-        initCvMats();
-        onSystemReady();
-      };
-    } else if (cv.Mat) {
-      console.log("OpenCV already initialized");
+    if (typeof cv.Mat !== "undefined") {
+      console.log("OpenCV erfolgreich initialisiert (cv.Mat bereit)");
       openCvReady = true;
       initCvMats();
+      updateEngineUI();
       onSystemReady();
+    } else {
+      cv["onRuntimeInitialized"] = () => {
+        console.log("OpenCV erfolgreich initialisiert (onRuntimeInitialized)");
+        openCvReady = true;
+        initCvMats();
+        updateEngineUI();
+        onSystemReady();
+      };
     }
   }
 };
-if (window.openCvIsLoaded) {
+
+// Falls OpenCV bereits geladen ist oder per defer nachgeladen wird:
+if (typeof cv !== "undefined") {
   window.initOpenCvRuntime();
+} else {
+  // Polling-Fallback, falls onload-Event vor Skript-Ausführung gefeuert wurde
+  const cvCheckInterval = setInterval(() => {
+    if (typeof cv !== "undefined") {
+      window.initOpenCvRuntime();
+      if (openCvReady) clearInterval(cvCheckInterval);
+    }
+  }, 100);
 }
 
 let videoTrack = null;
@@ -678,46 +886,146 @@ function startAutoCountdown() {
   }, 1000);
 }
 
-// Kamera & Video Stream Management
-async function startCamera() {
+// Kamera & Video Stream Management mit dynamischer 4K -> 1080p Anpassung
+let currentCameraResolution = "4k";
+
+async function startCamera(forceResolution = null) {
   if (sampleImage) sampleImage.style.display = "none";
   if (video) video.style.display = "block";
 
+  const targetRes = forceResolution || "4k";
+  currentCameraResolution = targetRes;
+
+  const constraints4K = {
+    video: {
+      facingMode: "environment",
+      width: { ideal: 3840 },
+      height: { ideal: 2160 },
+      frameRate: { ideal: 30, min: 15 },
+    },
+    audio: false,
+  };
+
+  const constraints1080p = {
+    video: {
+      facingMode: "environment",
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, min: 15 },
+    },
+    audio: false,
+  };
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment",
-        width: { ideal: 3840 },
-        height: { ideal: 2160 },
-      },
-      audio: false,
-    });
-    video.srcObject = stream;
-    videoTrack = stream.getVideoTracks()[0];
-    video.play();
-    updateTorchState();
-    await initAutofocus();
+    const stream = await navigator.mediaDevices.getUserMedia(
+      targetRes === "4k" ? constraints4K : constraints1080p
+    );
+    await setVideoStream(stream);
   } catch (err) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
-      video.srcObject = stream;
-      videoTrack = stream.getVideoTracks()[0];
-      video.play();
-      updateTorchState();
-      await initAutofocus();
-    } catch (fallbackErr) {
-      console.warn("Kamera konnte nicht gestartet werden (z. B. auf Desktop/Test). Schalte automatisch auf Test-Bild 'edge1.jpg' um.", fallbackErr);
-      if (sourceSelect) sourceSelect.value = "edge1.jpg";
-      activeSource = "edge1.jpg";
-      loadSampleImage("edge1.jpg");
+    if (targetRes === "4k") {
+      try {
+        console.warn("4K Video-Stream konnte nicht gestartet werden, versuche 1080p Fallback:", err);
+        const stream = await navigator.mediaDevices.getUserMedia(constraints1080p);
+        currentCameraResolution = "1080p";
+        await setVideoStream(stream);
+      } catch (fallbackErr) {
+        handleCameraFailure(fallbackErr);
+      }
+    } else {
+      handleCameraFailure(err);
     }
+  }
+}
+
+async function setVideoStream(stream) {
+  video.srcObject = stream;
+  videoTrack = stream.getVideoTracks()[0];
+  try {
+    await video.play();
+  } catch (_) { }
+  updateTorchState();
+  await initAutofocus();
+
+  // Wenn wir mit 4K gestartet sind, überwache nach dem Start die reale FPS-Rate der Hardware
+  if (currentCameraResolution === "4k") {
+    monitorCameraFpsAndAdapt();
+  }
+}
+
+function handleCameraFailure(fallbackErr) {
+  console.warn("Kamera konnte nicht gestartet werden (z. B. auf Desktop/Test). Schalte automatisch auf Test-Bild 'edge1.jpg' um.", fallbackErr);
+  if (sourceSelect) sourceSelect.value = "edge1.jpg";
+  activeSource = "edge1.jpg";
+  loadSampleImage("edge1.jpg");
+}
+
+function monitorCameraFpsAndAdapt() {
+  if (!videoTrack) return;
+
+  // 1. Prüfe direkt die vom Hardware-Treiber gemeldeten Settings
+  const settings = videoTrack.getSettings ? videoTrack.getSettings() : {};
+  const currentW = settings.width || 0;
+  const driverFps = settings.frameRate;
+
+  if (driverFps && driverFps < 15 && currentW > 1920) {
+    console.warn(`[Kamera] Hardware meldet bei ${currentW}px nur ${driverFps} FPS. Schalte automatisch auf 1080p um...`);
+    switchTo1080p();
+    return;
+  }
+
+  // 2. Reale Framerate des Videostreams über Frames messen
+  let frameCount = 0;
+  let startTime = performance.now();
+
+  const onFrame = () => {
+    frameCount++;
+    if (videoTrack && videoTrack.readyState === "live" && currentCameraResolution === "4k") {
+      if ("requestVideoFrameCallback" in video) {
+        video.requestVideoFrameCallback(onFrame);
+      }
+    }
+  };
+
+  if ("requestVideoFrameCallback" in video) {
+    video.requestVideoFrameCallback(onFrame);
+  }
+
+  // Nach 2,5 Sekunden prüfen wir die tatsächliche Performance
+  setTimeout(async () => {
+    if (currentCameraResolution !== "4k" || !videoTrack || videoTrack.readyState !== "live") return;
+
+    const elapsedSec = (performance.now() - startTime) / 1000;
+    let actualFps = frameCount > 0 ? frameCount / elapsedSec : ((videoTrack.getSettings && videoTrack.getSettings().frameRate) || 0);
+
+    const actualWidth = (videoTrack.getSettings && videoTrack.getSettings().width) || video.videoWidth || 0;
+    console.log(`[Kamera] Hardware-Stream Analyse: ${actualWidth}px @ ~${actualFps.toFixed(1)} FPS`);
+
+    if (actualWidth > 1920 && actualFps > 0 && actualFps < 15) {
+      console.warn(`[Kamera] 4K Framerate zu gering (${actualFps.toFixed(1)} FPS). Drossle automatisch auf 1080p für flüssige Video-Performance...`);
+      await switchTo1080p();
+    }
+  }, 2500);
+}
+
+async function switchTo1080p() {
+  currentCameraResolution = "1080p";
+  if (!videoTrack) return;
+
+  try {
+    // Versuch 1: In-Place Constraints (unterbrechungsfrei)
+    await videoTrack.applyConstraints({
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, min: 15 },
+    });
+    console.log("[Kamera] Erfolgreich auf 1080p umgeschaltet (applyConstraints).");
+  } catch (e) {
+    console.warn("[Kamera] In-Place Wechsel auf 1080p nicht möglich, starte Stream neu:", e);
+    if (videoTrack) {
+      try { videoTrack.stop(); } catch (_) { }
+      videoTrack = null;
+    }
+    await startCamera("1080p");
   }
 }
 
@@ -741,6 +1049,7 @@ function loadSampleImage(filename) {
       streaming = true;
       captureBtn.disabled = false;
       smoothedCornersRaw = null;
+      cornerHistoryBuffer = [];
       framesWithoutDetection = 0;
 
       initCvMats();
@@ -753,6 +1062,7 @@ if (sourceSelect) {
   sourceSelect.addEventListener("change", (e) => {
     activeSource = e.target.value;
     smoothedCornersRaw = null;
+    cornerHistoryBuffer = [];
     currentRelativeDocumentCorners = null;
     ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
 
@@ -836,36 +1146,31 @@ async function processVideo() {
 
     let detectedCorners = null;
 
-    // 1. Priorisiere die aktive Engine
+    // Aktive Engine ausführen (strikt getrennt)
     if (currentEngine === "onnx") {
       if (onnxReady) {
         detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
       }
-      if (!detectedCorners && openCvReady) {
-        detectedCorners = detectCornersCv(currentSource, sx, sy, sWidth, sHeight, false);
-      }
     } else {
+      // Reiner OpenCV Modus (wird nur per Button aktiviert)
       if (openCvReady) {
         detectedCorners = detectCornersCv(currentSource, sx, sy, sWidth, sHeight, false);
-      } else if (onnxReady) {
-        detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
       }
     }
 
-    // --- SMOOTHING / ANTI-FLICKERING LOGIK ---
+    // --- ADAPTIVES SMOOTHING / ANTI-FLICKERING LOGIK ---
     if (detectedCorners && detectedCorners.length === 4) {
       framesWithoutDetection = 0;
-      let sortedNewCorners = sortAndOrderCorners(detectedCorners);
+      const sortedNewCorners = sortAndOrderCorners(detectedCorners);
 
       if (!smoothedCornersRaw) {
-        smoothedCornersRaw = sortedNewCorners;
+        smoothedCornersRaw = sortedNewCorners.map((p) => ({ x: p.x, y: p.y }));
       } else {
-        for (let i = 0; i < 4; i++) {
-          smoothedCornersRaw[i].x =
-            smoothedCornersRaw[i].x * (1 - SMOOTHING_FACTOR) + sortedNewCorners[i].x * SMOOTHING_FACTOR;
-          smoothedCornersRaw[i].y =
-            smoothedCornersRaw[i].y * (1 - SMOOTHING_FACTOR) + sortedNewCorners[i].y * SMOOTHING_FACTOR;
-        }
+        smoothedCornersRaw = applyAdaptiveSmoothing(
+          smoothedCornersRaw,
+          sortedNewCorners,
+          SMOOTHING_INERTIA
+        );
       }
 
       // Auto-Capture Logik
@@ -888,6 +1193,7 @@ async function processVideo() {
 
       if (framesWithoutDetection > MAX_FRAMES_LOSE_TRACK) {
         smoothedCornersRaw = null;
+        cornerHistoryBuffer = [];
         cancelAutoCountdown();
       }
     }
@@ -1076,24 +1382,23 @@ captureBtn.addEventListener("click", async () => {
   }
 
   // --- RESCAN AUF DEM FERTIGEN HOCHAUFLÖSENDEN FOTO ---
-  // ONNX wird immer zuerst versucht (unabhängig vom Live-Modus).
-  // Hinweis: ONNX skaliert intern immer auf 256×256 – HighRes-Canvas hat daher
-  // keinen direkten Auflösungsvorteil, aber das vollständige Bild ohne
-  // Vorschau-Crop liefert trotzdem bessere Ergebnisse als der Live-Frame.
-  // OpenCV arbeitet intern auf 320×240 und profitiert bei isHighRes=true
-  // von lockereren Epsilon-Werten und dem Otsu-Fallback.
+  // Standardmäßig (currentEngine === "onnx") wird ONNX verwendet.
+  // OpenCV dient als Fallback (wenn ONNX nichts findet oder noch lädt) bzw. als primäre Engine bei Button-Auswahl.
   try {
     let postScanCorners = null;
 
-    if (onnxReady) {
-      // Gesamtes Foto übergeben (sx=0, sy=0, volle Abmessungen)
-      postScanCorners = await detectCornersOnnx(
-        canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height
-      );
-    }
-
-    if (!postScanCorners && openCvReady) {
-      postScanCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
+    if (currentEngine === "onnx") {
+      if (onnxReady) {
+        // Gesamtes Foto übergeben (sx=0, sy=0, volle Abmessungen)
+        postScanCorners = await detectCornersOnnx(
+          canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height
+        );
+      }
+    } else {
+      // Reiner OpenCV Modus (nur wenn per Button aktiv)
+      if (openCvReady) {
+        postScanCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
+      }
     }
 
     if (postScanCorners && postScanCorners.length === 4) {
@@ -1408,12 +1713,15 @@ document.getElementById("rescanBtn").addEventListener("click", async () => {
       reviewState.cropH
     );
 
-    if (onnxReady) {
-      neueEcken = await detectCornersOnnx(tCanvas);
-    }
-
-    if (!neueEcken && openCvReady) {
-      neueEcken = detectCornersCv(tCanvas, 0, 0, reviewState.cropW, reviewState.cropH, true);
+    if (currentEngine === "onnx") {
+      if (onnxReady) {
+        neueEcken = await detectCornersOnnx(tCanvas);
+      }
+    } else {
+      // Reiner OpenCV Modus (nur wenn per Button aktiv)
+      if (openCvReady) {
+        neueEcken = detectCornersCv(tCanvas, 0, 0, reviewState.cropW, reviewState.cropH, true);
+      }
     }
 
     if (neueEcken && neueEcken.length === 4) {

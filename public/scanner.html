@@ -87,40 +87,19 @@
         <!-- Bild-Filter ist jetzt exklusiv im Preview-Screen. Intern halten wir den State fest: -->
         <input type="hidden" id="algorithmSelect" value="auto" />
 
-        <h6 class="text-secondary mt-3 mb-2 small fw-bold">
-          Erkennungs-Modus
-        </h6>
-        <div class="d-flex gap-2 mb-3">
-          <button type="button" class="btn btn-sm btn-primary w-50 d-flex align-items-center justify-content-center gap-1" id="setModeOnnxBtn">
-            <span class="material-symbols-outlined" style="font-size: 18px;">psychology</span>
-            <span>KI (ONNX)</span>
-          </button>
-          <button type="button" class="btn btn-sm btn-outline-secondary w-50 d-flex align-items-center justify-content-center gap-1" id="setModeCvBtn">
-            <span class="material-symbols-outlined" style="font-size: 18px;">crop_free</span>
-            <span>OpenCV (Auto)</span>
-          </button>
-        </div>
+        <label class="form-label mb-0 mt-1 small">Erkennungs-Sensitivität: <span id="sensitivityVal">85%</span></label>
+        <input type="range" class="modern-slider" id="sensitivitySlider" min="10" max="100" value="85" />
 
-        <div id="onnxSettingsNotice" class="alert alert-primary py-2 px-3 small mb-2 d-flex align-items-center gap-2" style="border-radius: 8px;">
-          <span class="material-symbols-outlined text-primary" style="font-size: 20px;">auto_awesome</span>
-          <span><strong>KI-Modus aktiv:</strong> Parameter werden automatisch per Deep Learning optimiert (beste Erkennung bei weiß auf weiß).</span>
-        </div>
-
-        <div id="cvSettingsGroup" style="display: none;">
+        <div id="cvSettingsGroup" style="display: none;" class="mt-2">
           <div class="form-check form-switch mb-2">
             <input class="form-check-input" type="checkbox" id="cvAutoThresholds" checked>
-            <label class="form-check-label small fw-bold" for="cvAutoThresholds">Auto-Canny & CLAHE (Dynamisch)</label>
-          </div>
-
-          <div id="cvManualSliders" style="display: none;">
-            <label class="form-label mb-0 mt-1 small">Manuelle Sensitivität: <span id="sensitivityVal">85%</span></label>
-            <input type="range" class="modern-slider" id="sensitivitySlider" min="0" max="100" value="85" />
+            <label class="form-check-label small fw-bold" for="cvAutoThresholds">OpenCV Auto-Canny & CLAHE</label>
           </div>
         </div>
 
-        <label class="form-label mb-0 mt-1 small">Rahmen-Trägheit (Anti-Flicker):
-          <span id="smoothingVal">50%</span></label>
-        <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="50" />
+        <label class="form-label mb-0 mt-2 small">Rahmen-Trägheit (Anti-Flicker):
+          <span id="smoothingVal">75%</span></label>
+        <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="75" />
 
         <hr class="my-3" />
         <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
@@ -283,7 +262,7 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
-  <script src="/scanner.js?v=20260819_4"></script>
+  <script src="/scanner.js?v=20260819_12"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
