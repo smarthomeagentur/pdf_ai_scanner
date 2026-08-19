@@ -113,13 +113,13 @@ if (sensitivitySlider) {
 }
 
 const smoothingSlider = document.getElementById("smoothingSlider");
-// SMOOTHING_INERTIA: 0.0 (keine Glättung) bis 1.0 (maximale Stabilisierung)
-let SMOOTHING_INERTIA = 0.75; // 75% Stabilisierung als idealer Standard
+// SMOOTHING_INERTIA: 0.0 (direkt/schnell) bis 1.0 (hohe Trägheit)
+let SMOOTHING_INERTIA = 0.40; // 40% als idealer, reaktionsschneller Standard
 
 if (smoothingSlider) {
-  smoothingSlider.value = 75;
+  smoothingSlider.value = 40;
   const smoothingVal = document.getElementById("smoothingVal");
-  if (smoothingVal) smoothingVal.innerText = "75%";
+  if (smoothingVal) smoothingVal.innerText = "40%";
   smoothingSlider.oninput = function () {
     SMOOTHING_INERTIA = parseInt(this.value) / 100.0;
     if (smoothingVal) smoothingVal.innerText = this.value + "%";
@@ -297,7 +297,7 @@ function alignCornersWithPrevious(newCorners, prevCorners) {
 }
 
 // Sprung-Begrenzung & Ausreißer-Schutz:
-// Verhindert, dass einzelne Ecken plötzlich weit wegspringen (z. B. Hand/Schatten/Lichtreflex)
+// Kappt nur unplausible extreme Einzel-Teleports (z.B. Schatten), lässt aber reale Handbewegungen ungebremst durch
 function filterAndClampJumps(targetCorners, newCorners) {
   if (!targetCorners || targetCorners.length !== 4) return newCorners;
 
@@ -308,8 +308,7 @@ function filterAndClampJumps(targetCorners, newCorners) {
   }
 
   const avgDist = dists.reduce((a, b) => a + b, 0) / 4;
-  // Kameraschwenk erlaubt synchrone Bewegung; isolierte Ausreißer werden auf maxAllowedJump begrenzt
-  const maxAllowedJump = Math.max(0.045, avgDist * 2.0);
+  const maxAllowedJump = Math.max(0.18, avgDist * 3.0);
 
   const clamped = [];
   for (let i = 0; i < 4; i++) {
@@ -331,64 +330,37 @@ function filterAndClampJumps(targetCorners, newCorners) {
   return clamped;
 }
 
-// Adaptives Multi-Frame-Smoothing mit Ausreißer-Clamping & Trägheits-Mittelung
+// Schnelles, reaktionsschnelles adaptives Smoothing:
+// Bei Stillstand ruhig und jitter-frei, bei Bewegung folgt der Rahmen sofort ohne Nachziehen
 function applyAdaptiveSmoothing(targetCorners, newCorners, inertia) {
   if (!targetCorners) {
-    cornerHistoryBuffer = [newCorners.map((p) => ({ x: p.x, y: p.y }))];
     return newCorners.map((p) => ({ x: p.x, y: p.y }));
   }
 
-  // 1. Ausreißer-Clamping: Verhindert abrupte Sprünge einzelner Ecken
   const clampedNew = filterAndClampJumps(targetCorners, newCorners);
-
-  // 2. Rolling History Buffer für zeitliche Glättung (Mittelung über bis zu 4 Frames)
-  cornerHistoryBuffer.push(clampedNew);
-  if (cornerHistoryBuffer.length > MAX_HISTORY_FRAMES) {
-    cornerHistoryBuffer.shift();
-  }
-
-  // 3. Gewichteter Mittelwert über die Historie (neuere Frames haben mehr Gewicht)
-  const averagedTarget = [
-    { x: 0, y: 0 },
-    { x: 0, y: 0 },
-    { x: 0, y: 0 },
-    { x: 0, y: 0 },
-  ];
-  let totalWeight = 0;
-
-  for (let f = 0; f < cornerHistoryBuffer.length; f++) {
-    const weight = f + 1; // z.B. 1, 2, 3, 4
-    totalWeight += weight;
-    for (let c = 0; c < 4; c++) {
-      averagedTarget[c].x += cornerHistoryBuffer[f][c].x * weight;
-      averagedTarget[c].y += cornerHistoryBuffer[f][c].y * weight;
-    }
-  }
-
-  for (let c = 0; c < 4; c++) {
-    averagedTarget[c].x /= totalWeight;
-    averagedTarget[c].y /= totalWeight;
-  }
-
-  // 4. Adaptives EMA zwischen aktueller Position und gemitteltem Ziel
   const result = [];
+
   for (let i = 0; i < 4; i++) {
     const curr = targetCorners[i];
-    const next = averagedTarget[i];
+    const next = clampedNew[i];
     const dist = Math.hypot(next.x - curr.x, next.y - curr.y);
 
+    // Adaptive Reaktionsrate (alpha):
+    // - Kleiner Jitter bei Stillstand (dist < 0.003 / 0.3%): Dämpft Mikrozuckungen
+    // - Normale Bewegung (dist >= 0.003 .. 0.025): Schnelle, flüssige Mitführung (alpha 0.50 .. 0.90)
+    // - Schwenks & schnelle Bewegung (dist > 0.025): Sofortiges Folgen ohne Verzögerung (alpha = 0.98)
     let dynamicAlpha;
     if (dist < 0.003) {
-      dynamicAlpha = 0.03 * (1 - inertia * 0.9);
-    } else if (dist > 0.05) {
-      dynamicAlpha = Math.min(1.0, 0.6 + (dist - 0.05) * 5);
+      dynamicAlpha = 0.12 * (1 - inertia * 0.70);
+    } else if (dist > 0.025) {
+      dynamicAlpha = 0.98;
     } else {
-      const progress = (dist - 0.003) / 0.047;
-      const baseAlpha = 0.10 + 0.50 * progress;
-      dynamicAlpha = baseAlpha * (1 - inertia * 0.75);
+      const progress = (dist - 0.003) / 0.022; // 0.0 .. 1.0
+      const baseAlpha = 0.45 + 0.50 * progress;
+      dynamicAlpha = baseAlpha * (1 - inertia * 0.40);
     }
 
-    dynamicAlpha = Math.max(0.015, Math.min(1.0, dynamicAlpha));
+    dynamicAlpha = Math.max(0.04, Math.min(1.0, dynamicAlpha));
 
     result.push({
       x: curr.x * (1 - dynamicAlpha) + next.x * dynamicAlpha,

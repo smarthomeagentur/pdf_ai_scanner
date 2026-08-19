@@ -23,6 +23,11 @@
 
     <link rel="stylesheet" href="/index.css" />
     <link rel="stylesheet" href="/md3-theme.css" />
+
+    <!-- ONNX Modell & WASM Prefetch für blitzschnelles Öffnen des Scanners -->
+    <link rel="prefetch" href="/models/doc_corner_net.onnx" as="fetch" crossorigin="anonymous" />
+    <link rel="prefetch" href="/vendor/onnx/ort.min.js" />
+    <link rel="prefetch" href="/vendor/onnx/ort-wasm-simd-threaded.wasm" as="fetch" crossorigin="anonymous" />
     <style>
       .pdf-preview-container {
         position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none; z-index: 1;
@@ -869,6 +874,13 @@
       </div>
 
       <script src="/index.js?v=20260818_8"></script>
+      <script>
+        if ("serviceWorker" in navigator) {
+          window.addEventListener("load", () => {
+            navigator.serviceWorker.register("/sw.js").catch(() => {});
+          });
+        }
+      </script>
     </div>
   </body>
 </html>

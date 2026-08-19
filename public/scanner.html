@@ -98,8 +98,8 @@
         </div>
 
         <label class="form-label mb-0 mt-2 small">Rahmen-Trägheit (Anti-Flicker):
-          <span id="smoothingVal">75%</span></label>
-        <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="75" />
+          <span id="smoothingVal">40%</span></label>
+        <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="40" />
 
         <hr class="my-3" />
         <h6 class="text-secondary mb-2 small fw-bold">Weitere Optionen</h6>
@@ -157,25 +157,23 @@
                 updatePreviewFilter();
               ">
             <option value="auto">✨ Auto-Erkennung (Empfohlen)</option>
-            <option value="color_enhanced">Optimiert Farbe</option>
-            <option value="white_paper">Optimiert SW</option>
-            <option value="bw_adaptive">
-              SW Hart (Quittungen / Kassenzettel)
-            </option>
-            <option value="grayscale">Original Graustufen</option>
-            <option value="color">Original Farbe</option>
+            <option value="magic_color">🌈 Magic Color</option>
+            <option value="clean_bg">📄 Clean Background (Dokument)</option>
+            <option value="document">📑 Schwarz-Weiß (Text)</option>
+            <option value="photo">🖼️ Foto / Farbe</option>
+            <option value="color">원본 Original (Unverändert)</option>
           </select>
         </div>
 
         <!-- Alle Aktions-Buttons in einer einzigen kompakten Zeile -->
         <div class="review-action-row d-flex gap-2 w-100 align-items-center">
-          <!-- Download als kompaktes Icon -->
-          <button class="btn btn-outline-secondary d-flex align-items-center justify-content-center action-btn-download" id="downloadOnlyBtn" title="Nur Herunterladen (ohne KI)">
-            <span class="material-symbols-outlined">download</span>
+          <!-- Neuer Abbrechen Button links für schnelles Verwerfen -->
+          <button class="btn btn-outline-danger d-flex align-items-center justify-content-center gap-1 action-btn-retake" id="cancelReviewBtn">
+            <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
+            <span>Verwerfen</span>
           </button>
-          <!-- Nächste Seite umbenannt in 'Seite hinzufügen' -->
-          <button class="btn btn-outline-dark d-flex align-items-center justify-content-center gap-1 fw-bold action-btn-add-page" id="addPageBtn">
-            <span class="material-symbols-outlined" style="font-size: 20px;">add_photo_alternate</span>
+          <button class="btn btn-outline-primary d-flex align-items-center justify-content-center gap-1 action-btn-addpage" id="nextPageBtn">
+            <span class="material-symbols-outlined" style="font-size: 20px;">note_add</span>
             <span>Seite hinzufügen</span>
           </button>
           <!-- Verarbeiten umbenannt in 'Abschließen' und farblich markiert -->
@@ -262,7 +260,7 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
-  <script src="/scanner.js?v=20260819_12"></script>
+  <script src="/scanner.js?v=20260819_13"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
