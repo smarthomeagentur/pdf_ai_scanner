@@ -282,6 +282,15 @@
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js?v=20260819_5").then((reg) => {
+          reg.update().catch(() => {});
+        }).catch(() => {});
+      });
+    }
+  </script>
 </body>
 
 </html>
