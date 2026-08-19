@@ -1,4 +1,4 @@
-const CACHE_NAME = "scanner-cache-v6";
+const CACHE_NAME = "scanner-cache-v7";
 const ONNX_ASSETS = [
   "/models/doc_corner_net.onnx",
   "/vendor/onnx/ort.min.js",

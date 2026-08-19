@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Live Dokumentenscanner</title>
 
   <!-- PWA Meta Tags -->
@@ -20,8 +20,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-  <link rel="stylesheet" href="/scanner.css?v=20260819_6" />
-  <link rel="stylesheet" href="/md3-theme.css?v=20260819_4" />
+  <link rel="stylesheet" href="/scanner.css?v=20260819_7" />
+  <link rel="stylesheet" href="/md3-theme.css?v=20260819_7" />
   <script>
     window.onOpenCvReady = function() {
       if (typeof window.initOpenCvRuntime === "function") {
@@ -278,14 +278,14 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
-  <script src="/scanner.js?v=20260819_21"></script>
+  <script src="/scanner.js?v=20260819_22"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js?v=20260819_6").then((reg) => {
+        navigator.serviceWorker.register("/sw.js?v=20260819_7").then((reg) => {
           reg.update().catch(() => {});
         }).catch(() => {});
       });
