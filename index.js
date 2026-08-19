@@ -880,41 +880,62 @@ app.get(["/api/jobs/:id/preview", "/api/preview/:id"], async (req, res) => {
       const rendered = await renderPdfToJpeg(job.filePath, targetPreviewPath);
       if (rendered && fs.existsSync(targetPreviewPath)) {
         res.setHeader("Content-Type", "image/jpeg");
-        res.setHeader("Cache-Control", "public, max-age=864000");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         return res.sendFile(targetPreviewPath);
       }
     }
 
-    // 3. Fallback: Check standard thumbnail
-    const thumbPath = await getOrGenerateThumbnailPath(id);
-    if (thumbPath && fs.existsSync(thumbPath)) {
-      res.setHeader("Content-Type", "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=864000");
-      return res.sendFile(thumbPath);
-    }
-
-    // 4. Fallback: Google Drive thumbnailLink
+    // 3. High-Res Google Drive Preview (=s1600 or PDF download & render)
     let driveFileId = job?.rawDriveId || (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null);
     if (!driveFileId && typeof id === "string" && !id.includes("-") && id.length >= 10) {
       driveFileId = id;
     }
+
     if (driveFileId && fs.existsSync(TOKEN_PATH)) {
       try {
         const drive = await driveApi.getClient();
         const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
         if (fileInfo.data && fileInfo.data.thumbnailLink) {
-          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s1200");
+          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s1600");
           const imgRes = await fetch(link);
           if (imgRes.ok) {
             const buf = Buffer.from(await imgRes.arrayBuffer());
             if (buf && buf.length > 100) {
               await fs.promises.writeFile(targetPreviewPath, buf);
               res.setHeader("Content-Type", "image/jpeg");
+              res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
               return res.sendFile(targetPreviewPath);
             }
           }
         }
-      } catch (e) {}
+
+        // Try downloading first page and rendering HD image
+        const pdfTemp = path.join(localDownloadFolder, `temp_preview_${id}_${Date.now()}.pdf`);
+        try {
+          const dest = fs.createWriteStream(pdfTemp);
+          const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
+          await pipeline(downloadRes.data, dest);
+
+          const rendered = await renderPdfToJpeg(pdfTemp, targetPreviewPath);
+          if (rendered && fs.existsSync(targetPreviewPath)) {
+            res.setHeader("Content-Type", "image/jpeg");
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            return res.sendFile(targetPreviewPath);
+          }
+        } finally {
+          if (fs.existsSync(pdfTemp)) await fs.promises.unlink(pdfTemp).catch(() => {});
+        }
+      } catch (e) {
+        console.warn(`[PREVIEW] Fehler beim Laden des HD-Drive-Thumbnails für ${id}:`, e.message);
+      }
+    }
+
+    // 4. Fallback: Check standard thumbnail
+    const thumbPath = await getOrGenerateThumbnailPath(id);
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      return res.sendFile(thumbPath);
     }
 
     return res.status(404).send("Vorschau nicht gefunden");
@@ -2082,6 +2103,103 @@ app.post("/api/jobs/:id/target-company", requireAdmin, (req, res) => {
   } else {
     res.status(404).json({ success: false, error: "Job not found" });
   }
+});
+
+app.get("/api/jobs/:id/duplicates", async (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  if (job.isPrivate && !checkIsAdmin(req)) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+
+  const curInv = job.result?.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-" ? normalizeAlphaNum(job.result.invoiceNumber) : null;
+  const curName = (job.originalName || "").trim().toLowerCase();
+  const curSorted = (job.result?.full || "").trim().toLowerCase();
+  const curAmount = job.result?.invoiceAmmount || job.invoiceAmmount || null;
+  const curDate = job.result?.documentDate || job.result?.date || null;
+  const curCompany = (job.result?.company || "").trim().toLowerCase();
+
+  const duplicates = [];
+
+  for (const jId in uploadJobs) {
+    if (jId === jobId) continue;
+    const j = uploadJobs[jId];
+    if (j.isPrivate && !checkIsAdmin(req)) continue;
+
+    const matchReasons = [];
+    const otherInv = j.result?.invoiceNumber && j.result.invoiceNumber !== "none" && j.result.invoiceNumber !== "-" ? normalizeAlphaNum(j.result.invoiceNumber) : null;
+    const otherName = (j.originalName || "").trim().toLowerCase();
+    const otherSorted = (j.result?.full || "").trim().toLowerCase();
+    const otherAmount = j.result?.invoiceAmmount || j.invoiceAmmount || null;
+    const otherDate = j.result?.documentDate || j.result?.date || null;
+    const otherCompany = (j.result?.company || "").trim().toLowerCase();
+
+    // 1. Matching Invoice Number
+    if (curInv && otherInv && curInv === otherInv) {
+      matchReasons.push(`Gleiche Rechnungsnummer (${j.result?.invoiceNumber || j.invoiceNumber})`);
+    }
+
+    // 2. Matching Target Filename
+    if (curSorted && otherSorted && curSorted === otherSorted) {
+      matchReasons.push(`Identischer generierter Dateiname (${j.result?.full})`);
+    }
+
+    // 3. Matching Original Filename
+    if (curName && otherName && curName === otherName) {
+      matchReasons.push(`Gleicher Original-Dateiname (${j.originalName})`);
+    }
+
+    // 4. Matching Amount + Date + Company
+    if (curAmount && otherAmount && curAmount === otherAmount && curDate && otherDate && curDate === otherDate) {
+      matchReasons.push(`Gleicher Rechnungsbetrag (${(curAmount / 100).toFixed(2).replace(".", ",")} €) und Datum (${curDate})`);
+    }
+
+    if (matchReasons.length > 0) {
+      duplicates.push({
+        job: j,
+        matchReasons,
+        score: matchReasons.length,
+      });
+    }
+  }
+
+  duplicates.sort((a, b) => b.score - a.score);
+
+  res.json({
+    success: true,
+    currentJob: job,
+    duplicates,
+  });
+});
+
+app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  job.suspectedDuplicate = false;
+  saveJobs();
+  res.json({ success: true });
+});
+
+app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  const previewPath = path.join(localDownloadFolder, `preview_${jobId}.jpg`);
+  const thumbPath = path.join(localDownloadFolder, `thumb_${jobId}.jpg`);
+  if (fs.existsSync(previewPath)) await fs.promises.unlink(previewPath).catch(() => {});
+  if (fs.existsSync(thumbPath)) await fs.promises.unlink(thumbPath).catch(() => {});
+  if (job.filePath && fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
+
+  delete uploadJobs[jobId];
+  uploadQueue = uploadQueue.filter(id => id !== jobId);
+  saveJobs();
+
+  res.json({ success: true });
 });
 
 function normalizeAlphaNum(s) {

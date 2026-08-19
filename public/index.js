@@ -1158,7 +1158,7 @@ function renderJobs() {
 
     let duplicateBadgeHtml = '';
     if (job.suspectedDuplicate) {
-        duplicateBadgeHtml = '<span style="background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Verdacht auf Duplikat">⚠️ DUPLIKAT VERDACHT</span>';
+        duplicateBadgeHtml = `<span class="badge-open-duplicate-compare" data-job-id="${job.id}" style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); font-weight: 500;" title="Klicken, um Beleg mit erkannten Duplikaten gegenüberzustellen">⚠️ DUPLIKAT VERDACHT</span>`;
     }
 
     let statusText =
@@ -2694,6 +2694,203 @@ if (compareModalUploadBtn) {
   });
 }
 
+// --- Duplicate Compare Modal Logic ---
+const duplicateCompareModal = document.getElementById("duplicate-compare-modal");
+const dupModalCloseBtn = document.getElementById("dup-modal-close-btn");
+const dupModalCancelBtn = document.getElementById("dup-modal-cancel-btn");
+const dupModalDismissAllBtn = document.getElementById("dup-modal-dismiss-all-btn");
+const dupCompareLoading = document.getElementById("dup-compare-loading");
+const dupCompareContainer = document.getElementById("dup-compare-container");
+
+let currentDuplicateJobId = null;
+
+function closeDuplicateCompareModal() {
+  if (duplicateCompareModal) duplicateCompareModal.style.display = "none";
+  if (dupCompareContainer) dupCompareContainer.innerHTML = "";
+  currentDuplicateJobId = null;
+}
+
+async function openDuplicateCompareModal(jobId) {
+  if (!duplicateCompareModal || !dupCompareContainer) return;
+  currentDuplicateJobId = jobId;
+  duplicateCompareModal.style.display = "flex";
+  if (dupCompareLoading) dupCompareLoading.style.display = "block";
+  dupCompareContainer.innerHTML = "";
+
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/duplicates`);
+    const data = await res.json();
+    if (dupCompareLoading) dupCompareLoading.style.display = "none";
+
+    if (!data.success || !data.currentJob) {
+      dupCompareContainer.innerHTML = `
+        <div class="col-12 text-center py-5 text-muted">
+          <span class="material-symbols-outlined text-warning" style="font-size: 40px;">warning</span>
+          <div class="mt-2">Dokument konnte nicht geladen werden.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const cur = data.currentJob;
+    const dups = data.duplicates || [];
+
+    const curRes = cur.result || {};
+    const curInvNum = curRes.invoiceNumber && curRes.invoiceNumber !== "none" ? curRes.invoiceNumber : (cur.invoiceNumber || "-");
+    let curAmtStr = "-";
+    if (curRes.invoiceAmmount || cur.invoiceAmmount) {
+      curAmtStr = (((curRes.invoiceAmmount || cur.invoiceAmmount) / 100).toFixed(2)).replace(".", ",") + " €";
+    }
+    const curDate = curRes.documentDate || curRes.date || (cur.uploadDate ? new Date(cur.uploadDate).toLocaleDateString("de-DE") : "-");
+    const curComp = curRes.company || cur.targetCompany || "-";
+
+    const colClass = dups.length === 1 ? "col-12 col-md-6" : (dups.length === 2 ? "col-12 col-md-4" : "col-12 col-md-4");
+
+    let html = `
+      <!-- Left: Current Document -->
+      <div class="${colClass} d-flex flex-column">
+        <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa; border-color: #2196f3 !important;">
+          <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="fw-bold text-primary small d-flex align-items-center gap-1">
+              <span class="material-symbols-outlined" style="font-size: 18px;">upload_file</span>
+              <span>Aktuelles Dokument</span>
+            </span>
+            <span class="badge bg-primary text-white small">Aktueller Upload</span>
+          </div>
+          <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+            <div class="d-flex justify-content-between flex-wrap gap-1">
+              <span>Rechnung: <strong>${curInvNum}</strong></span>
+              <span class="text-success fw-bold font-monospace">Betrag: ${curAmtStr}</span>
+            </div>
+            <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+              <span>Datum: ${curDate}</span>
+              <span>Firma: ${curComp}</span>
+            </div>
+            <div class="text-truncate text-muted mt-1" style="font-size: 11px;" title="${curRes.full || cur.originalName || '-'}">
+              Datei: <em>${curRes.full || cur.originalName || '-'}</em>
+            </div>
+          </div>
+          <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; overflow: auto; position: relative;">
+            <img src="/api/jobs/${encodeURIComponent(cur.id)}/preview?_t=${Date.now()}" alt="Vorschau Aktuelles Dokument" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white;" />
+          </div>
+          <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
+            ${cur.result?.webViewLink ? `<a href="${cur.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-primary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
+            <button class="btn btn-xs btn-outline-success btn-dismiss-dup-single d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+              <span class="material-symbols-outlined" style="font-size: 14px;">check</span>
+              <span>Als Original behalten</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (dups.length === 0) {
+      html += `
+        <div class="col-12 col-md-6 d-flex flex-column justify-content-center align-items-center py-5">
+          <div class="card p-4 text-center border-0 shadow-sm" style="border-radius: 12px; background: #f8f9fa;">
+            <span class="material-symbols-outlined text-success mb-2" style="font-size: 48px;">check_circle</span>
+            <h6 class="fw-bold">Kein direktes Duplikat mehr im System</h6>
+            <p class="text-muted small mb-3">Möglicherweise wurde das frühere Duplikat bereits gelöscht oder archiviert.</p>
+            <button class="btn btn-sm btn-outline-primary btn-dismiss-dup-single mx-auto" data-job-id="${cur.id}" style="border-radius: 8px;">
+              Duplikat-Verdacht entfernen
+            </button>
+          </div>
+        </div>
+      `;
+    } else {
+      dups.forEach((d, idx) => {
+        const dupJob = d.job;
+        const dupRes = dupJob.result || {};
+        const dupInvNum = dupRes.invoiceNumber && dupRes.invoiceNumber !== "none" ? dupRes.invoiceNumber : (dupJob.invoiceNumber || "-");
+        let dupAmtStr = "-";
+        if (dupRes.invoiceAmmount || dupJob.invoiceAmmount) {
+          dupAmtStr = (((dupRes.invoiceAmmount || dupJob.invoiceAmmount) / 100).toFixed(2)).replace(".", ",") + " €";
+        }
+        const dupDate = dupRes.documentDate || dupRes.date || (dupJob.uploadDate ? new Date(dupJob.uploadDate).toLocaleDateString("de-DE") : "-");
+        const dupComp = dupRes.company || dupJob.targetCompany || "-";
+        const reasonsHtml = (d.matchReasons || []).map(r => `<span class="badge bg-warning-subtle text-dark border border-warning-subtle small me-1 mb-1">✓ ${r}</span>`).join(" ");
+
+        html += `
+          <!-- Duplicate ${idx + 1} -->
+          <div class="${colClass} d-flex flex-column">
+            <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa; border-color: #ff9800 !important;">
+              <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-warning small d-flex align-items-center gap-1">
+                  <span class="material-symbols-outlined text-warning" style="font-size: 18px;">content_copy</span>
+                  <span>Mögliches Duplikat ${dups.length > 1 ? '#' + (idx + 1) : ''}</span>
+                </span>
+                <span class="badge bg-warning text-dark small">Gefunden (${new Date(dupJob.uploadDate || Date.now()).toLocaleDateString("de-DE")})</span>
+              </div>
+              <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+                <div class="d-flex justify-content-between flex-wrap gap-1">
+                  <span>Rechnung: <strong>${dupInvNum}</strong></span>
+                  <span class="text-success fw-bold font-monospace">Betrag: ${dupAmtStr}</span>
+                </div>
+                <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+                  <span>Datum: ${dupDate}</span>
+                  <span>Firma: ${dupComp}</span>
+                </div>
+                <div class="text-truncate text-muted mt-1" style="font-size: 11px;" title="${dupRes.full || dupJob.originalName || '-'}">
+                  Datei: <em>${dupRes.full || dupJob.originalName || '-'}</em>
+                </div>
+                <div class="mt-2 pt-1 border-top" style="font-size: 11px;">
+                  <strong class="text-dark">Übereinstimmung:</strong><br>
+                  ${reasonsHtml}
+                </div>
+              </div>
+              <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; overflow: auto; position: relative;">
+                <img src="/api/jobs/${encodeURIComponent(dupJob.id)}/preview?_t=${Date.now()}" alt="Vorschau Duplikat" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white;" />
+              </div>
+              <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
+                ${dupJob.result?.webViewLink ? `<a href="${dupJob.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
+                <button class="btn btn-xs btn-outline-danger btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                  <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
+                  <span>Duplikat löschen</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    dupCompareContainer.innerHTML = html;
+  } catch (err) {
+    console.error("[DUP COMPARE] Fehler:", err);
+    if (dupCompareLoading) dupCompareLoading.style.display = "none";
+    dupCompareContainer.innerHTML = `
+      <div class="col-12 text-center py-5 text-danger">
+        <span class="material-symbols-outlined" style="font-size: 40px;">error</span>
+        <div class="mt-2">Fehler beim Laden der Duplikate: ${err.message}</div>
+      </div>
+    `;
+  }
+}
+
+if (dupModalCloseBtn) dupModalCloseBtn.addEventListener("click", closeDuplicateCompareModal);
+if (dupModalCancelBtn) dupModalCancelBtn.addEventListener("click", closeDuplicateCompareModal);
+
+if (dupModalDismissAllBtn) {
+  dupModalDismissAllBtn.addEventListener("click", async () => {
+    if (!currentDuplicateJobId) return;
+    const jobId = currentDuplicateJobId;
+    dupModalDismissAllBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/dismiss-duplicate`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        if (typeof showToast === "function") showToast("✓ Duplikat-Verdacht verworfen.", "info");
+        closeDuplicateCompareModal();
+        startPolling();
+      }
+    } catch (e) {
+      alert("Fehler: " + e.message);
+    } finally {
+      dupModalDismissAllBtn.disabled = false;
+    }
+  });
+}
+
 // ==========================================
 // --- ClickUp Integration & Sync All UI ---
 // ==========================================
@@ -2905,6 +3102,71 @@ document.addEventListener("click", (e) => {
         alert("Netzwerkfehler: " + err.message);
         markSyncedBtn.disabled = false;
       });
+    return;
+  }
+
+  const dupBadge = e.target.closest(".badge-open-duplicate-compare");
+  if (dupBadge) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = dupBadge.getAttribute("data-job-id");
+    if (jobId) {
+      openDuplicateCompareModal(jobId);
+    }
+    return;
+  }
+
+  const dismissDupBtn = e.target.closest(".btn-dismiss-dup-single");
+  if (dismissDupBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = dismissDupBtn.getAttribute("data-job-id");
+    if (jobId) {
+      dismissDupBtn.disabled = true;
+      fetch(`/api/jobs/${encodeURIComponent(jobId)}/dismiss-duplicate`, { method: "POST" })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success) {
+            if (typeof showToast === "function") showToast("✓ Duplikat-Verdacht entfernt.", "info");
+            closeDuplicateCompareModal();
+            startPolling();
+          }
+        })
+        .catch((err) => alert("Fehler: " + err.message));
+    }
+    return;
+  }
+
+  const deleteDupBtn = e.target.closest(".btn-delete-dup-single");
+  if (deleteDupBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = deleteDupBtn.getAttribute("data-job-id");
+    if (jobId) {
+      if (confirm("Möchten Sie dieses Duplikat wirklich aus der Historie löschen?")) {
+        deleteDupBtn.disabled = true;
+        fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              if (typeof showToast === "function") showToast("✓ Duplikat erfolgreich gelöscht.", "success");
+              if (currentDuplicateJobId) {
+                openDuplicateCompareModal(currentDuplicateJobId);
+              } else {
+                closeDuplicateCompareModal();
+              }
+              startPolling();
+            } else {
+              alert("Fehler beim Löschen: " + (data.error || "Unbekannt"));
+              deleteDupBtn.disabled = false;
+            }
+          })
+          .catch((err) => {
+            alert("Netzwerkfehler: " + err.message);
+            deleteDupBtn.disabled = false;
+          });
+      }
+    }
     return;
   }
 });

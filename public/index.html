@@ -1034,7 +1034,7 @@
                     <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
                     <div class="small">Lade Vorschau Seite 1...</div>
                   </div>
-                  <img id="compare-local-img" src="" alt="Vorschau Seite 1" style="max-width: 100% !important; max-height: 480px !important; width: auto !important; height: auto !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
+                  <img id="compare-local-img" src="" alt="Vorschau Seite 1" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
                 </div>
               </div>
             </div>
@@ -1064,7 +1064,7 @@
                     <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
                     <div class="small">Lade Beleg Seite 1 aus Lexoffice...</div>
                   </div>
-                  <img id="compare-remote-img" src="" alt="Lexoffice Beleg Seite 1" style="max-width: 100% !important; max-height: 480px !important; width: auto !important; height: auto !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
+                  <img id="compare-remote-img" src="" alt="Lexoffice Beleg Seite 1" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
                 </div>
               </div>
             </div>
@@ -1084,6 +1084,50 @@
               <button id="compare-modal-upload-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 8px;">
                 <span class="material-symbols-outlined" style="font-size: 16px;">cloud_upload</span>
                 <span>Trotzdem neu übertragen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Duplicate Compare Modal -->
+      <div id="duplicate-compare-modal" class="modal-overlay" style="z-index: 3150; display: none;">
+        <div class="modal-content" style="max-width: 1200px; width: 96%; max-height: 94vh; display: flex; flex-direction: column; padding: 20px; border-radius: 16px;">
+          <!-- Header -->
+          <div class="d-flex justify-content-between align-items-center pb-2 mb-3 border-bottom">
+            <div class="d-flex align-items-center gap-2">
+              <div style="width: 38px; height: 38px; border-radius: 8px; background: #fff3e0; color: #e65100; display: flex; align-items: center; justify-content: center;">
+                <span class="material-symbols-outlined" style="font-size: 24px;">content_copy</span>
+              </div>
+              <div>
+                <h5 class="m-0 fw-bold text-dark" style="font-size: 16px;">Duplikat-Verdacht: Beleg-Gegenüberstellung</h5>
+                <div class="text-muted small" style="font-size: 12px;">Prüfe und vergleiche das aktuelle Dokument direkt mit den im System erkannten Duplikaten.</div>
+              </div>
+            </div>
+            <button id="dup-modal-close-btn" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <!-- Content Area: Split View of current doc and duplicate(s) -->
+          <div id="dup-compare-loading" class="text-center py-5" style="display: none;">
+            <div class="spinner-border text-warning mb-2" role="status"></div>
+            <div class="text-muted small">Lade Belege & Duplikate...</div>
+          </div>
+
+          <div id="dup-compare-container" class="row g-3 flex-grow-1 overflow-auto mb-3" style="min-height: 480px;">
+            <!-- Dynamically populated cards: Left (Current Document) + Right (Duplicate 1..N) -->
+          </div>
+
+          <!-- Bottom Action Bar -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2 border-top">
+            <button id="dup-modal-dismiss-all-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">check</span>
+              <span>Kein Duplikat (Verdacht verwerfen)</span>
+            </button>
+            <div class="d-flex align-items-center gap-2">
+              <button id="dup-modal-cancel-btn" type="button" class="btn btn-sm btn-secondary d-flex align-items-center gap-1 px-3" style="border-radius: 8px;">
+                <span>Schließen</span>
               </button>
             </div>
           </div>
@@ -1269,7 +1313,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v23"></script>
+      <script src="/index.js?v=20260819_gmail_v25"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {
