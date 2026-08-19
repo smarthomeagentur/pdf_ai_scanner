@@ -643,58 +643,31 @@ app.get("/api/jobs/:id/file", async (req, res) => {
 async function renderPdfToJpeg(pdfPath, targetThumbPath) {
   if (!fs.existsSync(pdfPath)) return false;
 
-  // 1. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
-  try {
-    const util = require("util");
-    const execFileAsync = util.promisify(execFile);
-    const prefix = targetThumbPath.replace(/\.jpe?g$/i, "");
-    await execFileAsync("pdftoppm", ["-jpeg", "-r", "120", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
-    if (fs.existsSync(targetThumbPath)) return true;
-    if (fs.existsSync(`${prefix}.jpg`)) {
-      if (`${prefix}.jpg` !== targetThumbPath) await fs.promises.rename(`${prefix}.jpg`, targetThumbPath).catch(() => {});
-      return true;
-    }
-  } catch (e) {}
-
-  // 2. PyMuPDF (fitz) - falls installiert
+  // 1. PyMuPDF (fitz) - Native Python binding with exact PDF aspect ratio & rotation
   try {
     const util = require("util");
     const execFileAsync = util.promisify(execFile);
     await execFileAsync(getPythonPath(), [
       "-c",
-      "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+      "import sys, fitz; doc=fitz.open(sys.argv[1]); page=doc[0]; pix=page.get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
       pdfPath,
       targetThumbPath,
     ]);
     if (fs.existsSync(targetThumbPath)) return true;
   } catch (fitzErr) {}
 
-  // 3. Fallback: pdf2pic
+  // 2. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
   try {
-    const { fromPath } = require("pdf2pic");
-    const dir = path.dirname(targetThumbPath);
-    const baseName = path.basename(targetThumbPath, path.extname(targetThumbPath));
-    const convert = fromPath(pdfPath, {
-      density: 120,
-      saveFilename: baseName,
-      savePath: dir,
-      format: "jpeg",
-    });
-    const res = await convert(1);
-    const possible = [
-      path.join(dir, `${baseName}.1.jpeg`),
-      path.join(dir, `${baseName}.1.jpg`),
-      res?.path,
-    ];
-    for (const p of possible) {
-      if (p && fs.existsSync(p)) {
-        if (p !== targetThumbPath) {
-          await fs.promises.rename(p, targetThumbPath).catch(() => {});
-        }
-        return true;
-      }
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    const prefix = targetThumbPath.replace(/\.jpe?g$/i, "");
+    await execFileAsync("pdftoppm", ["-jpeg", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+    if (fs.existsSync(targetThumbPath)) return true;
+    if (fs.existsSync(`${prefix}.jpg`)) {
+      if (`${prefix}.jpg` !== targetThumbPath) await fs.promises.rename(`${prefix}.jpg`, targetThumbPath).catch(() => {});
+      return true;
     }
-  } catch (p2pErr) {}
+  } catch (e) {}
 
   return false;
 }
