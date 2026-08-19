@@ -1232,11 +1232,40 @@ async function processSingleJob(jobId) {
 
     await fs.promises.unlink(job.filePath).catch(() => { });
 
-    const isDuplicate = Object.values(uploadJobs).some(j => 
-      j.id !== jobId && 
-      j.status === 'completed' &&
-      (j.originalName === job.originalName || (j.result && j.result.full === sortedName.full))
-    );
+    // --- Duplikat-Erkennung (umfassend) ---
+    // Wenn der Job bereits manuell als "kein Duplikat" bestätigt wurde, nicht erneut markieren
+    const normInvNum = sortedName.invoiceNumber && sortedName.invoiceNumber !== "none" && sortedName.invoiceNumber !== "-"
+      ? normalizeAlphaNum(sortedName.invoiceNumber) : null;
+    const normAmount = sortedName.invoiceAmmount || null;
+    const normDate = (sortedName.documentDate && sortedName.documentDate !== "unknown") ? sortedName.documentDate : null;
+    const normFull = (sortedName.full || "").trim().toLowerCase();
+    const normOrigName = (job.originalName || "").trim().toLowerCase();
+
+    const isDuplicate = job.duplicateDismissed ? false : Object.values(uploadJobs).some(j => {
+      if (j.id === jobId) return false;
+      if (j.status !== "completed" || !j.result) return false;
+
+      const jInv = j.result.invoiceNumber && j.result.invoiceNumber !== "none" && j.result.invoiceNumber !== "-"
+        ? normalizeAlphaNum(j.result.invoiceNumber) : null;
+      const jAmount = j.result.invoiceAmmount || j.invoiceAmmount || null;
+      const jDate = (j.result.documentDate && j.result.documentDate !== "unknown") ? j.result.documentDate : null;
+      const jFull = (j.result.full || "").trim().toLowerCase();
+      const jOrigName = (j.originalName || "").trim().toLowerCase();
+
+      // 1. Gleiche Rechnungsnummer (stärkster Indikator)
+      if (normInvNum && jInv && normInvNum === jInv) return true;
+
+      // 2. Gleicher generierter Dateiname
+      if (normFull && jFull && normFull === jFull) return true;
+
+      // 3. Gleicher Betrag + Datum (starke Kombination)
+      if (normAmount && jAmount && normAmount === jAmount && normDate && jDate && normDate === jDate) return true;
+
+      // 4. Gleicher Originalname (schwacher Indikator)
+      if (normOrigName && jOrigName && normOrigName === jOrigName) return true;
+
+      return false;
+    });
     job.suspectedDuplicate = isDuplicate;
 
     job.status = "completed";
@@ -1726,12 +1755,21 @@ app.get("/api/gmail/inbox", requireAdmin, async (req, res) => {
     const allEmails = await gmailApi.listInboxEmailsWithPdfs({ query, accountId });
     const accountsList = await gmailApi.getAccountsList();
 
-    // Filtere übersprungene Mails heraus
+    // Filtere übersprungene und bereits verarbeitete Mails heraus
     const activeEmails = [];
     let detectedCount = 0;
 
+    const processedGmailMessageIds = new Set(
+      Object.values(uploadJobs)
+        .filter((j) => j.source === "gmail" && j.gmailMessageId)
+        .map((j) => j.gmailMessageId)
+    );
+
     for (const email of allEmails) {
       if (skippedEmails[email.id]) {
+        continue;
+      }
+      if (processedGmailMessageIds.has(email.id)) {
         continue;
       }
       if (email.isDetected) {
@@ -1822,17 +1860,24 @@ app.post("/api/gmail/unskip", requireAdmin, (req, res) => {
 // 5. POST /api/gmail/process
 app.post("/api/gmail/process", requireAdmin, async (req, res) => {
   try {
-    const { messageId, accountId, subject, fromName, fromEmail, date, attachmentIds, archive } = req.body;
+    const { messageId, accountId, subject, fromName, fromEmail, date, attachmentIds, attachments, archive } = req.body;
     if (!messageId) {
       return res.status(400).json({ success: false, error: "messageId erforderlich" });
     }
 
     const shouldArchive = archive !== undefined ? !!archive : appSettings.GMAIL_AUTO_ARCHIVE !== false;
 
-    // Falls attachmentIds nicht explizit übergeben wurden, Anhänge aus Mail laden
+    // Falls Anhänge oder attachmentIds explizit übergeben wurden, nur diese verarbeiten
     let attachmentsToProcess = [];
-    if (Array.isArray(attachmentIds) && attachmentIds.length > 0) {
-      attachmentsToProcess = attachmentIds;
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      attachmentsToProcess = attachments;
+    } else if (Array.isArray(attachmentIds) && attachmentIds.length > 0) {
+      const gmail = await gmailApi.getClient(accountId);
+      const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+      const allFound = [];
+      gmailApi.extractPdfParts(msg.data.payload?.parts || [], allFound);
+      attachmentsToProcess = allFound.filter((a) => attachmentIds.includes(a.attachmentId));
+      if (attachmentsToProcess.length === 0) attachmentsToProcess = allFound;
     } else {
       const gmail = await gmailApi.getClient(accountId);
       const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
@@ -1842,7 +1887,7 @@ app.post("/api/gmail/process", requireAdmin, async (req, res) => {
     }
 
     if (attachmentsToProcess.length === 0) {
-      return res.status(400).json({ success: false, error: "Keine PDF-Anhänge in dieser E-Mail gefunden." });
+      return res.status(400).json({ success: false, error: "Keine PDF-Anhänge zum Verarbeiten ausgewählt." });
     }
 
     const createdJobs = [];
@@ -2140,11 +2185,12 @@ app.get("/api/jobs/:id/duplicates", async (req, res) => {
     return res.status(403).json({ success: false, error: "Forbidden" });
   }
 
-  const curInv = job.result?.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-" ? normalizeAlphaNum(job.result.invoiceNumber) : null;
+  const curInv = job.result?.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-"
+    ? normalizeAlphaNum(job.result.invoiceNumber) : null;
   const curName = (job.originalName || "").trim().toLowerCase();
   const curSorted = (job.result?.full || "").trim().toLowerCase();
   const curAmount = job.result?.invoiceAmmount || job.invoiceAmmount || null;
-  const curDate = job.result?.documentDate || job.result?.date || null;
+  const curDate = job.result?.documentDate && job.result.documentDate !== "unknown" ? job.result.documentDate : null;
   const curCompany = (job.result?.company || "").trim().toLowerCase();
 
   const duplicates = [];
@@ -2153,40 +2199,59 @@ app.get("/api/jobs/:id/duplicates", async (req, res) => {
     if (jId === jobId) continue;
     const j = uploadJobs[jId];
     if (j.isPrivate && !checkIsAdmin(req)) continue;
+    if (j.status !== "completed" || !j.result) continue;
 
     const matchReasons = [];
-    const otherInv = j.result?.invoiceNumber && j.result.invoiceNumber !== "none" && j.result.invoiceNumber !== "-" ? normalizeAlphaNum(j.result.invoiceNumber) : null;
-    const otherName = (j.originalName || "").trim().toLowerCase();
-    const otherSorted = (j.result?.full || "").trim().toLowerCase();
-    const otherAmount = j.result?.invoiceAmmount || j.invoiceAmmount || null;
-    const otherDate = j.result?.documentDate || j.result?.date || null;
-    const otherCompany = (j.result?.company || "").trim().toLowerCase();
+    let score = 0;
 
-    // 1. Matching Invoice Number
-    if (curInv && otherInv && curInv === otherInv) {
-      matchReasons.push(`Gleiche Rechnungsnummer (${j.result?.invoiceNumber || j.invoiceNumber})`);
+    const jInv = j.result.invoiceNumber && j.result.invoiceNumber !== "none" && j.result.invoiceNumber !== "-"
+      ? normalizeAlphaNum(j.result.invoiceNumber) : null;
+    const jName = (j.originalName || "").trim().toLowerCase();
+    const jSorted = (j.result.full || "").trim().toLowerCase();
+    const jAmount = j.result.invoiceAmmount || j.invoiceAmmount || null;
+    const jDate = j.result.documentDate && j.result.documentDate !== "unknown" ? j.result.documentDate : null;
+    const jCompany = (j.result.company || "").trim().toLowerCase();
+
+    // 1. Gleiche Rechnungsnummer – stärkster Indikator (exakt oder Substring)
+    if (curInv && jInv) {
+      if (curInv === jInv) {
+        matchReasons.push(`Gleiche Rechnungsnummer (${j.result.invoiceNumber})`);
+        score += 10;
+      } else if (curInv.length >= 4 && (curInv.includes(jInv) || jInv.includes(curInv))) {
+        matchReasons.push(`Ähnliche Rechnungsnummer (${job.result.invoiceNumber} ↔ ${j.result.invoiceNumber})`);
+        score += 5;
+      }
     }
 
-    // 2. Matching Target Filename
-    if (curSorted && otherSorted && curSorted === otherSorted) {
-      matchReasons.push(`Identischer generierter Dateiname (${j.result?.full})`);
+    // 2. Gleicher generierter Dateiname (KI-Ausgabe)
+    if (curSorted && jSorted && curSorted === jSorted) {
+      matchReasons.push(`Identischer generierter Dateiname (${j.result.full})`);
+      score += 6;
     }
 
-    // 3. Matching Original Filename
-    if (curName && otherName && curName === otherName) {
+    // 3. Gleicher Rechnungsbetrag + Datum
+    if (curAmount && jAmount && curAmount === jAmount && curDate && jDate && curDate === jDate) {
+      matchReasons.push(`Gleicher Betrag (${(curAmount / 100).toFixed(2).replace(".", ",")} €) und Datum (${curDate})`);
+      score += 8;
+    }
+
+    // 4. Gleicher Rechnungsbetrag + Firma
+    if (curAmount && jAmount && curAmount === jAmount && curCompany && jCompany && curCompany === jCompany) {
+      matchReasons.push(`Gleicher Betrag (${(curAmount / 100).toFixed(2).replace(".", ",")} €) und Firma (${j.result.company})`);
+      score += 4;
+    }
+
+    // 5. Gleicher Original-Dateiname
+    if (curName && jName && curName === jName) {
       matchReasons.push(`Gleicher Original-Dateiname (${j.originalName})`);
-    }
-
-    // 4. Matching Amount + Date + Company
-    if (curAmount && otherAmount && curAmount === otherAmount && curDate && otherDate && curDate === otherDate) {
-      matchReasons.push(`Gleicher Rechnungsbetrag (${(curAmount / 100).toFixed(2).replace(".", ",")} €) und Datum (${curDate})`);
+      score += 3;
     }
 
     if (matchReasons.length > 0) {
       duplicates.push({
         job: j,
         matchReasons,
-        score: matchReasons.length,
+        score,
       });
     }
   }
@@ -2206,8 +2271,55 @@ app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
 
   job.suspectedDuplicate = false;
+  job.duplicateDismissed = true; // Manuell bestätigt: nicht erneut als Duplikat markieren
   saveJobs();
+  console.log(`[DUPLICATE] Job ${jobId} (${job.originalName || job.result?.full}) als kein Duplikat bestätigt.`);
   res.json({ success: true });
+});
+
+// Rückwirkende Duplikat-Erkennung für alle abgeschlossenen Jobs
+// Jobs mit duplicateDismissed=true werden übersprungen (manuell als kein Duplikat bestätigt)
+app.post("/api/jobs/rescan-duplicates", requireAdmin, (req, res) => {
+  const completedJobs = Object.values(uploadJobs).filter(j =>
+    j.status === "completed" && j.result && !j.suspectedDuplicate && !j.duplicateDismissed
+  );
+  let markedCount = 0;
+
+  for (const job of completedJobs) {
+    const invA = job.result.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-"
+      ? normalizeAlphaNum(job.result.invoiceNumber) : null;
+    const amtA = job.result.invoiceAmmount || job.invoiceAmmount || null;
+    const dateA = job.result.documentDate && job.result.documentDate !== "unknown" ? job.result.documentDate : null;
+    const fullA = (job.result.full || "").trim().toLowerCase();
+    const origA = (job.originalName || "").trim().toLowerCase();
+
+    const found = Object.values(uploadJobs).some(j => {
+      if (j.id === job.id) return false;
+      if (j.status !== "completed" || !j.result) return false;
+
+      const invB = j.result.invoiceNumber && j.result.invoiceNumber !== "none" && j.result.invoiceNumber !== "-"
+        ? normalizeAlphaNum(j.result.invoiceNumber) : null;
+      const amtB = j.result.invoiceAmmount || j.invoiceAmmount || null;
+      const dateB = j.result.documentDate && j.result.documentDate !== "unknown" ? j.result.documentDate : null;
+      const fullB = (j.result.full || "").trim().toLowerCase();
+      const origB = (j.originalName || "").trim().toLowerCase();
+
+      if (invA && invB && invA === invB) return true;
+      if (fullA && fullB && fullA === fullB) return true;
+      if (amtA && amtB && amtA === amtB && dateA && dateB && dateA === dateB) return true;
+      if (origA && origB && origA === origB) return true;
+      return false;
+    });
+
+    if (found) {
+      job.suspectedDuplicate = true;
+      markedCount++;
+    }
+  }
+
+  if (markedCount > 0) saveJobs();
+  console.log(`[DUPLICATE RESCAN] ${markedCount} neue Duplikate in ${completedJobs.length} Jobs gefunden.`);
+  res.json({ success: true, markedCount, scanned: completedJobs.length });
 });
 
 app.post("/api/jobs/:id/retry", (req, res) => {
@@ -2232,6 +2344,27 @@ app.post("/api/jobs/:id/retry", (req, res) => {
   res.json({ success: true, message: "Job wird erneut verarbeitet." });
 });
 
+app.post("/api/jobs/:id/cancel", async (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Auftrag nicht gefunden." });
+
+  // Aus Warteschlange entfernen
+  uploadQueue = uploadQueue.filter((id) => id !== jobId);
+
+  // Dateien bereinigen
+  const previewPath = path.join(localDownloadFolder, `preview_${jobId}.jpg`);
+  const thumbPath = path.join(localDownloadFolder, `thumb_${jobId}.jpg`);
+  if (fs.existsSync(previewPath)) await fs.promises.unlink(previewPath).catch(() => {});
+  if (fs.existsSync(thumbPath)) await fs.promises.unlink(thumbPath).catch(() => {});
+  if (job.filePath && fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
+
+  delete uploadJobs[jobId];
+  saveJobs();
+  console.log(`[QUEUE] Auftrag ${jobId} (${job.originalName}) durch Benutzer abgebrochen und gelöscht.`);
+  res.json({ success: true, message: "Auftrag erfolgreich abgebrochen und gelöscht." });
+});
+
 app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
   const jobId = req.params.id;
   const job = uploadJobs[jobId];
@@ -2248,6 +2381,31 @@ app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
   saveJobs();
 
   res.json({ success: true });
+});
+
+// Hide / Unhide a job (keeps it in DB, does NOT delete from Drive, not re-synced)
+app.post("/api/jobs/:id/hide", requireAdmin, (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  const isHidden = req.body.isHidden === true || req.body.isHidden === "true";
+  job.isHidden = isHidden;
+
+  // Ensure the Drive file ID is tracked in processedDriveFiles so it won't be re-imported on Drive sync
+  if (isHidden) {
+    if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) {
+      processedDriveFiles.push(job.rawDriveId);
+    }
+    const sortedDriveId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+    if (sortedDriveId && !processedDriveFiles.includes(sortedDriveId)) {
+      processedDriveFiles.push(sortedDriveId);
+    }
+  }
+
+  saveJobs();
+  console.log(`[JOB] Job ${jobId} (${job.originalName || job.result?.full}) wurde ${isHidden ? "ausgeblendet" : "eingeblendet"}.`);
+  res.json({ success: true, isHidden });
 });
 
 function normalizeAlphaNum(s) {
