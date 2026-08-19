@@ -2902,14 +2902,14 @@ async function openDuplicateCompareModal(jobId) {
             <img src="/api/jobs/${encodeURIComponent(cur.id)}/preview?_t=${Date.now()}" alt="Vorschau Aktuelles Dokument" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white;" />
           </div>
           <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
-            ${cur.result?.webViewLink ? `<a href="${cur.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
+            ${cur.result?.webViewLink ? `<a href="${cur.result.webViewLink}" target="_blank" class="btn btn-xs d-inline-flex align-items-center gap-1" style="background: #f8f9fa; color: #495057; border: 1px solid #ced4da; font-size: 11px; padding: 4px 10px; border-radius: 8px; font-weight: 500; text-decoration: none;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
             <div class="d-flex align-items-center gap-1">
-              <button class="btn btn-xs btn-outline-success btn-keep-dup-single d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;" title="Beleg behalten, Duplikat-Verdacht entfernen & ausblenden">
+              <button class="btn btn-xs btn-keep-dup-single d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="background: #f8f9fa; color: #2e7d32; border: 1px solid #a5d6a7; font-size: 11px; padding: 4px 10px; border-radius: 8px; font-weight: 500;" title="Beleg behalten & Duplikat-Verdacht entfernen">
                 <span class="material-symbols-outlined" style="font-size: 14px;">check</span>
                 <span>Behalten</span>
               </button>
               ${window.isAdmin ? `
-                <button class="btn btn-xs btn-outline-danger btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;" title="Beleg aus der Historie löschen">
+                <button class="btn btn-xs btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="background: #f8f9fa; color: #c62828; border: 1px solid #ef9a9a; font-size: 11px; padding: 4px 10px; border-radius: 8px; font-weight: 500;" title="Beleg aus der Historie löschen">
                   <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
                   <span>Löschen</span>
                 </button>
@@ -2927,9 +2927,9 @@ async function openDuplicateCompareModal(jobId) {
             <span class="material-symbols-outlined text-success mb-2" style="font-size: 48px;">check_circle</span>
             <h6 class="fw-bold">Kein direktes Duplikat mehr im System</h6>
             <p class="text-muted small mb-3">Möglicherweise wurde das frühere Duplikat bereits gelöscht oder archiviert.</p>
-            <button class="btn btn-sm btn-outline-success btn-keep-dup-single mx-auto d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="border-radius: 8px;">
+            <button class="btn btn-sm btn-keep-dup-single mx-auto d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="background: #f8f9fa; color: #2e7d32; border: 1px solid #a5d6a7; font-size: 12px; padding: 5px 12px; border-radius: 8px; font-weight: 500;">
               <span class="material-symbols-outlined" style="font-size: 16px;">check</span>
-              <span>Behalten & ausblenden</span>
+              <span>Behalten</span>
             </button>
           </div>
         </div>
@@ -2979,14 +2979,14 @@ async function openDuplicateCompareModal(jobId) {
                 <img src="/api/jobs/${encodeURIComponent(dupJob.id)}/preview?_t=${Date.now()}" alt="Vorschau Duplikat" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white;" />
               </div>
               <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
-                ${dupJob.result?.webViewLink ? `<a href="${dupJob.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
+                ${dupJob.result?.webViewLink ? `<a href="${dupJob.result.webViewLink}" target="_blank" class="btn btn-xs d-inline-flex align-items-center gap-1" style="background: #f8f9fa; color: #495057; border: 1px solid #ced4da; font-size: 11px; padding: 4px 10px; border-radius: 8px; font-weight: 500; text-decoration: none;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
                 <div class="d-flex align-items-center gap-1">
-                  <button class="btn btn-xs btn-outline-success btn-keep-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;" title="Beleg behalten, Duplikat-Verdacht entfernen & ausblenden">
+                  <button class="btn btn-xs btn-keep-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="background: #f8f9fa; color: #2e7d32; border: 1px solid #a5d6a7; font-size: 11px; padding: 4px 10px; border-radius: 8px; font-weight: 500;" title="Beleg behalten & Duplikat-Verdacht entfernen">
                     <span class="material-symbols-outlined" style="font-size: 14px;">check</span>
                     <span>Behalten</span>
                   </button>
                   ${window.isAdmin ? `
-                    <button class="btn btn-xs btn-outline-danger btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;" title="Beleg aus der Historie löschen">
+                    <button class="btn btn-xs btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="background: #f8f9fa; color: #c62828; border: 1px solid #ef9a9a; font-size: 11px; padding: 4px 10px; border-radius: 8px; font-weight: 500;" title="Beleg aus der Historie löschen">
                       <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
                       <span>Löschen</span>
                     </button>
