@@ -11,6 +11,7 @@ Eine leistungsstarke, webbasierte PWA-Scanner-Anwendung, die es Benutzern ermög
 - **Privat-Modus für sensible Dokumente:** Administratoren können Dateien als "Privat" markieren. Diese werden sicher mit Google Drive synchronisiert (`appProperties`) und für normale Nutzer in der Oberfläche und Suche unsichtbar gemacht.
 - **Sicherer Zugriff (JWT):** Die App lässt sich mit einem Master-Passwort und separatem Admin-Passwort absichern. Login-Sessions werden über JSON Web Tokens verwaltet.
 - **Google Drive Integration:** Gescannte und verarbeitete Dokumente / PDFs werden direkt im verknüpften Google Drive-Konto hochgeladen.
+- **Google Mail (Workmail) Inbox Scanner:** Durchsucht den Posteingang nach offenen E-Mails mit PDF-Anhängen, ermöglicht Einzel- und Batch-Verarbeitung, optionales automatisches Archivieren in Gmail und eine separate Ablage für übersprungene Mails ("Skipped Mails").
 
 ## 🛠 Verwendete Technologien
 
@@ -71,7 +72,9 @@ Damit die App Dokumente auf Google Drive hochladen kann, benötigst du eigene Zu
 **Schritt-für-Schritt-Anleitung:**
 1. Gehe zur [Google Cloud Console](https://console.cloud.google.com/).
 2. Erstelle ein neues Projekt.
-3. Gehe zu **APIs & Dienste** > **Bibliothek** und suche nach **Google Drive API**. Klicke auf **Aktivieren**.
+3. Gehe zu **APIs & Dienste** > **Bibliothek** und aktiviere folgende APIs:
+   - **Google Drive API** (für Drive Uploads & Ordnerverwaltung)
+   - **Gmail API** (für den Posteingang-Scanner & E-Mail-Archivierung)
 4. Navigiere zu **APIs & Dienste** > **OAuth-Zustimmungsbildschirm** und konfiguriere ihn (Nutzerart "Extern" o. "Intern", App-Name vergeben, Testnutzer hinzufügen, falls Status "Testing").
 5. Gehe zu **Anmeldedaten** > **Anmeldedaten erstellen** > **OAuth-Client-ID**.
 6. Wähle als Anwendungstyp **Webanwendung** oder **Desktop-App** (je nach genauer Auth-Implementierung im Backend, in der Regel wird Desktop für den initialen Token-Generierungs-Flow genutzt).

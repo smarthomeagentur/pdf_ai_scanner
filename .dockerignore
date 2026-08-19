@@ -7,3 +7,7 @@ cookies.json
 token.json
 gdrive_secret.json
 downloads/
+# ONNX vendor JS/WASM files are generated from node_modules in the Dockerfile
+public/vendor/
+# Sample scanner test images are not needed in production
+public/samples-scanner/

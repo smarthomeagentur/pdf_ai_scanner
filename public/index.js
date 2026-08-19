@@ -29,6 +29,14 @@ openSettingsBtn.addEventListener("click", async () => {
         alert("Falsches Admin-Passwort.");
         return;
       }
+      window.isAdmin = true;
+      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+      const navInboxTab = document.getElementById("nav-inbox-tab");
+      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+      if (navInboxTab) navInboxTab.style.display = "inline-flex";
+      renderJobs();
+    } else {
+      window.isAdmin = true;
     }
   } catch (e) {
     console.error("Admin Check Error", e);
@@ -55,10 +63,11 @@ openSettingsBtn.addEventListener("click", async () => {
       document.getElementById("auth-status").innerText = "Bereit zur Authentifizierung";
       document.getElementById("auth-btn").style.display = "inline-block";
 
-      // Initialize Google Auth Implicit flow client
+      // Initialize Google Auth client for Primary Account (Google Drive + Gmail)
       authClientCode = window.google.accounts.oauth2.initCodeClient({
         client_id: googleClientId,
-        scope: "https://www.googleapis.com/auth/drive",
+        scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify",
+        prompt: "consent",
         ux_mode: "popup",
         callback: async (response) => {
           if (response.code) {
@@ -66,14 +75,47 @@ openSettingsBtn.addEventListener("click", async () => {
             const authRes = await fetch("/api/auth/code", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: response.code }),
+              body: JSON.stringify({ code: response.code, isSecondary: false }),
             });
             if (authRes.ok) {
               document.getElementById("auth-status").innerText = "Erfolgreich verbunden!";
               document.getElementById("auth-btn").style.display = "none";
               loadFolders();
+              if (typeof loadInboxData === "function") {
+                loadInboxData(false);
+              }
             } else {
               document.getElementById("auth-status").innerText = "Fehler bei der Verbindung.";
+            }
+          }
+        },
+      });
+
+      // Initialize Google Auth client for Secondary Gmail Accounts (ONLY Gmail scope, NO Drive!)
+      secondaryGmailAuthClient = window.google.accounts.oauth2.initCodeClient({
+        client_id: googleClientId,
+        scope: "https://www.googleapis.com/auth/gmail.modify",
+        prompt: "select_account consent",
+        ux_mode: "popup",
+        callback: async (response) => {
+          if (response.code) {
+            try {
+              const authRes = await fetch("/api/auth/code", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: response.code, isSecondary: true }),
+              });
+              const data = await authRes.json();
+              if (data.success) {
+                if (typeof showToast === "function") {
+                  showToast(`Posteingang ${data.account?.email || ""} erfolgreich hinzugefügt!`, "success");
+                }
+                loadInboxData(false);
+              } else {
+                alert("Fehler beim Hinzufügen des Posteingangs: " + (data.error || "Unbekannter Fehler"));
+              }
+            } catch (err) {
+              alert("Fehler bei der Autorisierung: " + err.message);
             }
           }
         },
@@ -166,6 +208,17 @@ async function loadFolders() {
         document.getElementById("admin-backup-container").style.display = "block";
         const driveSyncContainer = document.getElementById("drive-sync-settings-container");
         if (driveSyncContainer) driveSyncContainer.style.display = "block";
+
+        const gmailSettingsContainer = document.getElementById("gmail-settings-container");
+        if (gmailSettingsContainer) {
+          gmailSettingsContainer.style.display = "block";
+          const autoArchCb = document.getElementById("gmail-auto-archive-checkbox");
+          if (autoArchCb) autoArchCb.checked = window.currentSettings.GMAIL_AUTO_ARCHIVE !== false;
+          const monGmailCb = document.getElementById("monitor-gmail-checkbox");
+          if (monGmailCb) monGmailCb.checked = window.currentSettings.MONITOR_GMAIL === true;
+          const queryInput = document.getElementById("gmail-scan-query-input");
+          if (queryInput) queryInput.value = window.currentSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
+        }
 
         const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
         if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
@@ -342,6 +395,10 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
   const clickupAutoTask = document.getElementById("clickup-auto-task").checked;
   const clickupFilterPrivate = document.getElementById("clickup-filter-private").checked;
 
+  const gmailAutoArchive = document.getElementById("gmail-auto-archive-checkbox")?.checked;
+  const monitorGmailState = document.getElementById("monitor-gmail-checkbox")?.checked;
+  const gmailScanQuery = document.getElementById("gmail-scan-query-input")?.value?.trim() || "in:inbox filename:pdf";
+
   const res = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -351,6 +408,9 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
       AI_CATEGORIES: aiCategories,
       AI_COMPANY: aiCompany,
       MONITOR_DRIVE: monitorDriveState,
+      MONITOR_GMAIL: monitorGmailState || false,
+      GMAIL_AUTO_ARCHIVE: gmailAutoArchive !== undefined ? gmailAutoArchive : true,
+      GMAIL_SCAN_QUERY: gmailScanQuery,
       LEXOFFICE_KEY_WIREWIRE: lexKeyWirewire,
       BUTTLER_KEY_THEWIRE_CLIENT: butlerKeyClient,
       BUTTLER_KEY_THEWIRE_SECRET: butlerKeySecret,
@@ -669,6 +729,94 @@ let startSelectedCategories = new Set();
 let startCurrentPage = 1;
 const START_PAGE_SIZE = 50;
 
+function updateStartFilterDropdownCounts() {
+  const dateSelect = document.getElementById("start-filter-date");
+  const compSelect = document.getElementById("start-filter-company");
+  if (!activeJobs || activeJobs.length === 0) return;
+
+  const totalJobs = activeJobs.length;
+  const now = new Date();
+
+  // 1. Calculate Date Counts
+  let count7Days = 0;
+  let count30Days = 0;
+  let countMonth = 0;
+  let countYear2026 = 0;
+  let countYear2025 = 0;
+  let countOlder = 0;
+
+  activeJobs.forEach((job) => {
+    const res = job.result || {};
+    const dateVal = res.documentDate && res.documentDate !== "unknown" ? new Date(res.documentDate) : (job.uploadDate ? new Date(job.uploadDate) : null);
+    if (dateVal && !isNaN(dateVal.getTime())) {
+      const diffDays = (now - dateVal) / (1000 * 60 * 60 * 24);
+      const year = dateVal.getFullYear();
+      if (diffDays <= 7) count7Days++;
+      if (diffDays <= 30) count30Days++;
+      if (dateVal.getMonth() === now.getMonth() && dateVal.getFullYear() === now.getFullYear()) countMonth++;
+      if (year === 2026) countYear2026++;
+      if (year === 2025) countYear2025++;
+      if (year < 2025) countOlder++;
+    }
+  });
+
+  if (dateSelect) {
+    const dateLabels = {
+      alle: `📅 Alle Zeiträume (${totalJobs})`,
+      "7days": `Letzte 7 Tage (${count7Days})`,
+      "30days": `Letzte 30 Tage (${count30Days})`,
+      month: `Dieser Monat (${countMonth})`,
+      year2026: `Jahr 2026 (${countYear2026})`,
+      year2025: `Jahr 2025 (${countYear2025})`,
+      older: `Älter als 2025 (${countOlder})`,
+    };
+    Array.from(dateSelect.options).forEach((opt) => {
+      if (dateLabels[opt.value]) {
+        opt.text = dateLabels[opt.value];
+      }
+    });
+  }
+
+  // 2. Calculate Company Counts
+  let countWirewire = 0;
+  let countThewire = 0;
+  let countPolyxo = 0;
+  let countDaniel = 0;
+  let countAndere = 0;
+
+  activeJobs.forEach((job) => {
+    const res = job.result || {};
+    const compName = (res.company || "").toLowerCase();
+    const targetComp = (job.targetCompany || "").toLowerCase();
+    const isWirewire = compName.includes("wirewire") || targetComp === "wirewire";
+    const isThewire = compName.includes("the wire") || compName.includes("thewire") || targetComp === "thewire";
+    const isPolyxo = compName.includes("polyxo") || targetComp === "polyxo";
+    const isDaniel = compName.includes("daniel") || targetComp === "daniel";
+
+    if (isWirewire) countWirewire++;
+    if (isThewire) countThewire++;
+    if (isPolyxo) countPolyxo++;
+    if (isDaniel) countDaniel++;
+    if (!isWirewire && !isThewire && !isPolyxo && !isDaniel) countAndere++;
+  });
+
+  if (compSelect) {
+    const compLabels = {
+      alle: `🏢 Alle Unternehmen (${totalJobs})`,
+      thewire: `The Wire UG (${countThewire})`,
+      wirewire: `wirewire GmbH (${countWirewire})`,
+      polyxo: `Polyxo Studios GmbH (${countPolyxo})`,
+      daniel: `Daniel (Privat) (${countDaniel})`,
+      andere: `Andere / Unbekannt (${countAndere})`,
+    };
+    Array.from(compSelect.options).forEach((opt) => {
+      if (compLabels[opt.value]) {
+        opt.text = compLabels[opt.value];
+      }
+    });
+  }
+}
+
 function renderStartCategoryBubbles() {
   const container = document.getElementById("start-filter-category-bubbles");
   if (!container) return;
@@ -676,7 +824,8 @@ function renderStartCategoryBubbles() {
   const defaultCats = [
     "Rechnungen", "Dokumente", "Administration", "Personal",
     "Projekte", "Verträge", "Marketing", "Förderung",
-    "Buchhaltung", "Vertrieb", "Privat", "Sonstige"
+    "Buchhaltung", "Vertrieb", "Privat", "Sonstige",
+    "⚠️ Duplikat-Verdacht"
   ];
 
   const dynamicCatsStr = window.currentSettings?.AI_CATEGORIES;
@@ -685,7 +834,7 @@ function renderStartCategoryBubbles() {
     dynamicCatsStr.split(",").forEach(c => {
       const trimmed = c.trim();
       if (trimmed && !allCats.some(ac => ac.toLowerCase() === trimmed.toLowerCase())) {
-        allCats.push(trimmed);
+        allCats.splice(allCats.length - 1, 0, trimmed);
       }
     });
   }
@@ -693,11 +842,32 @@ function renderStartCategoryBubbles() {
   container.innerHTML = "";
   allCats.forEach(cat => {
     const isSelected = startSelectedCategories.has(cat.toLowerCase());
+    const catLower = cat.toLowerCase();
+    const isDupBadge = cat.includes("Duplikat");
+
+    // Count available documents for this category
+    const count = (activeJobs || []).filter((job) => {
+      const res = job.result || {};
+      const jobCat = (res.category || "").toLowerCase();
+      const isInvoice = res.isInvoice === true || jobCat.includes("rechnung");
+      const isPrivat = job.isPrivate === true || jobCat.includes("privat");
+
+      if (catLower.includes("duplikat")) return job.suspectedDuplicate === true;
+      if (catLower === "rechnungen" || catLower === "rechnung") return isInvoice;
+      if (catLower === "dokumente" || catLower === "dokument") return !isInvoice;
+      if (catLower === "privat") return isPrivat;
+      return jobCat.includes(catLower);
+    }).length;
+
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
+    if (isDupBadge) {
+      btn.className = `btn btn-sm ${isSelected ? 'btn-warning text-dark fw-bold shadow-sm' : 'btn-outline-warning text-dark'} start-cat-bubble`;
+    } else {
+      btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
+    }
     btn.style.cssText = "border-radius: 16px; font-size: 12px; padding: 2px 10px; transition: all 0.15s ease;";
-    btn.innerHTML = `${cat}${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
+    btn.innerHTML = `${cat} <span class="badge ${isSelected ? (isDupBadge ? 'bg-dark text-white' : 'bg-white text-primary') : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
     
     btn.addEventListener("click", () => {
       const key = cat.toLowerCase();
@@ -789,7 +959,9 @@ function filterActiveJobs(jobs) {
 
       let catMatch = false;
       for (const selCat of startSelectedCategories) {
-        if (selCat === "rechnungen" || selCat === "rechnung") {
+        if (selCat.includes("duplikat")) {
+          if (job.suspectedDuplicate === true) { catMatch = true; break; }
+        } else if (selCat === "rechnungen" || selCat === "rechnung") {
           if (isInvoice) { catMatch = true; break; }
         } else if (selCat === "dokumente" || selCat === "dokument") {
           if (!isInvoice) { catMatch = true; break; }
@@ -918,6 +1090,7 @@ function renderJobs() {
   }
 
   renderStartCategoryBubbles();
+  updateStartFilterDropdownCounts();
 
   const filteredJobs = filterActiveJobs(activeJobs);
   const totalFiltered = filteredJobs.length;
@@ -994,7 +1167,7 @@ function renderJobs() {
 
     let duplicateBadgeHtml = '';
     if (job.suspectedDuplicate) {
-        duplicateBadgeHtml = '<span style="background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="Verdacht auf Duplikat">⚠️ DUPLIKAT VERDACHT</span>';
+        duplicateBadgeHtml = `<span class="badge-open-duplicate-compare" data-job-id="${job.id}" style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); font-weight: 500;" title="Klicken, um Beleg mit erkannten Duplikaten gegenüberzustellen">⚠️ DUPLIKAT VERDACHT</span>`;
     }
 
     let statusText =
@@ -1070,14 +1243,54 @@ function renderJobs() {
         `;
       }
 
+      // Quick Sync Buttons for ClickUp & Buchhaltung next to Details
+      const isClickupSynced = !!(job.clickup && job.clickup.taskId);
+      const clickupTaskId = job.clickup?.taskId || "";
+      const clickupStatus = job.clickup?.status || "offen";
+
+      let clickupButtonHtml = "";
+      let buchhaltungButtonHtml = "";
+
+      if (window.isAdmin) {
+        clickupButtonHtml = `
+          <button type="button" class="btn btn-sm btn-manual-clickup-transfer d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
+            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
+              isClickupSynced
+                ? 'background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;'
+                : 'background: #ffffff; color: #7b68ee; border: 1px solid #7b68ee;'
+            }" 
+            title="${isClickupSynced ? `ClickUp Task #${clickupTaskId} (${clickupStatus}) - Klicken zum Aktualisieren` : 'Zu ClickUp übertragen'}">
+            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isClickupSynced ? '#2e7d32' : '#7b68ee'};">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
+            <span>${isClickupSynced ? '✓ ClickUp' : 'ClickUp'}</span>
+          </button>
+        `;
+
+        buchhaltungButtonHtml = `
+          <button type="button" class="btn btn-sm btn-manual-lexoffice-sync d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
+            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
+              isLexTransferred
+                ? 'background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;'
+                : 'background: #ffffff; color: #0d6efd; border: 1px solid #0d6efd;'
+            }" 
+            title="${isLexTransferred ? `Bereits in ${providerLabel} (${activeCompany}) synchronisiert - Klicken für Details / erneuten Abgleich` : `In Buchhaltung (${providerLabel}) übertragen`}">
+            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isLexTransferred ? '#2e7d32' : '#0d6efd'};">${isLexTransferred ? 'check_circle' : 'sync'}</span>
+            <span>${isLexTransferred ? '✓ Buchhaltung' : 'Buchhaltung'}</span>
+          </button>
+        `;
+      }
+
       resultHtml = `
-                    <details class="job-result" data-job-id="${
-                      job.id
-                    }" style="margin-top: 10px; width: 100%; transition: all 0.3s;" ${openStates[job.id] ? "open" : ""}>
-                        <summary style="cursor: pointer; color: var(--md-sys-color-primary, #1A1A1A); font-weight: 500; font-size: 14px; margin-bottom: 0px; width: fit-content; padding: 4px 12px; border-radius: 12px; background: var(--md-sys-color-surface-container-high, #E7E0EC); display: inline-flex; align-items: center; gap: 4px; user-select: none;">
+                    <div style="margin-top: 10px; width: 100%;">
+                      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <button type="button" class="btn-toggle-details btn btn-sm border-0 d-inline-flex align-items-center gap-1" data-job-id="${job.id}" style="color: var(--md-sys-color-primary, #1A1A1A); font-weight: 500; font-size: 13px; padding: 3px 10px; border-radius: 12px; background: var(--md-sys-color-surface-container-high, #E7E0EC); user-select: none; cursor: pointer;">
                           <span class="material-symbols-outlined" style="font-size: 16px;">info</span> Details
-                        </summary>
-                        <div style="margin-top: 12px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
+                        </button>
+                        ${clickupButtonHtml}
+                        ${buchhaltungButtonHtml}
+                      </div>
+                      <details class="job-result" data-job-id="${job.id}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
+                        <summary style="display: none;"></summary>
+                        <div style="margin-top: 6px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dateiname:</strong> ${
                                 job.result.full
                             }<br>
@@ -1099,7 +1312,8 @@ ${invoiceHtml}                            <strong style="color: var(--md-sys-col
 ${clickupDetailsHtml}
 ${lexofficeDetailsHtml}
                         </div>
-                    </details>
+                      </details>
+                    </div>
                 `;
     } else if (job.status === "error") {
       resultHtml = `<div class="job-result error">${job.error || "Unbekannter Fehler"}</div>`;
@@ -1225,78 +1439,199 @@ window.addEventListener("appinstalled", () => {
   console.log("PWA was installed");
 });
 
-// Drive Search Logic
-const searchInput = document.getElementById("drive-search-input");
-const searchBtn = document.getElementById("drive-search-btn");
-const searchResultsContainer = document.getElementById("drive-search-results");
-const searchResultsList = document.getElementById("search-results-list");
-const closeSearchBtn = document.getElementById("close-search-btn");
+// PWA Web Share Target & File Handling Receiver
+(function handlePwaSharedFiles() {
+  // 1. Check if opened via /share-target redirect
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("shared") === "true") {
+    const count = parseInt(urlParams.get("count") || "1", 10);
+    setTimeout(() => {
+      if (typeof showToast === "function") {
+        showToast(`📥 ${count} geteilte(s) Dokument(e) empfangen und in die KI-Pipeline gestellt!`, "success");
+      }
+      startPolling();
+    }, 500);
+    // URL sauber bereinigen
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+  }
 
-const performSearch = async () => {
-  if (!searchInput) return;
-  const query = searchInput.value.trim();
-  if (query.length < 2) return;
+  // 2. File Handling API (LaunchQueue for Android/Desktop PWA "Open With")
+  if ("launchQueue" in window && window.LaunchParams && "files" in window.LaunchParams.prototype) {
+    window.launchQueue.setConsumer(async (launchParams) => {
+      if (!launchParams.files || launchParams.files.length === 0) return;
+      try {
+        const formData = new FormData();
+        for (const fileHandle of launchParams.files) {
+          const file = await fileHandle.getFile();
+          formData.append("files", file);
+        }
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.success) {
+          if (typeof showToast === "function") {
+            showToast(`📥 ${data.jobs.length} geöffnete Datei(en) in die KI-Pipeline gestellt!`, "success");
+          }
+          startPolling();
+        }
+      } catch (err) {
+        console.error("[PWA FILE HANDLER] Fehler:", err);
+      }
+    });
+  }
+})();
 
-  if (searchResultsContainer) searchResultsContainer.style.display = "block";
-  if (searchResultsList) searchResultsList.innerHTML = "<div class='text-center mt-3 mb-3'>Suche in Google Drive läuft...</div>";
+// ==========================================
+// --- Deep Document Content Search (OCR & Full-Text) ---
+// ==========================================
+const deepSearchInput = document.getElementById("deep-search-input");
+const deepSearchBtn = document.getElementById("deep-search-btn");
+const deepSearchResultsCard = document.getElementById("deep-search-results-card");
+const deepSearchHeading = document.getElementById("deep-search-heading");
+const deepSearchBadge = document.getElementById("deep-search-badge");
+const deepSearchCloseBtn = document.getElementById("deep-search-close-btn");
+const deepSearchLoading = document.getElementById("deep-search-loading");
+const deepSearchResultsList = document.getElementById("deep-search-results-list");
+
+function highlightQueryText(text, query) {
+  if (!text || !query) return text || "";
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${escaped})`, "gi");
+  return text.replace(regex, `<mark class="bg-warning-subtle text-dark fw-bold px-1 rounded">$1</mark>`);
+}
+
+const performDeepSearch = async () => {
+  if (!deepSearchInput) return;
+  const query = deepSearchInput.value.trim();
+  if (query.length < 2) {
+    alert("Bitte mindestens 2 Zeichen für die Volltextsuche eingeben.");
+    return;
+  }
+
+  if (deepSearchResultsCard) deepSearchResultsCard.style.display = "block";
+  if (deepSearchLoading) deepSearchLoading.style.display = "block";
+  if (deepSearchResultsList) deepSearchResultsList.innerHTML = "";
+  if (deepSearchHeading) deepSearchHeading.innerText = `Volltextsuche: "${query}"`;
+  if (deepSearchBadge) deepSearchBadge.innerText = "Suche läuft...";
 
   try {
-    const res = await fetch("/api/drive/search?q=" + encodeURIComponent(query));
+    const res = await fetch("/api/documents/deep-search?q=" + encodeURIComponent(query));
     const data = await res.json();
 
+    if (deepSearchLoading) deepSearchLoading.style.display = "none";
+
     if (!data.success) {
-      if (searchResultsList) searchResultsList.innerHTML = `<div class="text-danger mt-2">${data.error || "Suche fehlgeschlagen."}</div>`;
+      if (deepSearchResultsList) {
+        deepSearchResultsList.innerHTML = `<div class="text-danger p-3">${data.error || "Suche fehlgeschlagen."}</div>`;
+      }
+      if (deepSearchBadge) deepSearchBadge.innerText = "Fehler";
       return;
     }
 
-    if (data.files.length === 0) {
-      if (searchResultsList) searchResultsList.innerHTML =
-        "<div class='text-muted mt-2'>Keine Dokumente für diese Suchbegriffe gefunden.</div>";
+    const results = data.results || [];
+    if (deepSearchBadge) deepSearchBadge.innerText = `${results.length} Treffer`;
+
+    if (results.length === 0) {
+      if (deepSearchResultsList) {
+        deepSearchResultsList.innerHTML = `
+          <div class="text-center py-4 text-muted">
+            <span class="material-symbols-outlined" style="font-size: 36px; color: #aaa;">search_off</span>
+            <div class="mt-2 fw-medium">Keine Dokumente mit diesem Textinhalt gefunden.</div>
+            <div class="small text-muted">Tipp: Probiere alternative Suchbegriffe (z. B. Teile der Rechnungsnummer, Firmenname oder Schlagwörter).</div>
+          </div>
+        `;
+      }
       return;
     }
 
     let html = "";
-    data.files.forEach((file) => {
-      // Datum formatieren
-      const date = new Date(file.createdTime).toLocaleDateString("de-DE", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const thumb = file.thumbnailLink
-        ? `<img src="${file.thumbnailLink}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" onerror="this.style.display='none'">`
-        : `<div style="width: 40px; height: 40px; display:flex; align-items:center; justify-content:center; background:#e9ecef; border-radius:4px;"><span class="material-symbols-outlined text-secondary">description</span></div>`;
+    results.forEach((item) => {
+      const dateFormatted = item.date
+        ? new Date(item.date).toLocaleDateString("de-DE", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "Unbekanntes Datum";
+
+      const isDrive = item.type === "gdrive";
+      const sourceBadge = isDrive
+        ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px;"><span class="material-symbols-outlined" style="font-size: 12px;">cloud</span> Google Drive</span>`
+        : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px;"><span class="material-symbols-outlined" style="font-size: 12px;">upload_file</span> ${item.source}</span>`;
+
+      const titleHighlighted = highlightQueryText(item.name, query);
+      const snippetHighlighted = highlightQueryText(item.snippet, query);
 
       html += `
-        <div style="display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee;">
-          ${thumb}
-          <div style="flex-grow: 1; min-width: 0;">
-            <div style="font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${file.name}">${file.name}</div>
-            <div style="font-size: 12px; color: #777;">${date}</div>
+        <div class="card p-3 border shadow-sm" style="border-radius: 10px; background-color: #fdfdfd; transition: all 0.2s ease;">
+          <div class="d-flex gap-3 align-items-start">
+            <div class="flex-shrink-0 pt-1">
+              ${
+                item.thumbnailLink
+                  ? `<img src="${item.thumbnailLink}" style="width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid #dee2e6;" onerror="this.outerHTML='<span class=\\'material-symbols-outlined text-danger\\' style=\\'font-size: 36px;\\'>picture_as_pdf</span>';" />`
+                  : `<span class="material-symbols-outlined text-danger" style="font-size: 36px;">picture_as_pdf</span>`
+              }
+            </div>
+            <div class="flex-grow-1" style="min-width: 0;">
+              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <strong class="text-dark" style="font-size: 14px;">${titleHighlighted}</strong>
+                  ${sourceBadge}
+                </div>
+                <span class="text-muted small" style="font-size: 12px;">${dateFormatted}</span>
+              </div>
+
+              <!-- Matching Content Snippet -->
+              <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
+                <span class="text-muted small fw-bold">Fundstelle im Text:</span>
+                <div class="mt-1 font-monospace" style="font-size: 12px;">${snippetHighlighted}</div>
+              </div>
+
+              <!-- Action Buttons -->
+              <div class="d-flex justify-content-end align-items-center gap-2 pt-1">
+                ${
+                  item.isLocal
+                    ? `<a href="/api/jobs/${item.jobId}/file" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 6px; font-size: 12px; padding: 3px 10px;">
+                        <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
+                        <span>Dokument öffnen</span>
+                      </a>`
+                    : ""
+                }
+                ${
+                  item.webViewLink
+                    ? `<a href="${item.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 6px; font-size: 12px; padding: 3px 10px;">
+                        <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
+                        <span>In Google Drive öffnen</span>
+                      </a>`
+                    : ""
+                }
+              </div>
+            </div>
           </div>
-          <a href="${file.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary" style="white-space: nowrap;">Öffnen</a>
         </div>
       `;
     });
 
-    if (searchResultsList) searchResultsList.innerHTML = html;
+    if (deepSearchResultsList) deepSearchResultsList.innerHTML = html;
   } catch (e) {
-    if (searchResultsList) searchResultsList.innerHTML = `<div class="text-danger">Netzwerkfehler bei der Suche.</div>`;
+    if (deepSearchLoading) deepSearchLoading.style.display = "none";
+    if (deepSearchResultsList) {
+      deepSearchResultsList.innerHTML = `<div class="text-danger p-3">Netzwerkfehler bei der Volltextsuche: ${e.message}</div>`;
+    }
   }
 };
 
-if (searchBtn) searchBtn.addEventListener("click", performSearch);
-if (searchInput) {
-  searchInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") performSearch();
+if (deepSearchBtn) deepSearchBtn.addEventListener("click", performDeepSearch);
+if (deepSearchInput) {
+  deepSearchInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") performDeepSearch();
   });
 }
-
-if (closeSearchBtn) {
-  closeSearchBtn.addEventListener("click", () => {
-    if (searchResultsContainer) searchResultsContainer.style.display = "none";
+if (deepSearchCloseBtn) {
+  deepSearchCloseBtn.addEventListener("click", () => {
+    if (deepSearchResultsCard) deepSearchResultsCard.style.display = "none";
   });
 }
 
@@ -1306,8 +1641,25 @@ async function loadGlobalSettings() {
   try {
     const adminRes = await fetch("/api/admin-check");
     window.isAdmin = adminRes.ok;
-    renderJobs();
-  } catch(e) {}
+  } catch(e) {
+    window.isAdmin = false;
+  }
+
+  const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+  const navInboxTab = document.getElementById("nav-inbox-tab");
+
+  if (window.isAdmin) {
+    if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+    if (navInboxTab) navInboxTab.style.display = "inline-flex";
+  } else {
+    if (navRechnungenTab) navRechnungenTab.style.display = "none";
+    if (navInboxTab) navInboxTab.style.display = "none";
+    if ((viewRechnungen && viewRechnungen.style.display === "block") || (viewInbox && viewInbox.style.display === "block")) {
+      switchMainTab("upload");
+    }
+  }
+
+  renderJobs();
 
   try {
     const res = await fetch("/api/settings");
@@ -1442,32 +1794,47 @@ document.addEventListener('click', (e) => {
 });
 
 // ==========================================
-// --- Rechnungsverarbeitung & Lexoffice ---
+// --- Navigation & View Switching ---
 // ==========================================
 
 const navUploadTab = document.getElementById("nav-upload-tab");
 const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+const navInboxTab = document.getElementById("nav-inbox-tab");
 const viewUpload = document.getElementById("view-upload");
 const viewRechnungen = document.getElementById("view-rechnungen");
+const viewInbox = document.getElementById("view-inbox");
 
-if (navUploadTab && navRechnungenTab) {
-  navUploadTab.addEventListener("click", () => {
-    navUploadTab.classList.add("active");
-    navRechnungenTab.classList.remove("active");
-    viewUpload.style.display = "block";
-    viewRechnungen.style.display = "none";
-    startPolling();
-  });
+function switchMainTab(tab) {
+  if ((tab === "rechnungen" || tab === "inbox") && !window.isAdmin) {
+    tab = "upload";
+  }
 
-  navRechnungenTab.addEventListener("click", () => {
-    if (!window.isAdmin) return;
-    navRechnungenTab.classList.add("active");
-    navUploadTab.classList.remove("active");
-    viewUpload.style.display = "none";
-    viewRechnungen.style.display = "block";
-    loadRechnungenView();
-  });
+  if (navUploadTab) navUploadTab.classList.toggle("active", tab === "upload");
+  if (navRechnungenTab) navRechnungenTab.classList.toggle("active", tab === "rechnungen");
+  if (navInboxTab) navInboxTab.classList.toggle("active", tab === "inbox");
+
+  if (viewUpload) viewUpload.style.display = tab === "upload" ? "block" : "none";
+  if (viewRechnungen) viewRechnungen.style.display = tab === "rechnungen" ? "block" : "none";
+  if (viewInbox) viewInbox.style.display = tab === "inbox" ? "block" : "none";
+
+  if (tab === "upload") startPolling();
+  if (tab === "rechnungen") loadRechnungenView();
+  if (tab === "inbox") loadInboxData();
 }
+
+if (navUploadTab) navUploadTab.addEventListener("click", () => switchMainTab("upload"));
+if (navRechnungenTab) navRechnungenTab.addEventListener("click", () => {
+  if (!window.isAdmin) return;
+  switchMainTab("rechnungen");
+});
+if (navInboxTab) navInboxTab.addEventListener("click", () => {
+  if (!window.isAdmin) return;
+  switchMainTab("inbox");
+});
+
+// ==========================================
+// --- Rechnungsverarbeitung & Lexoffice ---
+// ==========================================
 
 let allRechnungenJobs = [];
 let pendingLexofficeTransferTarget = null; // { jobId, companyKey, card, transferBtn }
@@ -1653,6 +2020,7 @@ function renderRechnungenList() {
 
       if (selectedStatus === "uebertragen" && !isTransferred) return false;
       if (selectedStatus === "nicht_uebertragen" && isTransferred) return false;
+      if (selectedStatus === "duplikat" && !job.suspectedDuplicate) return false;
     }
 
     // 4. Year & Quarter filter
@@ -1731,13 +2099,6 @@ function createRechnungCard(job) {
         Übertragen an ${providerLabel} (${activeCompany}) am ${dateStr}
       </span>
     `;
-  } else {
-    lexStatusBadgeHtml = `
-      <span class="badge bg-light text-secondary border d-inline-flex align-items-center gap-1 p-1 px-2">
-        <span class="material-symbols-outlined" style="font-size: 14px;">info</span>
-        Nicht an Buchhaltung übertragen
-      </span>
-    `;
   }
 
   card.innerHTML = `
@@ -1758,7 +2119,7 @@ function createRechnungCard(job) {
             ${res.invoiceNumber && res.invoiceNumber !== "none" ? `<span>Rechnungs-Nr: <strong>${res.invoiceNumber}</strong></span>` : ""}
             ${amountFormatted ? `<span class="text-success font-monospace">Betrag: <strong>${amountFormatted}</strong></span>` : ""}
           </div>
-          <div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>
+          ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>` : ""}
         </div>
       </div>
 
@@ -1842,6 +2203,7 @@ async function openLexofficeSyncModal(jobId) {
   }
 
   currentLexJobId = jobId;
+  const res = job.result || {};
   if (lexSyncModal) lexSyncModal.style.display = "flex";
 
   // Pre-fill Document preview info
@@ -1955,7 +2317,59 @@ async function checkLexofficeTarget(jobId, companyKey) {
       return;
     }
 
-    // API is valid! Now check if already transferred
+    // 1. Check if Live Match found in accounting system (Lexoffice / BuchhaltungsButler)
+    const hasLiveMatch = data.liveSearch && data.liveSearch.found && data.liveSearch.matches && data.liveSearch.matches.length > 0;
+    
+    let liveMatchHtml = "";
+    if (hasLiveMatch) {
+      const topMatch = data.liveSearch.matches[0];
+      const matchBadge = `<span class="badge bg-warning text-dark border border-warning-subtle">${topMatch.matchReasons.length} Übereinstimmungen</span>`;
+      
+      const reasonsList = topMatch.matchReasons.map(r => `<li><span class="text-success fw-medium">✓</span> ${r}</li>`).join("");
+
+      liveMatchHtml = `
+        <div class="p-3 mb-2 rounded-3 border bg-warning-subtle text-dark" style="border-color: #ffc107 !important;">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-1 mb-2">
+            <div class="d-flex align-items-center gap-1 fw-bold" style="font-size: 13.5px; color: #664d03;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">find_in_page</span>
+              <span>Beleg bereits in ${providerName} gefunden!</span>
+            </div>
+            ${matchBadge}
+          </div>
+          
+          <div class="p-2 rounded bg-white border mb-2" style="font-size: 12.5px; line-height: 1.5;">
+            <div class="d-flex justify-content-between flex-wrap gap-2">
+              <div><strong>Gefundener Beleg:</strong> ${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : topMatch.fileName}</div>
+              <div><strong>Betrag:</strong> <span class="font-monospace text-success fw-bold">${topMatch.amount || topMatch.totalAmount}</span></div>
+            </div>
+            <div class="text-muted small mt-1">
+              <span>Datum: <strong>${topMatch.date || topMatch.voucherDate}</strong></span>
+              ${topMatch.partner || topMatch.contactName ? ` | <span>Partner: <strong>${topMatch.partner || topMatch.contactName}</strong></span>` : ''}
+              ${topMatch.voucherStatus ? ` | Status: <span class="badge bg-light text-dark border">${topMatch.voucherStatus}</span>` : ''}
+            </div>
+            <div class="mt-2 pt-2 border-top">
+              <span class="text-muted fw-bold small" style="font-size: 11px;">Abgeglichene Datenpunkte:</span>
+              <ul class="mb-0 ps-0 mt-1 small" style="font-size: 12px; list-style-type: none;">
+                ${reasonsList}
+              </ul>
+            </div>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-1">
+            <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-match-index="0" style="border-radius: 12px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">compare</span>
+              <span>Belege gegenüberstellen (Vorschau)</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-success btn-mark-synced-direct d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-file-id="${topMatch.id}" style="border-radius: 12px; font-size: 12px; padding: 4px 12px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
+              <span>Als synchronisiert markieren</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // 2. Check if already marked as transferred locally or found via live search
     if (data.alreadyTransferred && data.transferredInfo) {
       const dateFormatted = new Date(data.transferredInfo.transferredAt).toLocaleString("de-DE", {
         day: "2-digit",
@@ -1966,6 +2380,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
       });
       const fileId = data.transferredInfo.fileId || data.transferredInfo.lexofficeFileId || "-";
       lexModalStatusContainer.innerHTML = `
+        ${liveMatchHtml}
         <div class="p-2 rounded bg-success-subtle text-success-emphasis border border-success-subtle d-flex align-items-start gap-2">
           <span class="material-symbols-outlined text-success flex-shrink-0" style="font-size: 20px;">check_circle</span>
           <div style="font-size: 13px;">
@@ -1978,6 +2393,11 @@ async function checkLexofficeTarget(jobId, companyKey) {
       lexModalSubmitBtn.disabled = false;
       lexModalSubmitBtn.className = "btn btn-outline-primary px-4 d-flex align-items-center gap-2";
       if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem erneut übertragen";
+    } else if (hasLiveMatch) {
+      lexModalStatusContainer.innerHTML = liveMatchHtml;
+      lexModalSubmitBtn.disabled = false;
+      lexModalSubmitBtn.className = "btn btn-outline-warning text-dark px-4 d-flex align-items-center gap-2";
+      if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem übertragen (Duplikat)";
     } else {
       lexModalStatusContainer.innerHTML = `
         <div class="p-2 rounded bg-info-subtle text-info-emphasis border border-info-subtle d-flex align-items-start gap-2">
@@ -1985,7 +2405,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
           <div style="font-size: 13px;">
             <strong>Bereit zum Upload:</strong><br>
             API verbunden mit <strong>${data.organizationName || providerName}</strong>.<br>
-            Dokument liegt noch nicht bei ${providerName}.
+            <span class="text-success small fw-medium">✓ Kein übereinstimmender Beleg in ${providerName} gefunden.</span>
           </div>
         </div>
       `;
@@ -2061,11 +2481,13 @@ if (lexModalSubmitBtn) {
         lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined">check</span> <span>Erledigt</span>`;
 
         renderJobs();
-        if (typeof renderRechnungenList === "function") renderRechnungenList();
+        if (typeof renderRechnungenList === "function") {
+          renderRechnungenList();
+        }
 
         setTimeout(() => {
           closeLexofficeModal();
-        }, 1200);
+        }, 1500);
       } else {
         lexModalStatusContainer.innerHTML = `
           <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-center gap-2">
@@ -2087,6 +2509,394 @@ if (lexModalSubmitBtn) {
       lexModalSubmitBtn.disabled = false;
       if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
       lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span>Erneut versuchen</span>`;
+    }
+  });
+}
+
+// --- Accounting Side-by-Side Compare Modal Logic ---
+const accountingCompareModal = document.getElementById("accounting-compare-modal");
+const compareModalCloseBtn = document.getElementById("compare-modal-close-btn");
+const compareModalBackBtn = document.getElementById("compare-modal-back-btn");
+const compareModalMarkBtn = document.getElementById("compare-modal-mark-btn");
+const compareModalUploadBtn = document.getElementById("compare-modal-upload-btn");
+
+const compareLocalImg = document.getElementById("compare-local-img");
+const compareLocalLoading = document.getElementById("compare-local-loading");
+const compareRemoteImg = document.getElementById("compare-remote-img");
+const compareRemoteLoading = document.getElementById("compare-remote-loading");
+
+const compareLocalInv = document.getElementById("compare-local-inv");
+const compareLocalAmt = document.getElementById("compare-local-amt");
+const compareLocalDate = document.getElementById("compare-local-date");
+const compareLocalComp = document.getElementById("compare-local-comp");
+
+const compareRemoteHeader = document.getElementById("compare-remote-header");
+const compareRemoteStatusBadge = document.getElementById("compare-remote-status-badge");
+const compareRemoteInv = document.getElementById("compare-remote-inv");
+const compareRemoteAmt = document.getElementById("compare-remote-amt");
+const compareRemoteDate = document.getElementById("compare-remote-date");
+const compareRemoteContact = document.getElementById("compare-remote-contact");
+
+let currentCompareJobId = null;
+let currentCompareCompany = null;
+let currentCompareMatch = null;
+
+function closeAccountingCompareModal() {
+  if (accountingCompareModal) accountingCompareModal.style.display = "none";
+  if (compareLocalImg) {
+    compareLocalImg.src = "";
+    compareLocalImg.style.display = "none";
+  }
+  if (compareRemoteImg) {
+    compareRemoteImg.src = "";
+    compareRemoteImg.style.display = "none";
+  }
+  currentCompareJobId = null;
+  currentCompareCompany = null;
+  currentCompareMatch = null;
+}
+
+function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
+  if (!currentLexCheckData || !currentLexCheckData.liveSearch || !currentLexCheckData.liveSearch.matches) return;
+  const match = currentLexCheckData.liveSearch.matches[matchIndex] || currentLexCheckData.liveSearch.matches[0];
+  if (!match) return;
+
+  const doc = currentLexCheckData.documentDetails || {};
+  currentCompareJobId = jobId;
+  currentCompareCompany = companyKey;
+  currentCompareMatch = match;
+
+  // 1. Populate Local Upload Info
+  if (compareLocalInv) compareLocalInv.innerHTML = `Rechnung: <strong>${doc.invoiceNumber && doc.invoiceNumber !== 'none' ? doc.invoiceNumber : '-'}</strong>`;
+  let amtStr = "-";
+  if (doc.invoiceAmmount && doc.invoiceAmmount > 0) {
+    amtStr = (doc.invoiceAmmount / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  }
+  if (compareLocalAmt) compareLocalAmt.innerText = `Betrag: ${amtStr}`;
+  if (compareLocalDate) compareLocalDate.innerText = `Datum: ${doc.documentDate || '-'}`;
+  if (compareLocalComp) compareLocalComp.innerText = `Firma: ${doc.company || '-'}`;
+
+  if (compareLocalLoading) compareLocalLoading.style.display = "flex";
+  if (compareLocalImg) {
+    compareLocalImg.style.display = "none";
+    compareLocalImg.onload = () => {
+      if (compareLocalLoading) compareLocalLoading.style.display = "none";
+      compareLocalImg.style.display = "block";
+    };
+    compareLocalImg.onerror = () => {
+      // Fallback to thumbnail or Drive link
+      if (!compareLocalImg.src.includes("/thumbnail")) {
+        compareLocalImg.src = `/api/jobs/${jobId}/thumbnail`;
+      } else {
+        if (compareLocalLoading) {
+          compareLocalLoading.innerHTML = '<span class="material-symbols-outlined text-muted" style="font-size: 40px;">description</span><div class="small mt-2 text-muted">Keine Bildvorschau verfügbar</div>';
+        }
+      }
+    };
+    compareLocalImg.src = `/api/jobs/${jobId}/preview?_t=${Date.now()}`;
+  }
+
+  // 2. Populate Remote Portal Voucher Info
+  const isButler = companyKey === "thewire";
+  const providerName = isButler ? "BuchhaltungsButler" : "Lexoffice";
+
+  if (compareRemoteHeader) compareRemoteHeader.innerText = `Beleg in ${providerName} (${companyKey})`;
+  if (compareRemoteStatusBadge) {
+    compareRemoteStatusBadge.innerText = match.voucherStatus || "vorhanden";
+    compareRemoteStatusBadge.className = match.voucherStatus === "paid"
+      ? "badge bg-success text-white small"
+      : "badge bg-warning text-dark border border-warning-subtle small";
+  }
+
+  if (compareRemoteInv) compareRemoteInv.innerHTML = `Beleg-Nr: <strong>${match.voucherNumber && match.voucherNumber !== '-' ? match.voucherNumber : (match.invoiceNumber || match.fileName)}</strong>`;
+  if (compareRemoteAmt) compareRemoteAmt.innerText = `Betrag: ${match.totalAmount || match.amount || '-'}`;
+  if (compareRemoteDate) compareRemoteDate.innerText = `Datum: ${match.voucherDate || match.date || '-'}`;
+  if (compareRemoteContact) compareRemoteContact.innerText = `Kontakt: ${match.contactName || match.partner || '-'}`;
+
+  if (compareRemoteLoading) {
+    compareRemoteLoading.style.display = "flex";
+    compareRemoteLoading.innerHTML = '<div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div><div class="small">Lade Beleg Seite 1 aus ' + providerName + '...</div>';
+  }
+  if (compareRemoteImg) {
+    compareRemoteImg.style.display = "none";
+    if (isButler) {
+      if (compareRemoteLoading) {
+        compareRemoteLoading.innerHTML = `
+          <span class="material-symbols-outlined" style="font-size: 48px; color: #17a2b8;">description</span>
+          <h6 class="mt-2 text-white">BuchhaltungsButler Beleg</h6>
+          <div class="small text-white-50">Beleg <strong>${match.invoiceNumber || match.fileName}</strong> liegt im Portal vor.</div>
+        `;
+      }
+    } else {
+      compareRemoteImg.onload = () => {
+        if (compareRemoteLoading) compareRemoteLoading.style.display = "none";
+        compareRemoteImg.style.display = "block";
+      };
+      compareRemoteImg.onerror = () => {
+        if (compareRemoteLoading) {
+          compareRemoteLoading.innerHTML = '<span class="material-symbols-outlined text-warning" style="font-size: 40px;">warning</span><div class="small mt-2 text-white-50">Vorschau konnte aus Lexoffice nicht gerendert werden</div>';
+        }
+      };
+      compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}&_t=${Date.now()}`;
+    }
+  }
+
+  if (lexSyncModal) lexSyncModal.style.display = "none";
+  if (accountingCompareModal) accountingCompareModal.style.display = "flex";
+}
+
+if (compareModalCloseBtn) {
+  compareModalCloseBtn.addEventListener("click", closeAccountingCompareModal);
+}
+
+if (compareModalBackBtn) {
+  compareModalBackBtn.addEventListener("click", () => {
+    closeAccountingCompareModal();
+    if (lexSyncModal) lexSyncModal.style.display = "flex";
+  });
+}
+
+if (compareModalMarkBtn) {
+  compareModalMarkBtn.addEventListener("click", async () => {
+    if (!currentCompareJobId || !currentCompareCompany || !currentCompareMatch) return;
+    const jobId = currentCompareJobId;
+    const companyKey = currentCompareCompany;
+    const fileId = currentCompareMatch.id;
+
+    compareModalMarkBtn.disabled = true;
+    compareModalMarkBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> <span>Speichere...</span>`;
+
+    try {
+      const res = await fetch("/api/accounting/mark-synced", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, companyKey, fileId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (typeof showToast === "function") {
+          showToast("✓ Beleg erfolgreich als synchronisiert markiert!", "success");
+        }
+        closeAccountingCompareModal();
+        closeLexofficeModal();
+        startPolling();
+      } else {
+        alert("Fehler beim Speichern: " + (data.error || "Unbekannt"));
+        compareModalMarkBtn.disabled = false;
+      }
+    } catch (err) {
+      alert("Netzwerkfehler: " + err.message);
+      compareModalMarkBtn.disabled = false;
+    }
+  });
+}
+
+if (compareModalUploadBtn) {
+  compareModalUploadBtn.addEventListener("click", async () => {
+    if (!currentCompareJobId || !currentCompareCompany) return;
+    const jobId = currentCompareJobId;
+    const companyKey = currentCompareCompany;
+    closeAccountingCompareModal();
+    if (lexSyncModal) lexSyncModal.style.display = "flex";
+    if (lexModalSubmitBtn) {
+      lexModalSubmitBtn.click();
+    }
+  });
+}
+
+// --- Duplicate Compare Modal Logic ---
+const duplicateCompareModal = document.getElementById("duplicate-compare-modal");
+const dupModalCloseBtn = document.getElementById("dup-modal-close-btn");
+const dupModalCancelBtn = document.getElementById("dup-modal-cancel-btn");
+const dupModalDismissAllBtn = document.getElementById("dup-modal-dismiss-all-btn");
+const dupCompareLoading = document.getElementById("dup-compare-loading");
+const dupCompareContainer = document.getElementById("dup-compare-container");
+
+let currentDuplicateJobId = null;
+
+function closeDuplicateCompareModal() {
+  if (duplicateCompareModal) duplicateCompareModal.style.display = "none";
+  if (dupCompareContainer) dupCompareContainer.innerHTML = "";
+  currentDuplicateJobId = null;
+}
+
+async function openDuplicateCompareModal(jobId) {
+  if (!duplicateCompareModal || !dupCompareContainer) return;
+  currentDuplicateJobId = jobId;
+  duplicateCompareModal.style.display = "flex";
+  if (dupCompareLoading) dupCompareLoading.style.display = "block";
+  dupCompareContainer.innerHTML = "";
+
+  try {
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/duplicates`);
+    const data = await res.json();
+    if (dupCompareLoading) dupCompareLoading.style.display = "none";
+
+    if (!data.success || !data.currentJob) {
+      dupCompareContainer.innerHTML = `
+        <div class="col-12 text-center py-5 text-muted">
+          <span class="material-symbols-outlined text-warning" style="font-size: 40px;">warning</span>
+          <div class="mt-2">Dokument konnte nicht geladen werden.</div>
+        </div>
+      `;
+      return;
+    }
+
+    const cur = data.currentJob;
+    const dups = data.duplicates || [];
+
+    const curRes = cur.result || {};
+    const curInvNum = curRes.invoiceNumber && curRes.invoiceNumber !== "none" ? curRes.invoiceNumber : (cur.invoiceNumber || "-");
+    let curAmtStr = "-";
+    if (curRes.invoiceAmmount || cur.invoiceAmmount) {
+      curAmtStr = (((curRes.invoiceAmmount || cur.invoiceAmmount) / 100).toFixed(2)).replace(".", ",") + " €";
+    }
+    const curDate = curRes.documentDate || curRes.date || (cur.uploadDate ? new Date(cur.uploadDate).toLocaleDateString("de-DE") : "-");
+    const curComp = curRes.company || cur.targetCompany || "-";
+
+    const colClass = dups.length === 1 ? "col-12 col-md-6" : (dups.length === 2 ? "col-12 col-md-4" : "col-12 col-md-4");
+
+    let html = `
+      <!-- Left: Current Document -->
+      <div class="${colClass} d-flex flex-column">
+        <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa; border-color: #2196f3 !important;">
+          <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="fw-bold text-primary small d-flex align-items-center gap-1">
+              <span class="material-symbols-outlined" style="font-size: 18px;">upload_file</span>
+              <span>Aktuelles Dokument</span>
+            </span>
+            <span class="badge bg-primary text-white small">Aktueller Upload</span>
+          </div>
+          <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+            <div class="d-flex justify-content-between flex-wrap gap-1">
+              <span>Rechnung: <strong>${curInvNum}</strong></span>
+              <span class="text-success fw-bold font-monospace">Betrag: ${curAmtStr}</span>
+            </div>
+            <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+              <span>Datum: ${curDate}</span>
+              <span>Firma: ${curComp}</span>
+            </div>
+            <div class="text-truncate text-muted mt-1" style="font-size: 11px;" title="${curRes.full || cur.originalName || '-'}">
+              Datei: <em>${curRes.full || cur.originalName || '-'}</em>
+            </div>
+          </div>
+          <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; overflow: auto; position: relative;">
+            <img src="/api/jobs/${encodeURIComponent(cur.id)}/preview?_t=${Date.now()}" alt="Vorschau Aktuelles Dokument" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white;" />
+          </div>
+          <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
+            ${cur.result?.webViewLink ? `<a href="${cur.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-primary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
+            <button class="btn btn-xs btn-outline-success btn-dismiss-dup-single d-inline-flex align-items-center gap-1" data-job-id="${cur.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+              <span class="material-symbols-outlined" style="font-size: 14px;">check</span>
+              <span>Als Original behalten</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    if (dups.length === 0) {
+      html += `
+        <div class="col-12 col-md-6 d-flex flex-column justify-content-center align-items-center py-5">
+          <div class="card p-4 text-center border-0 shadow-sm" style="border-radius: 12px; background: #f8f9fa;">
+            <span class="material-symbols-outlined text-success mb-2" style="font-size: 48px;">check_circle</span>
+            <h6 class="fw-bold">Kein direktes Duplikat mehr im System</h6>
+            <p class="text-muted small mb-3">Möglicherweise wurde das frühere Duplikat bereits gelöscht oder archiviert.</p>
+            <button class="btn btn-sm btn-outline-primary btn-dismiss-dup-single mx-auto" data-job-id="${cur.id}" style="border-radius: 8px;">
+              Duplikat-Verdacht entfernen
+            </button>
+          </div>
+        </div>
+      `;
+    } else {
+      dups.forEach((d, idx) => {
+        const dupJob = d.job;
+        const dupRes = dupJob.result || {};
+        const dupInvNum = dupRes.invoiceNumber && dupRes.invoiceNumber !== "none" ? dupRes.invoiceNumber : (dupJob.invoiceNumber || "-");
+        let dupAmtStr = "-";
+        if (dupRes.invoiceAmmount || dupJob.invoiceAmmount) {
+          dupAmtStr = (((dupRes.invoiceAmmount || dupJob.invoiceAmmount) / 100).toFixed(2)).replace(".", ",") + " €";
+        }
+        const dupDate = dupRes.documentDate || dupRes.date || (dupJob.uploadDate ? new Date(dupJob.uploadDate).toLocaleDateString("de-DE") : "-");
+        const dupComp = dupRes.company || dupJob.targetCompany || "-";
+        const reasonsHtml = (d.matchReasons || []).map(r => `<span class="badge bg-warning-subtle text-dark border border-warning-subtle small me-1 mb-1">✓ ${r}</span>`).join(" ");
+
+        html += `
+          <!-- Duplicate ${idx + 1} -->
+          <div class="${colClass} d-flex flex-column">
+            <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa; border-color: #ff9800 !important;">
+              <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-warning small d-flex align-items-center gap-1">
+                  <span class="material-symbols-outlined text-warning" style="font-size: 18px;">content_copy</span>
+                  <span>Mögliches Duplikat ${dups.length > 1 ? '#' + (idx + 1) : ''}</span>
+                </span>
+                <span class="badge bg-warning text-dark small">Gefunden (${new Date(dupJob.uploadDate || Date.now()).toLocaleDateString("de-DE")})</span>
+              </div>
+              <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+                <div class="d-flex justify-content-between flex-wrap gap-1">
+                  <span>Rechnung: <strong>${dupInvNum}</strong></span>
+                  <span class="text-success fw-bold font-monospace">Betrag: ${dupAmtStr}</span>
+                </div>
+                <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+                  <span>Datum: ${dupDate}</span>
+                  <span>Firma: ${dupComp}</span>
+                </div>
+                <div class="text-truncate text-muted mt-1" style="font-size: 11px;" title="${dupRes.full || dupJob.originalName || '-'}">
+                  Datei: <em>${dupRes.full || dupJob.originalName || '-'}</em>
+                </div>
+                <div class="mt-2 pt-1 border-top" style="font-size: 11px;">
+                  <strong class="text-dark">Übereinstimmung:</strong><br>
+                  ${reasonsHtml}
+                </div>
+              </div>
+              <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; overflow: auto; position: relative;">
+                <img src="/api/jobs/${encodeURIComponent(dupJob.id)}/preview?_t=${Date.now()}" alt="Vorschau Duplikat" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white;" />
+              </div>
+              <div class="card-footer bg-white border-top p-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
+                ${dupJob.result?.webViewLink ? `<a href="${dupJob.result.webViewLink}" target="_blank" class="btn btn-xs btn-outline-secondary d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> <span>In Drive öffnen</span></a>` : `<span></span>`}
+                <button class="btn btn-xs btn-outline-danger btn-delete-dup-single d-inline-flex align-items-center gap-1" data-job-id="${dupJob.id}" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                  <span class="material-symbols-outlined" style="font-size: 14px;">delete</span>
+                  <span>Duplikat löschen</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    dupCompareContainer.innerHTML = html;
+  } catch (err) {
+    console.error("[DUP COMPARE] Fehler:", err);
+    if (dupCompareLoading) dupCompareLoading.style.display = "none";
+    dupCompareContainer.innerHTML = `
+      <div class="col-12 text-center py-5 text-danger">
+        <span class="material-symbols-outlined" style="font-size: 40px;">error</span>
+        <div class="mt-2">Fehler beim Laden der Duplikate: ${err.message}</div>
+      </div>
+    `;
+  }
+}
+
+if (dupModalCloseBtn) dupModalCloseBtn.addEventListener("click", closeDuplicateCompareModal);
+if (dupModalCancelBtn) dupModalCancelBtn.addEventListener("click", closeDuplicateCompareModal);
+
+if (dupModalDismissAllBtn) {
+  dupModalDismissAllBtn.addEventListener("click", async () => {
+    if (!currentDuplicateJobId) return;
+    const jobId = currentDuplicateJobId;
+    dupModalDismissAllBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/dismiss-duplicate`, { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        if (typeof showToast === "function") showToast("✓ Duplikat-Verdacht verworfen.", "info");
+        closeDuplicateCompareModal();
+        startPolling();
+      }
+    } catch (e) {
+      alert("Fehler: " + e.message);
+    } finally {
+      dupModalDismissAllBtn.disabled = false;
     }
   });
 }
@@ -2222,8 +3032,20 @@ if (confirmClickupBtn) {
   });
 }
 
-// Click listener delegation for manual transfer buttons (ClickUp & Lexoffice)
+// Click listener delegation for manual transfer buttons (ClickUp & Lexoffice) & details toggle
 document.addEventListener("click", (e) => {
+  const toggleDetailsBtn = e.target.closest(".btn-toggle-details");
+  if (toggleDetailsBtn) {
+    const jobId = toggleDetailsBtn.getAttribute("data-job-id");
+    const container = toggleDetailsBtn.closest("div")?.parentElement;
+    const detailsEl = container ? container.querySelector(`details.job-result[data-job-id="${jobId}"]`) : null;
+    if (detailsEl) {
+      detailsEl.open = !detailsEl.open;
+      openStates[jobId] = detailsEl.open;
+    }
+    return;
+  }
+
   const clickupBtn = e.target.closest(".btn-manual-clickup-transfer") || e.target.closest(".rechnung-clickup-btn");
   if (clickupBtn) {
     e.stopPropagation();
@@ -2242,6 +3064,118 @@ document.addEventListener("click", (e) => {
     const jobId = lexofficeBtn.getAttribute("data-job-id") || lexofficeBtn.closest("[data-job-id]")?.getAttribute("data-job-id") || (activeJobs.find(j => lexofficeBtn.closest(".job-item") && lexofficeBtn.closest(".job-item").innerHTML.includes(j.originalName))?.id);
     if (jobId) {
       openLexofficeSyncModal(jobId);
+    }
+    return;
+  }
+
+  const compareBtn = e.target.closest(".btn-open-compare-modal");
+  if (compareBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = compareBtn.getAttribute("data-job-id");
+    const companyKey = compareBtn.getAttribute("data-company");
+    const matchIdx = parseInt(compareBtn.getAttribute("data-match-index") || "0", 10);
+    openAccountingCompareModal(jobId, companyKey, matchIdx);
+    return;
+  }
+
+  const markSyncedBtn = e.target.closest(".btn-mark-synced-direct");
+  if (markSyncedBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = markSyncedBtn.getAttribute("data-job-id");
+    const companyKey = markSyncedBtn.getAttribute("data-company");
+    const fileId = markSyncedBtn.getAttribute("data-file-id");
+
+    markSyncedBtn.disabled = true;
+    markSyncedBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> <span>Speichere...</span>`;
+
+    fetch("/api/accounting/mark-synced", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId, companyKey, fileId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) {
+          if (typeof showToast === "function") {
+            showToast("✓ Beleg erfolgreich als synchronisiert markiert!", "success");
+          }
+          closeLexofficeModal();
+          startPolling();
+        } else {
+          alert("Fehler beim Speichern: " + (data.error || "Unbekannt"));
+          markSyncedBtn.disabled = false;
+        }
+      })
+      .catch((err) => {
+        alert("Netzwerkfehler: " + err.message);
+        markSyncedBtn.disabled = false;
+      });
+    return;
+  }
+
+  const dupBadge = e.target.closest(".badge-open-duplicate-compare");
+  if (dupBadge) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = dupBadge.getAttribute("data-job-id");
+    if (jobId) {
+      openDuplicateCompareModal(jobId);
+    }
+    return;
+  }
+
+  const dismissDupBtn = e.target.closest(".btn-dismiss-dup-single");
+  if (dismissDupBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = dismissDupBtn.getAttribute("data-job-id");
+    if (jobId) {
+      dismissDupBtn.disabled = true;
+      fetch(`/api/jobs/${encodeURIComponent(jobId)}/dismiss-duplicate`, { method: "POST" })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success) {
+            if (typeof showToast === "function") showToast("✓ Duplikat-Verdacht entfernt.", "info");
+            closeDuplicateCompareModal();
+            startPolling();
+          }
+        })
+        .catch((err) => alert("Fehler: " + err.message));
+    }
+    return;
+  }
+
+  const deleteDupBtn = e.target.closest(".btn-delete-dup-single");
+  if (deleteDupBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = deleteDupBtn.getAttribute("data-job-id");
+    if (jobId) {
+      if (confirm("Möchten Sie dieses Duplikat wirklich aus der Historie löschen?")) {
+        deleteDupBtn.disabled = true;
+        fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              if (typeof showToast === "function") showToast("✓ Duplikat erfolgreich gelöscht.", "success");
+              if (currentDuplicateJobId) {
+                openDuplicateCompareModal(currentDuplicateJobId);
+              } else {
+                closeDuplicateCompareModal();
+              }
+              startPolling();
+            } else {
+              alert("Fehler beim Löschen: " + (data.error || "Unbekannt"));
+              deleteDupBtn.disabled = false;
+            }
+          })
+          .catch((err) => {
+            alert("Netzwerkfehler: " + err.message);
+            deleteDupBtn.disabled = false;
+          });
+      }
     }
     return;
   }
@@ -2853,5 +3787,1053 @@ async function checkDriveSyncStatus() {
 
 // Check background status on initial load
 startDriveBackgroundPoller();
+
+// ==========================================
+// --- Google Mail (Workmail) Inbox Scanner ---
+// ==========================================
+
+let inboxActiveEmails = [];
+let inboxSkippedEmails = [];
+let inboxAccounts = [];
+let currentInboxSubtab = "detected"; // "detected" | "active" | "skipped"
+let selectedInboxMessageIds = new Set();
+let isProcessingInboxBatch = false;
+
+const inboxRefreshBtn = document.getElementById("inbox-refresh-btn");
+const inboxTabDetected = document.getElementById("inbox-tab-detected");
+const inboxTabActive = document.getElementById("inbox-tab-active");
+const inboxTabSkipped = document.getElementById("inbox-tab-skipped");
+const inboxAccountSelect = document.getElementById("inbox-account-select");
+const inboxAddAccountBtn = document.getElementById("inbox-add-account-btn");
+const inboxFilterDate = document.getElementById("inbox-filter-date");
+const inboxArchiveToggle = document.getElementById("inbox-archive-toggle");
+const inboxSearchInput = document.getElementById("inbox-search-input");
+const inboxSelectAllCb = document.getElementById("inbox-select-all-cb");
+const inboxBatchProcessBtn = document.getElementById("inbox-batch-process-btn");
+const inboxSelectedCount = document.getElementById("inbox-selected-count");
+const inboxLoadingContainer = document.getElementById("inbox-loading-container");
+const inboxErrorAlert = document.getElementById("inbox-error-alert");
+const inboxErrorText = document.getElementById("inbox-error-text");
+const inboxEmptyContainer = document.getElementById("inbox-empty-container");
+const inboxEmailList = document.getElementById("inbox-email-list");
+const navInboxBadge = document.getElementById("nav-inbox-badge");
+const inboxCountDetected = document.getElementById("inbox-count-detected");
+const inboxCountActive = document.getElementById("inbox-count-active");
+const inboxCountSkipped = document.getElementById("inbox-count-skipped");
+const inboxSelectionControls = document.getElementById("inbox-selection-controls");
+
+// PDF Attachment Preview Modal Elements & State
+const inboxPdfPreviewModal = document.getElementById("inbox-pdf-preview-modal");
+const inboxPdfPreviewTitle = document.getElementById("inbox-pdf-preview-title");
+const inboxPdfPreviewSubtitle = document.getElementById("inbox-pdf-preview-subtitle");
+const inboxPdfPreviewCounter = document.getElementById("inbox-pdf-preview-counter");
+const inboxPdfPrevBtn = document.getElementById("inbox-pdf-prev-btn");
+const inboxPdfNextBtn = document.getElementById("inbox-pdf-next-btn");
+const inboxPdfQuickProcessBtn = document.getElementById("inbox-pdf-quick-process-btn");
+const inboxPdfDownloadBtn = document.getElementById("inbox-pdf-download-btn");
+const inboxPdfExternalBtn = document.getElementById("inbox-pdf-external-btn");
+const inboxPdfPreviewClose = document.getElementById("inbox-pdf-preview-close");
+const inboxPdfPreviewIframe = document.getElementById("inbox-pdf-preview-iframe");
+const inboxPdfLoading = document.getElementById("inbox-pdf-loading");
+
+let currentPreviewMailIndex = -1;
+let currentPreviewAttIndex = 0;
+
+function openInboxPdfPreview(mailOrId, attIndex = 0) {
+  if (!inboxPdfPreviewModal || !inboxPdfPreviewIframe) return;
+
+  const visibleEmails = getVisibleInboxEmails();
+  let mail = null;
+
+  if (typeof mailOrId === "object" && mailOrId !== null) {
+    mail = mailOrId;
+    currentPreviewMailIndex = visibleEmails.findIndex((m) => m.id === mail.id);
+  } else if (typeof mailOrId === "number") {
+    currentPreviewMailIndex = mailOrId;
+    mail = visibleEmails[currentPreviewMailIndex];
+  } else if (typeof mailOrId === "string") {
+    currentPreviewMailIndex = visibleEmails.findIndex((m) => m.id === mailOrId);
+    mail = visibleEmails[currentPreviewMailIndex] || inboxActiveEmails.find((m) => m.id === mailOrId) || inboxSkippedEmails.find((m) => m.id === mailOrId);
+  }
+
+  if (!mail) return;
+
+  const attachments = mail.attachments || [];
+  if (attachments.length === 0) return;
+
+  currentPreviewAttIndex = Math.max(0, Math.min(attIndex, attachments.length - 1));
+  const currentAtt = attachments[currentPreviewAttIndex];
+  const totalCount = visibleEmails.length;
+
+  const previewUrl = `/api/gmail/attachment/preview?messageId=${encodeURIComponent(mail.id)}&attachmentId=${encodeURIComponent(currentAtt.attachmentId)}&accountId=${encodeURIComponent(mail.accountId || "")}&filename=${encodeURIComponent(currentAtt.filename || "Anhang.pdf")}`;
+  const downloadUrl = `${previewUrl}&download=true`;
+
+  if (inboxPdfPreviewTitle) {
+    inboxPdfPreviewTitle.innerText = currentAtt.filename || "Dokumentenvorschau";
+  }
+  if (inboxPdfPreviewSubtitle) {
+    const sender = mail.fromName || mail.fromEmail || "Absender";
+    const dateFormatted = formatDateDisplay(mail.date);
+    inboxPdfPreviewSubtitle.innerText = `${mail.subject || "(Kein Betreff)"} • Von: ${sender} • ${dateFormatted} • ${formatFileSize(currentAtt.size)}`;
+  }
+
+  if (inboxPdfPreviewCounter) {
+    if (currentPreviewMailIndex >= 0 && totalCount > 0) {
+      inboxPdfPreviewCounter.innerText = `${currentPreviewMailIndex + 1} von ${totalCount}`;
+      inboxPdfPreviewCounter.style.display = "inline-block";
+    } else {
+      inboxPdfPreviewCounter.style.display = "none";
+    }
+  }
+
+  if (inboxPdfPrevBtn) {
+    inboxPdfPrevBtn.disabled = currentPreviewMailIndex <= 0;
+  }
+  if (inboxPdfNextBtn) {
+    inboxPdfNextBtn.disabled = currentPreviewMailIndex < 0 || currentPreviewMailIndex >= totalCount - 1;
+  }
+
+  if (inboxPdfDownloadBtn) inboxPdfDownloadBtn.href = downloadUrl;
+  if (inboxPdfExternalBtn) inboxPdfExternalBtn.href = previewUrl;
+
+  if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "block", "important");
+  inboxPdfPreviewIframe.onload = () => {
+    if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "none", "important");
+  };
+
+  inboxPdfPreviewIframe.src = previewUrl;
+  inboxPdfPreviewModal.style.setProperty("display", "flex", "important");
+}
+
+function navigateInboxPdfPreview(direction) {
+  const visibleEmails = getVisibleInboxEmails();
+  if (visibleEmails.length === 0) return;
+
+  const newIndex = currentPreviewMailIndex + direction;
+  if (newIndex >= 0 && newIndex < visibleEmails.length) {
+    openInboxPdfPreview(newIndex, 0);
+  }
+}
+
+function closeInboxPdfPreview() {
+  if (!inboxPdfPreviewModal) return;
+  inboxPdfPreviewModal.style.setProperty("display", "none", "important");
+  if (inboxPdfPreviewIframe) inboxPdfPreviewIframe.src = "";
+  currentPreviewMailIndex = -1;
+}
+
+if (inboxPdfPrevBtn) {
+  inboxPdfPrevBtn.addEventListener("click", () => navigateInboxPdfPreview(-1));
+}
+if (inboxPdfNextBtn) {
+  inboxPdfNextBtn.addEventListener("click", () => navigateInboxPdfPreview(1));
+}
+
+if (inboxPdfQuickProcessBtn) {
+  inboxPdfQuickProcessBtn.addEventListener("click", async () => {
+    const visibleEmails = getVisibleInboxEmails();
+    if (currentPreviewMailIndex < 0 || currentPreviewMailIndex >= visibleEmails.length) return;
+    const mail = visibleEmails[currentPreviewMailIndex];
+
+    const originalHtml = inboxPdfQuickProcessBtn.innerHTML;
+    inboxPdfQuickProcessBtn.disabled = true;
+    inboxPdfQuickProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
+
+    try {
+      const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+      const res = await fetch("/api/gmail/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messageId: mail.id,
+          accountId: mail.accountId,
+          subject: mail.subject,
+          fromName: mail.fromName,
+          fromEmail: mail.fromEmail,
+          date: mail.date,
+          attachments: mail.attachments,
+          archive: shouldArchive,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Fehler beim Verarbeiten.");
+
+      // Aus lokaler Liste entfernen
+      inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+      inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
+      selectedInboxMessageIds.delete(mail.id);
+
+      const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+      if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
+      if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+      if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+      if (navInboxBadge) {
+        const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+        navInboxBadge.innerText = bCount;
+        navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
+      }
+
+      updateInboxBatchButton();
+      renderInboxList();
+      fetchStatus();
+
+      if (typeof showToast === "function") {
+        showToast(data.message || "Beleg erfolgreich verarbeitet!", "success");
+      }
+
+      // Zum nächsten Beleg wechseln oder schließen
+      const updatedVisible = getVisibleInboxEmails();
+      if (updatedVisible.length > 0) {
+        const nextIdx = Math.min(currentPreviewMailIndex, updatedVisible.length - 1);
+        openInboxPdfPreview(nextIdx, 0);
+      } else {
+        closeInboxPdfPreview();
+      }
+    } catch (err) {
+      alert("Fehler beim Verarbeiten: " + err.message);
+    } finally {
+      inboxPdfQuickProcessBtn.disabled = false;
+      inboxPdfQuickProcessBtn.innerHTML = originalHtml;
+    }
+  });
+}
+
+if (inboxPdfPreviewClose) {
+  inboxPdfPreviewClose.addEventListener("click", closeInboxPdfPreview);
+}
+
+if (inboxPdfPreviewModal) {
+  inboxPdfPreviewModal.addEventListener("click", (e) => {
+    if (e.target === inboxPdfPreviewModal) {
+      closeInboxPdfPreview();
+    }
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  if (inboxPdfPreviewModal && inboxPdfPreviewModal.style.display !== "none") {
+    if (e.key === "Escape") {
+      closeInboxPdfPreview();
+    } else if (e.key === "ArrowLeft") {
+      navigateInboxPdfPreview(-1);
+    } else if (e.key === "ArrowRight") {
+      navigateInboxPdfPreview(1);
+    }
+  }
+});
+
+function setInboxSubtab(tabName) {
+  currentInboxSubtab = tabName;
+
+  const tabs = [
+    { name: "detected", btn: inboxTabDetected },
+    { name: "active", btn: inboxTabActive },
+    { name: "skipped", btn: inboxTabSkipped },
+  ];
+
+  tabs.forEach((t) => {
+    if (!t.btn) return;
+    if (t.name === tabName) {
+      t.btn.classList.add("btn-primary", "active");
+      t.btn.classList.remove("btn-outline-secondary");
+    } else {
+      t.btn.classList.remove("btn-primary", "active");
+      t.btn.classList.add("btn-outline-secondary");
+    }
+  });
+
+  if (tabName === "skipped") {
+    if (inboxSelectionControls) inboxSelectionControls.style.display = "none";
+    if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "none";
+  } else {
+    if (inboxSelectionControls) inboxSelectionControls.style.display = "flex";
+    if (inboxBatchProcessBtn) inboxBatchProcessBtn.style.display = "inline-flex";
+  }
+
+  // Bei Wechsel auf "Erkannt" automatisch alle erkannten Rechnungen vorselektieren
+  if (tabName === "detected") {
+    const visible = getVisibleInboxEmails();
+    selectedInboxMessageIds.clear();
+    visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+  }
+
+  updateInboxBatchButton();
+  renderInboxList();
+}
+
+if (inboxTabDetected) {
+  inboxTabDetected.addEventListener("click", () => setInboxSubtab("detected"));
+}
+if (inboxTabActive) {
+  inboxTabActive.addEventListener("click", () => setInboxSubtab("active"));
+}
+if (inboxTabSkipped) {
+  inboxTabSkipped.addEventListener("click", () => setInboxSubtab("skipped"));
+}
+
+if (inboxFilterDate) {
+  inboxFilterDate.addEventListener("change", () => {
+    if (currentInboxSubtab === "detected") {
+      const visible = getVisibleInboxEmails();
+      selectedInboxMessageIds.clear();
+      visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+    }
+    updateInboxBatchButton();
+    renderInboxList();
+  });
+}
+
+if (inboxAccountSelect) {
+  inboxAccountSelect.addEventListener("change", () => {
+    loadInboxData(false);
+  });
+}
+
+if (inboxAddAccountBtn) {
+  inboxAddAccountBtn.addEventListener("click", () => {
+    if (secondaryGmailAuthClient) {
+      secondaryGmailAuthClient.requestCode();
+    } else if (authClientCode) {
+      authClientCode.requestCode();
+    } else {
+      alert("Google Authentifizierung wird initialisiert. Bitte kurz warten oder Einstellungen öffnen.");
+    }
+  });
+}
+
+const inboxGrantPermissionBtn = document.getElementById("inbox-grant-permission-btn");
+if (inboxGrantPermissionBtn) {
+  inboxGrantPermissionBtn.addEventListener("click", () => {
+    if (authClientCode) {
+      authClientCode.requestCode();
+    } else {
+      const settingsModalEl = document.getElementById("settings-modal");
+      if (settingsModalEl) settingsModalEl.style.display = "flex";
+    }
+  });
+}
+
+const settingsAddGmailAccountBtn = document.getElementById("settings-add-gmail-account-btn");
+if (settingsAddGmailAccountBtn) {
+  settingsAddGmailAccountBtn.addEventListener("click", () => {
+    if (secondaryGmailAuthClient) {
+      secondaryGmailAuthClient.requestCode();
+    } else if (authClientCode) {
+      authClientCode.requestCode();
+    } else {
+      alert("Google Authentifizierung wird initialisiert. Bitte kurz warten.");
+    }
+  });
+}
+
+if (inboxRefreshBtn) {
+  inboxRefreshBtn.addEventListener("click", () => loadInboxData(false));
+}
+
+if (inboxSearchInput) {
+  inboxSearchInput.addEventListener("input", renderInboxList);
+}
+
+if (inboxSelectAllCb) {
+  inboxSelectAllCb.addEventListener("change", () => {
+    const visibleActive = getVisibleInboxEmails();
+    if (inboxSelectAllCb.checked) {
+      visibleActive.forEach((m) => selectedInboxMessageIds.add(m.id));
+    } else {
+      selectedInboxMessageIds.clear();
+    }
+    updateInboxBatchButton();
+    renderInboxList();
+  });
+}
+
+if (inboxBatchProcessBtn) {
+  inboxBatchProcessBtn.addEventListener("click", processBatchSelectedEmails);
+}
+
+function updateInboxBatchButton() {
+  const count = selectedInboxMessageIds.size;
+  if (inboxSelectedCount) inboxSelectedCount.innerText = count;
+  if (inboxBatchProcessBtn) {
+    inboxBatchProcessBtn.disabled = count === 0 || isProcessingInboxBatch;
+  }
+  if (inboxSelectAllCb) {
+    const visibleActive = getVisibleInboxEmails();
+    inboxSelectAllCb.checked = visibleActive.length > 0 && visibleActive.every((m) => selectedInboxMessageIds.has(m.id));
+  }
+}
+
+function matchDateFilter(dateStr, filterVal) {
+  if (!filterVal || filterVal === "alle") return true;
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (filterVal === "today") {
+    return d >= today;
+  }
+  if (filterVal === "yesterday_today") {
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return d >= yesterday;
+  }
+  if (filterVal === "7days") {
+    const past7 = new Date(today);
+    past7.setDate(past7.getDate() - 7);
+    return d >= past7;
+  }
+  if (filterVal === "30days") {
+    const past30 = new Date(today);
+    past30.setDate(past30.getDate() - 30);
+    return d >= past30;
+  }
+  if (filterVal === "month") {
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }
+  if (filterVal === "last_month") {
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return d.getFullYear() === lastMonthDate.getFullYear() && d.getMonth() === lastMonthDate.getMonth();
+  }
+  if (filterVal === "year2026") {
+    return d.getFullYear() === 2026;
+  }
+  if (filterVal === "year2025") {
+    return d.getFullYear() === 2025;
+  }
+  if (filterVal === "older") {
+    return d.getFullYear() < 2025;
+  }
+  return true;
+}
+
+function getVisibleInboxEmails() {
+  let sourceList = [];
+  if (currentInboxSubtab === "detected") {
+    sourceList = inboxActiveEmails.filter((m) => m.isDetected);
+  } else if (currentInboxSubtab === "active") {
+    sourceList = inboxActiveEmails;
+  } else if (currentInboxSubtab === "skipped") {
+    sourceList = inboxSkippedEmails;
+  }
+
+  const q = inboxSearchInput ? inboxSearchInput.value.trim().toLowerCase() : "";
+  const dateFilter = inboxFilterDate ? inboxFilterDate.value : "alle";
+
+  return sourceList.filter((m) => {
+    if (!matchDateFilter(m.date, dateFilter)) return false;
+
+    if (q) {
+      const subject = (m.subject || "").toLowerCase();
+      const fromName = (m.fromName || "").toLowerCase();
+      const fromEmail = (m.fromEmail || "").toLowerCase();
+      const snippet = (m.snippet || "").toLowerCase();
+      const attNames = (m.attachments || []).map((a) => (a.filename || "").toLowerCase()).join(" ");
+      const acc = (m.accountEmail || m.accountName || "").toLowerCase();
+      if (
+        !subject.includes(q) &&
+        !fromName.includes(q) &&
+        !fromEmail.includes(q) &&
+        !snippet.includes(q) &&
+        !attNames.includes(q) &&
+        !acc.includes(q)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function updateAccountsDropdown(accounts) {
+  inboxAccounts = accounts || [];
+  if (!inboxAccountSelect) return;
+
+  const currentVal = inboxAccountSelect.value || "all";
+  inboxAccountSelect.innerHTML = `<option value="all">📥 Alle Posteingänge (${inboxAccounts.length || 1})</option>`;
+
+  inboxAccounts.forEach((acc) => {
+    const opt = document.createElement("option");
+    opt.value = acc.id || acc.email;
+    opt.innerText = `✉️ ${acc.email}${acc.isPrimary ? " (Hauptkonto)" : ""}`;
+    inboxAccountSelect.appendChild(opt);
+  });
+
+  if (Array.from(inboxAccountSelect.options).some((o) => o.value === currentVal)) {
+    inboxAccountSelect.value = currentVal;
+  }
+
+  // Update Settings Modal accounts container
+  const accountsContainer = document.getElementById("gmail-accounts-container");
+  if (accountsContainer) {
+    accountsContainer.innerHTML = "";
+    if (inboxAccounts.length === 0) {
+      accountsContainer.innerHTML = `<div class="text-muted small">Noch keine separaten Konten registriert (Standard-Konto aktiv).</div>`;
+    } else {
+      inboxAccounts.forEach((acc) => {
+        const item = document.createElement("div");
+        item.className = "d-flex justify-content-between align-items-center p-2 rounded border bg-white small";
+        item.innerHTML = `
+          <div class="d-flex align-items-center gap-2 text-truncate">
+            <span class="material-symbols-outlined text-primary" style="font-size: 18px;">mail</span>
+            <strong class="text-truncate">${acc.email}</strong>
+            ${acc.isPrimary ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 10px;">Hauptkonto</span>` : ""}
+          </div>
+          ${
+            !acc.isPrimary
+              ? `<button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>`
+              : ""
+          }
+        `;
+        const removeBtn = item.querySelector(".remove-gmail-acc-btn");
+        if (removeBtn) {
+          removeBtn.addEventListener("click", async () => {
+            if (confirm(`Möchtest du das Google-Konto "${acc.email}" wirklich trennen?`)) {
+              try {
+                const res = await fetch("/api/gmail/accounts/delete", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ accountId: acc.id }),
+                });
+                const d = await res.json();
+                if (d.success) {
+                  updateAccountsDropdown(d.accounts);
+                  loadInboxData(false);
+                }
+              } catch (e) {
+                alert("Fehler beim Entfernen: " + e.message);
+              }
+            }
+          });
+        }
+        accountsContainer.appendChild(item);
+      });
+    }
+  }
+}
+
+async function loadInboxData(silent = false) {
+  if (!window.isAdmin) return;
+  const inboxPermissionCard = document.getElementById("inbox-permission-card");
+
+  if (!silent) {
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "block", "important");
+    if (inboxEmailList) inboxEmailList.style.setProperty("display", "none", "important");
+    if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
+    if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
+    if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "none", "important");
+  }
+
+  try {
+    const selectedAccountId = inboxAccountSelect ? inboxAccountSelect.value : "all";
+    const [inboxRes, skippedRes] = await Promise.all([
+      fetch(`/api/gmail/inbox?accountId=${encodeURIComponent(selectedAccountId)}`),
+      fetch("/api/gmail/skipped"),
+    ]);
+
+    const inboxData = await inboxRes.json();
+    const skippedData = await skippedRes.json();
+
+    if (!inboxData.success) {
+      throw new Error(inboxData.error || "Fehler beim Laden des Posteingangs.");
+    }
+
+    inboxActiveEmails = inboxData.emails || [];
+    inboxSkippedEmails = skippedData.skippedEmails || [];
+
+    if (inboxData.accounts) {
+      updateAccountsDropdown(inboxData.accounts);
+    }
+
+    // Badges & Counters aktualisieren
+    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+    const detectedCount = detectedEmails.length;
+    const activeCount = inboxActiveEmails.length;
+    const skippedCount = inboxSkippedEmails.length;
+
+    if (inboxCountDetected) inboxCountDetected.innerText = detectedCount;
+    if (inboxCountActive) inboxCountActive.innerText = activeCount;
+    if (inboxCountSkipped) inboxCountSkipped.innerText = skippedCount;
+
+    if (navInboxBadge) {
+      navInboxBadge.innerText = detectedCount > 0 ? detectedCount : activeCount;
+      navInboxBadge.style.display = activeCount > 0 ? "inline-block" : "none";
+    }
+
+    // Wenn "Erkannt" ausgewählt ist, alle erkannten E-Mails vorselektieren
+    if (currentInboxSubtab === "detected") {
+      selectedInboxMessageIds.clear();
+      const visible = getVisibleInboxEmails();
+      visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+    } else {
+      const validIds = new Set(inboxActiveEmails.map((m) => m.id));
+      for (const id of selectedInboxMessageIds) {
+        if (!validIds.has(id)) selectedInboxMessageIds.delete(id);
+      }
+    }
+
+    updateInboxBatchButton();
+
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
+    if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "none", "important");
+    renderInboxList();
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei loadInboxData:", err);
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
+
+    const errStr = (err.message || "").toLowerCase();
+    const isPermissionError =
+      errStr.includes("insufficient permission") ||
+      errStr.includes("insufficientpermissions") ||
+      errStr.includes("nicht authentifiziert") ||
+      errStr.includes("403");
+
+    if (isPermissionError && inboxPermissionCard) {
+      inboxPermissionCard.style.setProperty("display", "block", "important");
+      if (inboxEmailList) inboxEmailList.style.setProperty("display", "none", "important");
+      if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
+      if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
+    } else if (inboxErrorAlert) {
+      inboxErrorAlert.style.setProperty("display", "block", "important");
+      if (inboxErrorText) inboxErrorText.innerText = err.message || "Fehler beim Laden der E-Mails.";
+    }
+  }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function formatDateDisplay(isoString) {
+  if (!isoString) return "-";
+  try {
+    const d = new Date(isoString);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) {
+      return `Heute, ${d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`;
+    }
+    return d.toLocaleDateString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch (e) {
+    return isoString;
+  }
+}
+
+function renderInboxList() {
+  if (!inboxEmailList) return;
+
+  // Alte Karten IMMER zuerst aus dem DOM löschen!
+  inboxEmailList.innerHTML = "";
+
+  const visibleEmails = getVisibleInboxEmails();
+
+  if (visibleEmails.length === 0) {
+    inboxEmailList.style.setProperty("display", "none", "important");
+    if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "block", "important");
+    if (inboxSelectAllCb) inboxSelectAllCb.checked = false;
+    updateInboxBatchButton();
+    return;
+  }
+
+  if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
+  inboxEmailList.style.setProperty("display", "flex", "important");
+
+  visibleEmails.forEach((mail) => {
+    const isSelected = selectedInboxMessageIds.has(mail.id);
+    const attachments = mail.attachments || [];
+
+    const card = document.createElement("div");
+    card.className = "card p-3 shadow-sm border";
+    card.style.cssText = `
+      background-color: ${isSelected ? "#f8fbff" : "#ffffff"};
+      border-radius: 14px;
+      border-color: ${isSelected ? "#0d6efd" : "#e9ecef"} !important;
+      transition: all 0.2s ease;
+    `;
+
+    // Attachments HTML (Clickable PDF Pills for live preview)
+    const attachmentsHtml = attachments
+      .map(
+        (att) => `
+        <button type="button" class="btn btn-sm btn-light border d-inline-flex align-items-center gap-1 p-1 px-2 rounded small inbox-pdf-pill" 
+          data-message-id="${mail.id}"
+          data-account-id="${mail.accountId || ''}"
+          data-att-id="${att.attachmentId}"
+          data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
+          data-size="${att.size || 0}"
+          data-subject="${encodeURIComponent(mail.subject || '')}"
+          style="font-size: 12px; transition: all 0.15s ease; cursor: pointer; text-align: left;"
+          title="Klicken für PDF-Vorschau: ${att.filename}">
+          <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
+          <span class="text-truncate fw-medium" style="max-width: 220px;">${att.filename || "Anhang.pdf"}</span>
+          <span class="text-muted" style="font-size: 11px;">(${formatFileSize(att.size)})</span>
+          <span class="material-symbols-outlined text-primary ms-1" style="font-size: 14px;">visibility</span>
+        </button>
+      `
+      )
+      .join("");
+
+    const isSkippedTab = currentInboxSubtab === "skipped";
+
+    card.innerHTML = `
+      <div class="d-flex gap-3 align-items-start">
+        ${
+          !isSkippedTab
+            ? `
+          <div class="pt-1">
+            <input type="checkbox" class="form-check-input inbox-item-cb" data-id="${mail.id}" ${
+                isSelected ? "checked" : ""
+              } style="cursor: pointer; width: 18px; height: 18px;" />
+          </div>
+        `
+            : ""
+        }
+        <div class="flex-grow-1" style="min-width: 0;">
+          <!-- Top Row: Badges, Sender & Date -->
+          <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
+            <div class="d-flex align-items-center gap-2 text-truncate flex-wrap">
+              <span class="material-symbols-outlined text-secondary" style="font-size: 20px;">account_circle</span>
+              <strong class="text-dark" style="font-size: 14px;">${mail.fromName || mail.fromEmail || "Unbekannter Absender"}</strong>
+              ${
+                mail.fromName && mail.fromEmail && mail.fromEmail !== mail.fromName
+                  ? `<span class="text-muted small text-truncate" style="font-size: 12px;">&lt;${mail.fromEmail}&gt;</span>`
+                  : ""
+              }
+              ${
+                mail.isDetected
+                  ? `<span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                      <span class="material-symbols-outlined" style="font-size: 13px;">auto_fix_high</span>
+                      <span>Rechnung / Beleg erkannt</span>
+                    </span>`
+                  : ""
+              }
+              ${
+                mail.accountEmail && inboxAccounts.length > 1
+                  ? `<span class="badge bg-light text-secondary border" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
+                      <span class="material-symbols-outlined" style="font-size: 12px; vertical-align: middle;">mail</span>
+                      ${mail.accountEmail}
+                    </span>`
+                  : ""
+              }
+            </div>
+            <div class="text-muted small flex-shrink-0" style="font-size: 12px;">
+              ${formatDateDisplay(mail.date)}
+            </div>
+          </div>
+
+          <!-- Subject Line -->
+          <div class="fw-bold text-dark mb-1" style="font-size: 15px;">
+            ${mail.subject || "(Kein Betreff)"}
+          </div>
+
+          <!-- Snippet / Email Preview -->
+          ${
+            mail.snippet
+              ? `
+            <div class="text-muted small mb-2" style="font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+              ${mail.snippet}
+            </div>
+          `
+              : ""
+          }
+
+          <!-- PDF Attachments Pills -->
+          <div class="d-flex flex-wrap gap-1 mb-3 pt-1">
+            ${attachmentsHtml}
+          </div>
+
+          <!-- Action Buttons Row -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2 border-top">
+            <div class="small text-muted">
+              ${attachments.length} ${attachments.length === 1 ? "PDF-Anhang" : "PDF-Anhänge"}
+            </div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-dark d-flex align-items-center gap-1 inbox-preview-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;" title="PDF-Vorschau öffnen">
+                <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
+                <span>Vorschau</span>
+              </button>
+              ${
+                !isSkippedTab
+                  ? `
+                <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1 inbox-skip-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">playlist_remove</span>
+                  <span>Überspringen</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+                  <span>Verarbeiten</span>
+                </button>
+              `
+                  : `
+                <button type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1 inbox-unskip-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">undo</span>
+                  <span>Wiederherstellen</span>
+                </button>
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+                  <span>Trotzdem Verarbeiten</span>
+                </button>
+              `
+              }
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // PDF Preview Click Handler for button and pills
+    const previewBtn = card.querySelector(".inbox-preview-btn");
+    if (previewBtn) {
+      previewBtn.addEventListener("click", () => openInboxPdfPreview(mail, 0));
+    }
+
+    card.querySelectorAll(".inbox-pdf-pill").forEach((pill, idx) => {
+      pill.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openInboxPdfPreview(mail, idx);
+      });
+    });
+
+    // Checkbox event
+    const cb = card.querySelector(".inbox-item-cb");
+    if (cb) {
+      cb.addEventListener("change", (e) => {
+        if (e.target.checked) {
+          selectedInboxMessageIds.add(mail.id);
+        } else {
+          selectedInboxMessageIds.delete(mail.id);
+        }
+        updateInboxBatchButton();
+        card.style.borderColor = e.target.checked ? "#0d6efd" : "#e9ecef";
+        card.style.backgroundColor = e.target.checked ? "#f8fbff" : "#ffffff";
+      });
+    }
+
+    // Process button
+    const procBtn = card.querySelector(".inbox-process-btn");
+    if (procBtn) {
+      procBtn.addEventListener("click", () => processSingleInboxEmail(mail, procBtn));
+    }
+
+    // Skip button
+    const skipBtn = card.querySelector(".inbox-skip-btn");
+    if (skipBtn) {
+      skipBtn.addEventListener("click", () => skipInboxEmail(mail));
+    }
+
+    // Unskip button
+    const unskipBtn = card.querySelector(".inbox-unskip-btn");
+    if (unskipBtn) {
+      unskipBtn.addEventListener("click", () => unskipInboxEmail(mail.id));
+    }
+
+    inboxEmailList.appendChild(card);
+  });
+}
+
+async function processSingleInboxEmail(mail, btnEl) {
+  const originalHtml = btnEl.innerHTML;
+  btnEl.disabled = true;
+  btnEl.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
+
+  const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+
+  try {
+    const res = await fetch("/api/gmail/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messageId: mail.id,
+        accountId: mail.accountId,
+        subject: mail.subject,
+        fromName: mail.fromName,
+        fromEmail: mail.fromEmail,
+        date: mail.date,
+        attachments: mail.attachments,
+        archive: shouldArchive,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || "Fehler bei der E-Mail-Verarbeitung.");
+    }
+
+    // Aus aktiver Liste entfernen
+    inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+    inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
+    selectedInboxMessageIds.delete(mail.id);
+
+    // Update Counter & Badge
+    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+    if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
+    if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+    if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+    if (navInboxBadge) {
+      const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+      navInboxBadge.innerText = bCount;
+      navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
+    }
+
+    updateInboxBatchButton();
+    renderInboxList();
+
+    fetchStatus();
+
+    if (typeof showToast === "function") {
+      showToast(data.message || "Belege erfolgreich zur KI-Pipeline hinzugefügt!", "success");
+    }
+  } catch (err) {
+    console.error("[GMAIL] Fehler beim Verarbeiten der E-Mail:", err);
+    alert("Fehler beim Verarbeiten: " + err.message);
+    btnEl.disabled = false;
+    btnEl.innerHTML = originalHtml;
+  }
+}
+
+async function processBatchSelectedEmails() {
+  const visibleActive = getVisibleInboxEmails();
+  const selectedEmails = visibleActive.filter((m) => selectedInboxMessageIds.has(m.id));
+
+  if (selectedEmails.length === 0) {
+    alert("Keine E-Mails ausgewählt.");
+    return;
+  }
+
+  if (
+    !confirm(
+      `${selectedEmails.length} ausgewählte E-Mail(s) jetzt verarbeiten${
+        inboxArchiveToggle?.checked ? " und im Posteingang archivieren" : ""
+      }?`
+    )
+  ) {
+    return;
+  }
+
+  isProcessingInboxBatch = true;
+  if (inboxBatchProcessBtn) {
+    inboxBatchProcessBtn.disabled = true;
+    inboxBatchProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite Stapel...</span>`;
+  }
+
+  try {
+    const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+    const res = await fetch("/api/gmail/process-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: selectedEmails,
+        archive: shouldArchive,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.error || "Fehler bei der Stapelverarbeitung.");
+    }
+
+    selectedInboxMessageIds.clear();
+    await loadInboxData(false);
+    fetchStatus();
+
+    alert(
+      `Stapelverarbeitung abgeschlossen!\n` +
+        `• Verarbeitet: ${data.processedCount} E-Mails (${data.totalJobs} PDF-Dokumente)\n` +
+        `• Archiviert: ${data.archivedCount} E-Mails`
+    );
+  } catch (err) {
+    console.error("[GMAIL BATCH] Fehler:", err);
+    alert("Fehler bei Stapelverarbeitung: " + err.message);
+  } finally {
+    isProcessingInboxBatch = false;
+    updateInboxBatchButton();
+    if (inboxBatchProcessBtn) {
+      inboxBatchProcessBtn.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+        <span>Ausgewählte verarbeiten (<span id="inbox-selected-count">0</span>)</span>
+      `;
+    }
+  }
+}
+
+async function skipInboxEmail(mail) {
+  try {
+    const res = await fetch("/api/gmail/skip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messageId: mail.id,
+        accountId: mail.accountId,
+        accountEmail: mail.accountEmail,
+        subject: mail.subject,
+        from: mail.fromRaw || mail.fromName || mail.fromEmail,
+        fromName: mail.fromName,
+        fromEmail: mail.fromEmail,
+        date: mail.date,
+        snippet: mail.snippet,
+        attachments: mail.attachments,
+        isDetected: !!mail.isDetected,
+      }),
+    });
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Fehler beim Überspringen.");
+
+    inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+    inboxSkippedEmails.unshift(mail);
+    selectedInboxMessageIds.delete(mail.id);
+
+    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+    if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
+    if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+    if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+    if (navInboxBadge) {
+      const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+      navInboxBadge.innerText = bCount;
+      navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
+    }
+
+    updateInboxBatchButton();
+    renderInboxList();
+  } catch (err) {
+    console.error("[GMAIL] Fehler beim Überspringen:", err);
+    alert("Fehler beim Überspringen: " + err.message);
+  }
+}
+
+async function unskipInboxEmail(messageId) {
+  try {
+    const res = await fetch("/api/gmail/unskip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messageId }),
+    });
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Fehler beim Wiederherstellen.");
+
+    await loadInboxData(false);
+  } catch (err) {
+    console.error("[GMAIL] Fehler beim Wiederherstellen:", err);
+    alert("Fehler beim Wiederherstellen: " + err.message);
+  }
+}
+
+// Initialer Abruf der offenen E-Mails im Hintergrund (für den Badge-Zähler)
+setTimeout(() => {
+  loadInboxData(true);
+}, 3000);
+
 
 

@@ -23,6 +23,11 @@
 
     <link rel="stylesheet" href="/index.css" />
     <link rel="stylesheet" href="/md3-theme.css" />
+
+    <!-- ONNX Modell & WASM Prefetch für blitzschnelles Öffnen des Scanners -->
+    <link rel="prefetch" href="/models/doc_corner_net.onnx" as="fetch" crossorigin="anonymous" />
+    <link rel="prefetch" href="/vendor/onnx/ort.min.js" />
+    <link rel="prefetch" href="/vendor/onnx/ort-wasm-simd-threaded.wasm" as="fetch" crossorigin="anonymous" />
     <style>
       .pdf-preview-container {
         position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none; z-index: 1;
@@ -58,6 +63,11 @@
             <button class="nav-link d-flex align-items-center gap-1 py-1 px-3" id="nav-rechnungen-tab" type="button" title="Rechnungsverarbeitung & Lexoffice" style="display: none;">
               <span class="material-symbols-outlined" style="font-size: 20px;">receipt_long</span>
               <span class="d-none d-sm-inline">Rechnungen</span>
+            </button>
+            <button class="nav-link d-flex align-items-center gap-1 py-1 px-3" id="nav-inbox-tab" type="button" title="Google Mail Inbox Scanner" style="display: none;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">mail</span>
+              <span class="d-none d-sm-inline">E-Mail Inbox</span>
+              <span id="nav-inbox-badge" class="badge rounded-pill bg-danger ms-1" style="display: none; font-size: 11px;">0</span>
             </button>
           </div>
         </div>
@@ -159,6 +169,55 @@
                   <!-- Dynamic Category Bubbles rendered here -->
                 </div>
               </div>
+
+              <!-- Row 3: Deep Document Content Search Bar -->
+              <div class="mt-3 pt-2 border-top">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <div class="d-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined text-primary" style="font-size: 18px;">manage_search</span>
+                    <span class="fw-bold small text-dark" style="font-size: 13px;">Dokumenten-Volltextsuche (im Dateiinhalt & OCR):</span>
+                  </div>
+                  <span class="text-muted small" style="font-size: 11px;">Durchsucht Text in PDFs & Google Drive</span>
+                </div>
+                <div class="input-group">
+                  <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
+                    <span class="material-symbols-outlined text-primary" style="font-size: 18px;">document_scanner</span>
+                  </span>
+                  <input
+                    type="text"
+                    id="deep-search-input"
+                    class="form-control border-start-0 ps-1"
+                    placeholder="Volltextsuche im PDF-Inhalt (z. B. 'Artikelbezeichnung', 'IBAN', 'Bestellnummer'...)"
+                    style="font-size: 14px;"
+                  />
+                  <button id="deep-search-btn" class="btn btn-primary d-flex align-items-center gap-1 px-3" type="button" style="border-radius: 0 8px 8px 0; font-weight: 500;">
+                    <span class="material-symbols-outlined" style="font-size: 18px;">search</span>
+                    <span>Inhalt durchsuchen</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Deep Search Results Container -->
+            <div id="deep-search-results-card" class="card p-3 my-3 shadow-sm border" style="border-radius: 12px; display: none; background: #ffffff; border-color: #0d6efd !important;">
+              <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
+                <div class="d-flex align-items-center gap-2">
+                  <span class="material-symbols-outlined text-primary" style="font-size: 22px;">manage_search</span>
+                  <strong id="deep-search-heading" style="font-size: 15px;">Volltext-Suchergebnisse</strong>
+                  <span id="deep-search-badge" class="badge bg-primary rounded-pill small">0 Treffer</span>
+                </div>
+                <button id="deep-search-close-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 2px 10px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">close</span>
+                  <span>Ergebnisse schließen</span>
+                </button>
+              </div>
+              <div id="deep-search-loading" class="text-center py-4 text-muted" style="display: none;">
+                <div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div>
+                <div class="small">Durchsuche Dokumenteninhalte & Google Drive OCR...</div>
+              </div>
+              <div id="deep-search-results-list" class="d-flex flex-column gap-2">
+                <!-- Dynamically rendered deep search results -->
+              </div>
             </div>
 
             <!-- Header & Counter -->
@@ -239,6 +298,7 @@
                   <option value="alle">Alle Status</option>
                   <option value="nicht_uebertragen">Offen (nicht übertragen)</option>
                   <option value="uebertragen">Bereits übertragen</option>
+                  <option value="duplikat">⚠️ Duplikat-Verdacht</option>
                 </select>
               </div>
 
@@ -264,6 +324,212 @@
 
           <!-- Document List Container -->
           <div id="rechnungen-list" class="d-flex flex-column gap-3"></div>
+        </div>
+
+        <!-- View 3: Google Mail (Workmail) Inbox Scanner -->
+        <div id="view-inbox" class="container" style="position: relative; display: none;">
+          <div class="d-flex justify-content-between align-items-center mt-3 mb-3 flex-wrap gap-2">
+            <div>
+              <h2 class="m-0 d-flex align-items-center gap-2">
+                <span class="material-symbols-outlined text-primary" style="font-size: 28px;">mail</span>
+                E-Mail Inbox Scanner
+              </h2>
+              <div class="text-muted small">Offene E-Mails nach PDF-Anhängen durchsuchen und verarbeiten</div>
+            </div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <select id="inbox-account-select" class="form-select form-select-sm" style="border-radius: 20px; font-size: 13px; min-width: 180px; max-width: 260px;" title="Posteingang auswählen">
+                <option value="all">📥 Alle Posteingänge</option>
+              </select>
+              <button id="inbox-add-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 5px 12px;" title="Weiteres Google-Konto verbinden">
+                <span class="material-symbols-outlined" style="font-size: 16px;">add</span>
+                <span class="d-none d-md-inline">Konto hinzufügen</span>
+              </button>
+              <button id="inbox-refresh-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 5px 12px;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
+                <span>Aktualisieren</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter & Batch Toolbar Card -->
+          <div class="card p-3 mb-3 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
+            <!-- Tabs: Erkannt vs Posteingang vs Übersprungen -->
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 pb-2 border-bottom">
+              <div class="d-flex gap-2 flex-wrap">
+                <button type="button" id="inbox-tab-detected" class="btn btn-sm btn-primary active inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">auto_fix_high</span>
+                  Erkannt (<span id="inbox-count-detected">0</span>)
+                </button>
+                <button type="button" id="inbox-tab-active" class="btn btn-sm btn-outline-secondary inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">inbox</span>
+                  Posteingang (<span id="inbox-count-active">0</span>)
+                </button>
+                <button type="button" id="inbox-tab-skipped" class="btn btn-sm btn-outline-secondary inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">playlist_remove</span>
+                  Übersprungen (<span id="inbox-count-skipped">0</span>)
+                </button>
+              </div>
+
+              <!-- Archive Checkbox Option -->
+              <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
+                <input class="form-check-input" type="checkbox" id="inbox-archive-toggle" checked style="cursor: pointer;" />
+                <label class="form-check-label small fw-medium text-muted" for="inbox-archive-toggle" style="cursor: pointer; font-size: 12px;">
+                  Nach Verarbeitung archivieren
+                </label>
+              </div>
+            </div>
+
+            <!-- Search, Date Filter & Batch Action Row -->
+            <div class="row g-2 align-items-center">
+              <div class="col-12 col-md-5">
+                <div class="input-group input-group-sm">
+                  <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
+                    <span class="material-symbols-outlined text-muted" style="font-size: 18px;">search</span>
+                  </span>
+                  <input
+                    type="text"
+                    id="inbox-search-input"
+                    class="form-control border-start-0"
+                    placeholder="E-Mails suchen (Absender, Betreff, Dateiname, Datum...)"
+                    style="border-radius: 0 8px 8px 0; font-size: 13px;"
+                  />
+                </div>
+              </div>
+
+              <div class="col-6 col-md-3">
+                <select id="inbox-filter-date" class="form-select form-select-sm" style="border-radius: 8px; font-size: 13px;">
+                  <option value="alle">📅 Alle Zeiträume</option>
+                  <option value="today">Heute</option>
+                  <option value="yesterday_today">Gestern & Heute</option>
+                  <option value="7days">Letzte 7 Tage</option>
+                  <option value="30days">Letzte 30 Tage</option>
+                  <option value="month">Dieser Monat</option>
+                  <option value="last_month">Letzter Monat</option>
+                  <option value="year2026">Jahr 2026</option>
+                  <option value="year2025">Jahr 2025</option>
+                  <option value="older">Älter als 2025</option>
+                </select>
+              </div>
+
+              <div class="col-6 col-md-4 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
+                <div class="d-flex align-items-center gap-1" id="inbox-selection-controls">
+                  <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer;" />
+                  <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 12px;">Alle auswählen</label>
+                </div>
+                <button
+                  id="inbox-batch-process-btn"
+                  type="button"
+                  class="btn btn-sm btn-primary d-flex align-items-center gap-1"
+                  style="border-radius: 20px; font-size: 12px; padding: 4px 12px;"
+                  disabled
+                >
+                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
+                  <span>Ausgewählte verarbeiten (<span id="inbox-selected-count">0</span>)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading State -->
+          <div id="inbox-loading-container" class="text-center py-5" style="display: none;">
+            <div class="spinner-border text-primary mb-2" role="status"></div>
+            <div class="text-muted small">Durchsuche Posteingang nach E-Mails mit PDFs...</div>
+          </div>
+
+          <!-- Permission / Auth Banner -->
+          <div id="inbox-permission-card" class="card p-4 mb-3 border shadow-sm text-center" style="display: none; background: #fff8e1; border-color: #ffe082 !important; border-radius: 14px;">
+            <div class="d-flex flex-column align-items-center gap-2">
+              <div style="width: 52px; height: 52px; border-radius: 50%; background: #ffe082; display: flex; align-items: center; justify-content: center; color: #b78103;">
+                <span class="material-symbols-outlined" style="font-size: 30px;">lock_open</span>
+              </div>
+              <h5 class="fw-bold m-0 text-dark" style="font-size: 16px;">Gmail-Berechtigung erforderlich</h5>
+              <p class="text-muted small m-0" style="max-width: 500px; font-size: 13px;">
+                Dein Google-Konto ist aktuell noch nicht für Gmail freigegeben (oder die Berechtigung muss erneuert werden). Klicke auf den Button, um den Zugriff zu autorisieren.
+              </p>
+              <button id="inbox-grant-permission-btn" type="button" class="btn btn-primary d-inline-flex align-items-center gap-2 mt-2 px-4 py-2" style="border-radius: 20px; font-weight: 600;">
+                <span class="material-symbols-outlined" style="font-size: 20px;">key</span>
+                <span>Gmail-Berechtigung jetzt erteilen</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Error Alert Banner -->
+          <div id="inbox-error-alert" class="alert alert-danger p-3 mb-3 border-0 shadow-sm" style="display: none; border-radius: 12px;">
+            <div class="d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined text-danger">error</span>
+              <span id="inbox-error-text">Fehler beim Laden der E-Mails.</span>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div id="inbox-empty-container" class="text-center py-5 text-muted" style="display: none;">
+            <span class="material-symbols-outlined" style="font-size: 48px; color: #aaa;">mark_email_read</span>
+            <div class="mt-2 fw-medium">Keine offenen E-Mails mit PDF-Anhängen gefunden.</div>
+            <div class="small text-muted">Dein Posteingang ist auf dem aktuellen Stand!</div>
+          </div>
+
+          <!-- Email List Container -->
+          <div id="inbox-email-list" class="flex-column gap-3 mb-4" style="display: flex;"></div>
+        </div>
+      </div>
+
+      <!-- PDF Attachment Preview Modal -->
+      <div id="inbox-pdf-preview-modal" class="modal-overlay" style="display: none; z-index: 2100; background: rgba(0,0,0,0.75); backdrop-filter: blur(5px);">
+        <div class="modal-content" style="max-width: 1100px; width: 96vw; height: 92vh; display: flex; flex-direction: column; padding: 0; border-radius: 16px; overflow: hidden; background: #fff; box-shadow: 0 16px 48px rgba(0,0,0,0.4);">
+          <!-- Modal Header -->
+          <div class="modal-header d-flex justify-content-between align-items-center p-3 border-bottom bg-light m-0" style="flex-shrink: 0; position: static;">
+            <div class="d-flex align-items-center gap-2 text-truncate" style="min-width: 0; max-width: 45%;">
+              <span class="material-symbols-outlined text-danger" style="font-size: 28px;">picture_as_pdf</span>
+              <div class="text-truncate">
+                <div class="d-flex align-items-center gap-2">
+                  <h5 id="inbox-pdf-preview-title" class="m-0 text-truncate fw-bold" style="font-size: 15px;">Vorschau</h5>
+                  <span id="inbox-pdf-preview-counter" class="badge bg-secondary-subtle text-secondary small" style="font-size: 11px;">1 / 1</span>
+                </div>
+                <div id="inbox-pdf-preview-subtitle" class="text-muted small text-truncate" style="font-size: 12px;"></div>
+              </div>
+            </div>
+
+            <!-- Controls & Actions -->
+            <div class="d-flex align-items-center gap-2 flex-shrink-0">
+              <!-- Navigation -->
+              <div class="btn-group btn-group-sm me-1" role="group">
+                <button id="inbox-pdf-prev-btn" type="button" class="btn btn-outline-secondary d-flex align-items-center px-2" title="Vorherige E-Mail / Beleg (Pfeiltaste links)">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">chevron_left</span>
+                </button>
+                <button id="inbox-pdf-next-btn" type="button" class="btn btn-outline-secondary d-flex align-items-center px-2" title="Nächste E-Mail / Beleg (Pfeiltaste rechts)">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">chevron_right</span>
+                </button>
+              </div>
+
+              <!-- Quick Process Button inside Preview -->
+              <button id="inbox-pdf-quick-process-btn" type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 px-3" style="border-radius: 20px; font-weight: 600; font-size: 13px;" title="Diesen Beleg jetzt verarbeiten und archivieren">
+                <span class="material-symbols-outlined" style="font-size: 18px;">play_arrow</span>
+                <span>Verarbeiten</span>
+              </button>
+
+              <a id="inbox-pdf-download-btn" href="#" target="_blank" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;" title="Herunterladen">
+                <span class="material-symbols-outlined" style="font-size: 18px;">download</span>
+                <span class="d-none d-md-inline">Download</span>
+              </a>
+
+              <a id="inbox-pdf-external-btn" href="#" target="_blank" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;" title="In neuem Tab öffnen">
+                <span class="material-symbols-outlined" style="font-size: 18px;">open_in_new</span>
+              </a>
+
+              <button id="inbox-pdf-preview-close" type="button" class="btn btn-sm btn-light rounded-circle d-flex align-items-center justify-content-center ms-1" style="width: 34px; height: 34px; padding: 0;" title="Schließen (Esc)">
+                <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Modal Body with Full Height PDF Viewer -->
+          <div class="modal-body p-0 flex-grow-1 position-relative" style="background: #525659; min-height: 0;">
+            <div id="inbox-pdf-loading" class="position-absolute top-50 start-50 translate-middle text-center text-white" style="z-index: 5;">
+              <div class="spinner-border text-light mb-2" role="status"></div>
+              <div class="small fw-medium">Lade Dokumentenvorschau...</div>
+            </div>
+            <iframe id="inbox-pdf-preview-iframe" src="" style="width: 100%; height: 100%; border: 0; display: block;"></iframe>
+          </div>
         </div>
       </div>
 
@@ -358,6 +624,42 @@
             >
               <span class="material-symbols-outlined" style="font-size: 20px;">sync</span>
               <span>Google Drive Belege nachladen & synchronisieren</span>
+            </button>
+          </div>
+
+          <div class="setting-group" id="gmail-settings-container" style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
+            <label><strong>Google Mail (Workmail) Inbox Scanner:</strong></label>
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="gmail-auto-archive-checkbox" checked style="width: 18px; height: 18px;" />
+                E-Mails nach der Verarbeitung standardmäßig archivieren
+              </label>
+              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="monitor-gmail-checkbox" style="width: 18px; height: 18px;" />
+                Posteingang automatisch im Hintergrund überwachen (alle 60 Sek)
+              </label>
+            </div>
+            <div style="margin-top: 10px;">
+              <label style="font-size: 0.85em; color: #555;">Gmail-Suchabfrage (Filter):</label>
+              <input
+                type="text"
+                id="gmail-scan-query-input"
+                style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px;"
+                placeholder="in:inbox filename:pdf"
+              />
+            </div>
+
+            <!-- Connected Accounts List in Settings -->
+            <div style="margin-top: 12px;">
+              <label style="font-size: 0.85em; color: #555; font-weight: 600;">Verbundene Posteingänge:</label>
+              <div id="gmail-accounts-container" class="d-flex flex-column gap-2 mt-1">
+                <!-- Dynamically filled -->
+              </div>
+            </div>
+
+            <button id="settings-add-gmail-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 mt-3" style="border-radius: 8px; padding: 8px 12px; font-weight: 500;">
+              <span class="material-symbols-outlined" style="font-size: 18px;">add</span>
+              <span>Weiteres Gmail-Konto hinzufügen</span>
             </button>
           </div>
 
@@ -689,6 +991,150 @@
         </div>
       </div>
 
+      <!-- Accounting Side-by-Side Compare Modal -->
+      <div id="accounting-compare-modal" class="modal-overlay" style="z-index: 3100; display: none;">
+        <div class="modal-content" style="max-width: 1100px; width: 96%; max-height: 92vh; display: flex; flex-direction: column; padding: 20px; border-radius: 16px;">
+          <!-- Header -->
+          <div class="d-flex justify-content-between align-items-center pb-2 mb-3 border-bottom">
+            <div class="d-flex align-items-center gap-2">
+              <span class="material-symbols-outlined text-primary" style="font-size: 26px;">compare</span>
+              <div>
+                <h5 class="m-0 fw-bold text-dark" style="font-size: 16px;">Beleg-Gegenüberstellung & Detailvergleich</h5>
+                <div class="text-muted small" style="font-size: 12px;">Vergleiche den aktuellen Upload direkt mit dem in der Buchhaltung gefundenen Beleg.</div>
+              </div>
+            </div>
+            <button id="compare-modal-close-btn" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <!-- Split View Columns -->
+          <div class="row g-3 flex-grow-1 overflow-auto mb-3" style="min-height: 480px;">
+            <!-- Left: Local Upload -->
+            <div class="col-12 col-md-6 d-flex flex-column">
+              <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa;">
+                <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+                  <span class="fw-bold text-dark small d-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined text-primary" style="font-size: 18px;">upload_file</span>
+                    <span>Aktueller Upload (Lokale Datei)</span>
+                  </span>
+                  <span id="compare-local-badge" class="badge bg-primary-subtle text-primary border border-primary-subtle small">Lokal</span>
+                </div>
+                <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+                  <div class="d-flex justify-content-between flex-wrap gap-1">
+                    <span id="compare-local-inv">Rechnung: <strong>-</strong></span>
+                    <span id="compare-local-amt" class="text-success fw-bold font-monospace">Betrag: -</span>
+                  </div>
+                  <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+                    <span id="compare-local-date">Datum: -</span>
+                    <span id="compare-local-comp">Firma: -</span>
+                  </div>
+                </div>
+                <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; border-radius: 0 0 12px 12px; overflow: auto; position: relative;">
+                  <div id="compare-local-loading" class="text-white text-center py-5" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); z-index: 10;">
+                    <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
+                    <div class="small">Lade Vorschau Seite 1...</div>
+                  </div>
+                  <img id="compare-local-img" src="" alt="Vorschau Seite 1" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Accounting Portal Voucher -->
+            <div class="col-12 col-md-6 d-flex flex-column">
+              <div class="card h-100 border shadow-sm" style="border-radius: 12px; background: #fafafa;">
+                <div class="card-header bg-white border-bottom py-2 px-3 d-flex justify-content-between align-items-center">
+                  <span class="fw-bold text-dark small d-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined text-success" style="font-size: 18px;">account_balance</span>
+                    <span id="compare-remote-header">Beleg in Buchhaltung</span>
+                  </span>
+                  <span id="compare-remote-status-badge" class="badge bg-success-subtle text-success border border-success-subtle small">Gefunden</span>
+                </div>
+                <div class="p-2 px-3 border-bottom bg-light" style="font-size: 12px; line-height: 1.4;">
+                  <div class="d-flex justify-content-between flex-wrap gap-1">
+                    <span id="compare-remote-inv">Beleg-Nr: <strong>-</strong></span>
+                    <span id="compare-remote-amt" class="text-success fw-bold font-monospace">Betrag: -</span>
+                  </div>
+                  <div class="d-flex justify-content-between flex-wrap gap-1 text-muted mt-1">
+                    <span id="compare-remote-date">Datum: -</span>
+                    <span id="compare-remote-contact">Kontakt: -</span>
+                  </div>
+                </div>
+                <div class="card-body p-2 flex-grow-1 d-flex align-items-center justify-content-center" style="min-height: 440px; background: #2b2b2b; border-radius: 0 0 12px 12px; overflow: auto; position: relative;">
+                  <div id="compare-remote-loading" class="text-white text-center py-5" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); z-index: 10;">
+                    <div class="spinner-border spinner-border-sm text-light mb-2" role="status"></div>
+                    <div class="small">Lade Beleg Seite 1 aus Lexoffice...</div>
+                  </div>
+                  <img id="compare-remote-img" src="" alt="Lexoffice Beleg Seite 1" style="height: 480px !important; max-height: 480px !important; width: auto !important; max-width: 100% !important; object-fit: contain !important; align-self: center !important; margin: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.6); border-radius: 4px; background: white; display: none;" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Action Bar -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2 border-top">
+            <button id="compare-modal-back-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">arrow_back</span>
+              <span>Zurück zum Upload-Dialog</span>
+            </button>
+            <div class="d-flex align-items-center gap-2">
+              <button id="compare-modal-mark-btn" type="button" class="btn btn-sm btn-success d-flex align-items-center gap-1 px-3" style="border-radius: 8px; font-weight: 500;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
+                <span>Als synchronisiert markieren</span>
+              </button>
+              <button id="compare-modal-upload-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 8px;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">cloud_upload</span>
+                <span>Trotzdem neu übertragen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Duplicate Compare Modal -->
+      <div id="duplicate-compare-modal" class="modal-overlay" style="z-index: 3150; display: none;">
+        <div class="modal-content" style="max-width: 1200px; width: 96%; max-height: 94vh; display: flex; flex-direction: column; padding: 20px; border-radius: 16px;">
+          <!-- Header -->
+          <div class="d-flex justify-content-between align-items-center pb-2 mb-3 border-bottom">
+            <div class="d-flex align-items-center gap-2">
+              <div style="width: 38px; height: 38px; border-radius: 8px; background: #fff3e0; color: #e65100; display: flex; align-items: center; justify-content: center;">
+                <span class="material-symbols-outlined" style="font-size: 24px;">content_copy</span>
+              </div>
+              <div>
+                <h5 class="m-0 fw-bold text-dark" style="font-size: 16px;">Duplikat-Verdacht: Beleg-Gegenüberstellung</h5>
+                <div class="text-muted small" style="font-size: 12px;">Prüfe und vergleiche das aktuelle Dokument direkt mit den im System erkannten Duplikaten.</div>
+              </div>
+            </div>
+            <button id="dup-modal-close-btn" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <!-- Content Area: Split View of current doc and duplicate(s) -->
+          <div id="dup-compare-loading" class="text-center py-5" style="display: none;">
+            <div class="spinner-border text-warning mb-2" role="status"></div>
+            <div class="text-muted small">Lade Belege & Duplikate...</div>
+          </div>
+
+          <div id="dup-compare-container" class="row g-3 flex-grow-1 overflow-auto mb-3" style="min-height: 480px;">
+            <!-- Dynamically populated cards: Left (Current Document) + Right (Duplicate 1..N) -->
+          </div>
+
+          <!-- Bottom Action Bar -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2 border-top">
+            <button id="dup-modal-dismiss-all-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">check</span>
+              <span>Kein Duplikat (Verdacht verwerfen)</span>
+            </button>
+            <div class="d-flex align-items-center gap-2">
+              <button id="dup-modal-cancel-btn" type="button" class="btn btn-sm btn-secondary d-flex align-items-center gap-1 px-3" style="border-radius: 8px;">
+                <span>Schließen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Google Drive Sync Review Modal -->
       <div id="drive-sync-modal" class="modal-overlay" style="z-index: 2050; display: none;">
         <div class="modal-content" style="max-width: 820px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; border-radius: 16px; padding: 24px;">
@@ -868,7 +1314,14 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260818_8"></script>
+      <script src="/index.js?v=20260819_gmail_v26"></script>
+      <script>
+        if ("serviceWorker" in navigator) {
+          window.addEventListener("load", () => {
+            navigator.serviceWorker.register("/sw.js").catch(() => {});
+          });
+        }
+      </script>
     </div>
   </body>
 </html>

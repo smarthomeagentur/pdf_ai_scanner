@@ -17,6 +17,7 @@ const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const { execFile } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
+const pdfParse = require("pdf-parse");
 const { exiftool } = require("exiftool-vendored");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
@@ -30,6 +31,7 @@ process.on("uncaughtException", (error) => {
 
 const aiAgent = require("./app/aiAgent.js");
 const DriveAPI = require("./app/driveApi.js");
+const GmailAPI = require("./app/gmailApi.js");
 const ClickUpAPI = require("./app/clickupApi.js");
 const butlerApi = require("./app/butlerApi.js");
 
@@ -74,16 +76,40 @@ if (!fs.existsSync(localDownloadFolder)) fs.mkdirSync(localDownloadFolder, { rec
 const SETTINGS_FILE = path.join(storeFolder, "settings.json");
 const TOKEN_PATH = path.join(storeFolder, "token.json");
 const JOBS_FILE = path.join(storeFolder, "jobs.json");
+const SKIPPED_EMAILS_FILE = path.join(storeFolder, "skipped_emails.json");
 const CREDENTIALS_PATH = path.join(process.cwd(), "gdrive_secret.json"); // Secret usually stays in root or via env
 const thumbsFolder = path.join(storeFolder, "thumbs");
 if (!fs.existsSync(thumbsFolder)) fs.mkdirSync(thumbsFolder, { recursive: true });
 
 const driveApi = new DriveAPI(TOKEN_PATH, CREDENTIALS_PATH);
+const gmailApi = new GmailAPI(TOKEN_PATH, CREDENTIALS_PATH);
+
+let skippedEmails = {};
+function loadSkippedEmails() {
+  if (fs.existsSync(SKIPPED_EMAILS_FILE)) {
+    try {
+      skippedEmails = JSON.parse(fs.readFileSync(SKIPPED_EMAILS_FILE, "utf8"));
+    } catch (e) {
+      console.error("[GMAIL] Fehler beim Laden der skipped_emails.json:", e);
+    }
+  }
+}
+function saveSkippedEmails() {
+  try {
+    fs.promises.writeFile(SKIPPED_EMAILS_FILE, JSON.stringify(skippedEmails, null, 2)).catch((err) => {
+      console.error("[GMAIL] Fehler beim Speichern von skipped_emails.json:", err);
+    });
+  } catch (e) { }
+}
+loadSkippedEmails();
 
 const appSettings = {
   FOLDER_ID: process.env.DRIVE_FOLDER_ID,
   FOLDER_ID_SORTED: process.env.DRIVE_FOLDER_ID_SORTED,
   MONITOR_DRIVE: false,
+  MONITOR_GMAIL: false,
+  GMAIL_AUTO_ARCHIVE: true,
+  GMAIL_SCAN_QUERY: "in:inbox filename:pdf",
   AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
   AI_CATEGORIES:
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
@@ -194,6 +220,7 @@ app.get("/api/admin/backup", requireAdmin, (req, res) => {
       createdAt: new Date().toISOString(),
       settings: settingsData || appSettings,
       jobs: jobsData || { uploadJobs, uploadQueue, processedDriveFiles },
+      skippedEmails: skippedEmails || {},
       token: tokenData || null,
     };
 
@@ -319,7 +346,31 @@ app.get("/api/config", async (req, res) => {
   }
 });
 
-app.get("/api/settings", (req, res) => res.json({ success: true, settings: appSettings }));
+app.get("/api/settings", (req, res) => {
+  const isAdmin = checkIsAdmin(req);
+  if (isAdmin) {
+    return res.json({ success: true, settings: appSettings });
+  }
+
+  // Safe masked view for non-admin users
+  const safeSettings = { ...appSettings };
+  const sensitiveKeys = [
+    "ADMIN_PIN",
+    "ADMIN_PASSWORD",
+    "LEXOFFICE_KEY_WIREWIRE",
+    "LEXOFFICE_KEY_POLYXO",
+    "BUTTLER_KEY_THEWIRE_CLIENT",
+    "BUTTLER_KEY_THEWIRE_SECRET",
+    "BUTTLER_KEY_THEWIRE_KEY",
+    "CLICKUP_API_KEY",
+  ];
+  for (const k of sensitiveKeys) {
+    if (safeSettings[k]) {
+      safeSettings[k] = "********";
+    }
+  }
+  res.json({ success: true, settings: safeSettings });
+});
 
 app.post("/api/settings", requireAdmin, async (req, res) => {
   [
@@ -328,6 +379,9 @@ app.post("/api/settings", requireAdmin, async (req, res) => {
     "AI_COMPANY",
     "AI_CATEGORIES",
     "MONITOR_DRIVE",
+    "MONITOR_GMAIL",
+    "GMAIL_AUTO_ARCHIVE",
+    "GMAIL_SCAN_QUERY",
     "LEXOFFICE_KEY_WIREWIRE",
     "LEXOFFICE_KEY_THEWIRE",
     "LEXOFFICE_KEY_POLYXO",
@@ -352,6 +406,9 @@ app.post("/api/settings", requireAdmin, async (req, res) => {
     // Starte Überwachung asynchron sofort nach dem Speichern
     checkDriveForNewFiles().catch(console.error);
   }
+  if (appSettings.MONITOR_GMAIL) {
+    checkGmailForNewFiles().catch(console.error);
+  }
 });
 
 // Drive Auth Workflow
@@ -365,21 +422,40 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
       "postmessage",
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
+    const isSecondary = req.body.isSecondary === true;
 
-    const payload = JSON.stringify({
-      type: "authorized_user",
-      client_id: key.client_id,
-      client_secret: key.client_secret,
-      refresh_token: tokens.refresh_token || undefined,
-    });
-
-    let existingToken = {};
-    if (fs.existsSync(TOKEN_PATH)) existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH));
-
-    if (tokens.refresh_token || !existingToken.refresh_token) {
-      await fs.promises.writeFile(TOKEN_PATH, payload);
+    let addedAccount = null;
+    try {
+      addedAccount = await gmailApi.addAccountFromTokens(tokens, keys, isSecondary);
+      console.log(`[AUTH] Google-Konto ${addedAccount.email} (${isSecondary ? "Sekundärer Posteingang" : "Hauptkonto Drive+Gmail"}) verknüpft.`);
+    } catch (accErr) {
+      console.warn("[AUTH] Konto-Verknüpfung via Gmail API:", accErr.message);
     }
-    res.json({ success: true });
+
+    // NUR wenn es das Hauptkonto ist, wird store/token.json (für Google Drive) geschrieben
+    if (!isSecondary) {
+      let existingToken = {};
+      if (fs.existsSync(TOKEN_PATH)) {
+        try {
+          existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH, "utf8"));
+        } catch (e) {}
+      }
+
+      const refreshToken = tokens.refresh_token || existingToken.refresh_token;
+      const payload = JSON.stringify({
+        type: "authorized_user",
+        client_id: key.client_id,
+        client_secret: key.client_secret,
+        refresh_token: refreshToken,
+      }, null, 2);
+
+      await fs.promises.writeFile(TOKEN_PATH, payload);
+      console.log("[AUTH] Google Drive Hauptkonto-Token (token.json) erfolgreich gespeichert.");
+    } else {
+      console.log("[AUTH] Sekundärer Gmail-Posteingang gespeichert. Google Drive Hauptkonto bleibt unberührt.");
+    }
+
+    res.json({ success: true, account: addedAccount, isSecondary });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.toString() });
@@ -387,7 +463,7 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
 });
 
 // Drive Routes
-app.get("/api/drive/folders", async (req, res) => {
+app.get("/api/drive/folders", requireAdmin, async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.list({
@@ -403,7 +479,7 @@ app.get("/api/drive/folders", async (req, res) => {
   }
 });
 
-app.get("/api/drive/folder/:id", async (req, res) => {
+app.get("/api/drive/folder/:id", requireAdmin, async (req, res) => {
   try {
     const drive = await driveApi.getClient();
     const result = await drive.files.get({ fileId: req.params.id, fields: "id, name" });
@@ -413,49 +489,179 @@ app.get("/api/drive/folder/:id", async (req, res) => {
   }
 });
 
-app.get("/api/drive/search", async (req, res) => {
+// Local PDF Text Cache for Deep Search
+const localPdfTextCache = new Map();
+
+async function getLocalPdfText(filePath) {
   try {
-    const q = req.query.q;
-    if (!q) return res.json({ success: true, files: [] });
-
-    const driveFolderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID_SORTED)
-      ? appSettings.FOLDER_ID_SORTED
-      : await driveApi.findFolderId(appSettings.FOLDER_ID_SORTED);
-
-    if (!driveFolderId) {
-      return res.status(400).json({ error: "Zielordner in Google Drive nicht gefunden." });
+    if (!fs.existsSync(filePath)) return "";
+    const stat = await fs.promises.stat(filePath);
+    const cached = localPdfTextCache.get(filePath);
+    if (cached && cached.mtime === stat.mtimeMs) {
+      return cached.text;
     }
-
-    const drive = await driveApi.getClient();
-    const safeQ = q.replace(/'/g, "\\'");
-    let query = `trashed=false and '${driveFolderId}' in parents and (name contains '${safeQ}' or fullText contains '${safeQ}')`;
-
-    if (!checkIsAdmin(req)) {
-      query += ` and not appProperties has { key='isPrivate' and value='true' }`;
-    }
-
-    const result = await drive.files.list({
-      q: query,
-      fields: "files(id, name, webViewLink, thumbnailLink, createdTime)",
-      pageSize: 30, // Max 30 Ergebnisse, Google sortiert bei fullText automatisch nach Relevanz
-    });
-
-    res.json({ success: true, files: result.data.files || [] });
+    const dataBuffer = await fs.promises.readFile(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = (data.text || "").replace(/\r?\n/g, " ");
+    localPdfTextCache.set(filePath, { mtime: stat.mtimeMs, text });
+    return text;
   } catch (e) {
-    console.error("[SEARCH] Fehler bei Google Drive Suche:", e);
-    res.status(500).json({ error: e.toString() });
+    return "";
+  }
+}
+
+// Deep Document Content Search (OCR & Full-Text)
+app.get("/api/documents/deep-search", async (req, res) => {
+  try {
+    const q = (req.query.q || "").trim();
+    if (!q || q.length < 2) {
+      return res.json({ success: true, results: [], total: 0 });
+    }
+
+    const isAdmin = checkIsAdmin(req);
+    const safeQ = q.replace(/'/g, "\\'");
+    const qLower = q.toLowerCase();
+    const results = [];
+    const seenNames = new Set();
+
+    // 1. Search Google Drive (Fulltext & OCR Search across sorted and target folders)
+    if (fs.existsSync(TOKEN_PATH)) {
+      try {
+        const drive = await driveApi.getClient();
+        let folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+        if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+          folderId = await driveApi.findFolderId(folderId);
+        }
+
+        let driveQuery = `trashed=false and (fullText contains '${safeQ}' or name contains '${safeQ}')`;
+        if (folderId) {
+          driveQuery += ` and '${folderId}' in parents`;
+        }
+        if (!isAdmin) {
+          driveQuery += ` and not appProperties has { key='isPrivate' and value='true' }`;
+        }
+
+        const driveRes = await drive.files.list({
+          q: driveQuery,
+          fields: "files(id, name, webViewLink, thumbnailLink, webContentLink, createdTime, size, mimeType)",
+          pageSize: 30,
+        });
+
+        const driveFiles = driveRes.data.files || [];
+        for (const file of driveFiles) {
+          seenNames.add(file.name.toLowerCase());
+          results.push({
+            id: file.id,
+            name: file.name,
+            source: "Google Drive (Cloud)",
+            type: "gdrive",
+            date: file.createdTime,
+            size: file.size ? parseInt(file.size, 10) : 0,
+            webViewLink: file.webViewLink,
+            downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
+            thumbnailLink: file.thumbnailLink,
+            snippet: `Treffer im Google Drive Dokumenteninhalt / Dateinamen`,
+          });
+        }
+      } catch (driveErr) {
+        console.warn("[DEEP SEARCH] Google Drive Suche Warnung:", driveErr.message);
+      }
+    }
+
+    // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing)
+    const localJobs = Object.values(uploadJobs).filter((job) => !job.isPrivate || isAdmin);
+    for (const job of localJobs) {
+      if (!job.filePath || !fs.existsSync(job.filePath)) continue;
+
+      const fullText = await getLocalPdfText(job.filePath);
+      const resData = job.result || {};
+      const metaText = `${job.originalName || ""} ${resData.full || ""} ${resData.company || ""} ${resData.invoiceNumber || ""} ${resData.category || ""} ${(resData.tags || []).join(" ")}`;
+
+      const lowerFull = fullText.toLowerCase();
+      const lowerMeta = metaText.toLowerCase();
+
+      const matchInPdf = lowerFull.includes(qLower);
+      const matchInMeta = lowerMeta.includes(qLower);
+
+      if (matchInPdf || matchInMeta) {
+        // Snippet mit Kontext um den Treffer generieren
+        let snippet = "";
+        if (matchInPdf) {
+          const idx = lowerFull.indexOf(qLower);
+          const start = Math.max(0, idx - 50);
+          const end = Math.min(fullText.length, idx + q.length + 50);
+          snippet = (start > 0 ? "..." : "") + fullText.substring(start, end).trim() + (end < fullText.length ? "..." : "");
+        } else {
+          snippet = `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`;
+        }
+
+        if (!seenNames.has((job.originalName || "").toLowerCase())) {
+          results.push({
+            id: job.id,
+            jobId: job.id,
+            name: job.result?.full || job.originalName || "Dokument",
+            source: job.source === "gmail" ? "E-Mail Inbox" : "Lokaler Upload / Scanner",
+            type: "local",
+            date: job.uploadDate,
+            size: fs.statSync(job.filePath).size,
+            filePath: job.filePath,
+            thumbnailLink: `/api/thumbnail/${job.id}`,
+            snippet: snippet,
+            isLocal: true,
+          });
+        }
+      }
+    }
+
+    res.json({ success: true, query: q, results, total: results.length });
+  } catch (err) {
+    console.error("[DEEP SEARCH] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// File streaming for local jobs
+app.get("/api/jobs/:id/file", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const job = uploadJobs[id];
+    if (!job || !job.filePath || !fs.existsSync(job.filePath)) {
+      return res.status(404).send("Datei nicht gefunden");
+    }
+    if (job.isPrivate && !checkIsAdmin(req)) {
+      return res.status(403).send("Forbidden");
+    }
+    const filename = job.result?.full || job.originalName || "Dokument.pdf";
+    const safeName = filename.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    res.sendFile(job.filePath);
+  } catch (err) {
+    res.status(500).send("Fehler beim Laden der Datei: " + err.message);
   }
 });
 
 async function renderPdfToJpeg(pdfPath, targetThumbPath) {
   if (!fs.existsSync(pdfPath)) return false;
 
-  // 1. pdftoppm (Linux Poppler Utility - Standard in Docker & Linux)
+  // 1. PyMuPDF (fitz) - Native Python binding with exact PDF aspect ratio & rotation
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    await execFileAsync(getPythonPath(), [
+      "-c",
+      "import sys, fitz; doc=fitz.open(sys.argv[1]); page=doc[0]; pix=page.get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
+      pdfPath,
+      targetThumbPath,
+    ]);
+    if (fs.existsSync(targetThumbPath)) return true;
+  } catch (fitzErr) {}
+
+  // 2. pdftoppm (Linux Poppler Utility)
   try {
     const util = require("util");
     const execFileAsync = util.promisify(execFile);
     const prefix = targetThumbPath.replace(/\.jpe?g$/i, "");
-    await execFileAsync("pdftoppm", ["-jpeg", "-r", "120", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+    await execFileAsync("pdftoppm", ["-jpeg", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
     if (fs.existsSync(targetThumbPath)) return true;
     if (fs.existsSync(`${prefix}.jpg`)) {
       if (`${prefix}.jpg` !== targetThumbPath) await fs.promises.rename(`${prefix}.jpg`, targetThumbPath).catch(() => {});
@@ -463,26 +669,46 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
     }
   } catch (e) {}
 
-  // 2. PyMuPDF (fitz) - falls installiert
+  // 3. Ghostscript (gs - Standard in Docker Image)
   try {
     const util = require("util");
     const execFileAsync = util.promisify(execFile);
-    await execFileAsync(getPythonPath(), [
-      "-c",
-      "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=120); pix.save(sys.argv[2]); doc.close()",
+    await execFileAsync("gs", [
+      "-sDEVICE=jpeg",
+      "-dJPEGQ=90",
+      "-dNOPAUSE",
+      "-dBATCH",
+      "-dQUIET",
+      "-dFirstPage=1",
+      "-dLastPage=1",
+      "-r150",
+      `-sOutputFile=${targetThumbPath}`,
       pdfPath,
+    ]);
+    if (fs.existsSync(targetThumbPath)) return true;
+  } catch (gsErr) {}
+
+  // 4. GraphicsMagick (gm convert - Standard in Docker Image)
+  try {
+    const util = require("util");
+    const execFileAsync = util.promisify(execFile);
+    await execFileAsync("gm", [
+      "convert",
+      "-density",
+      "150",
+      `${pdfPath}[0]`,
       targetThumbPath,
     ]);
     if (fs.existsSync(targetThumbPath)) return true;
-  } catch (fitzErr) {}
+  } catch (gmErr) {}
 
-  // 3. Fallback: pdf2pic
+  // 5. pdf2pic (Node.js fallback)
   try {
     const { fromPath } = require("pdf2pic");
     const dir = path.dirname(targetThumbPath);
     const baseName = path.basename(targetThumbPath, path.extname(targetThumbPath));
     const convert = fromPath(pdfPath, {
-      density: 120,
+      density: 150,
       saveFilename: baseName,
       savePath: dir,
       format: "jpeg",
@@ -616,6 +842,10 @@ async function syncClickupStatusForJobs(targetJobs = null) {
 app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
   try {
     const id = req.params.id;
+    const job = uploadJobs[id];
+    if (job && job.isPrivate && !checkIsAdmin(req)) {
+      return res.status(403).send("Forbidden");
+    }
     const thumbPath = await getOrGenerateThumbnailPath(id);
     if (thumbPath && fs.existsSync(thumbPath)) {
       res.setHeader("Content-Type", "image/jpeg");
@@ -626,6 +856,92 @@ app.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
   } catch (err) {
     console.error("[THUMBNAIL] Fehler beim Ausliefern des Thumbnails:", err);
     return res.status(500).send("Error generating thumbnail");
+  }
+});
+
+app.get(["/api/jobs/:id/preview", "/api/preview/:id"], async (req, res) => {
+  try {
+    const id = req.params.id;
+    const job = uploadJobs[id];
+    if (job && job.isPrivate && !checkIsAdmin(req)) {
+      return res.status(403).send("Forbidden");
+    }
+    const targetPreviewPath = path.join(localDownloadFolder, `preview_${id}.jpg`);
+
+    // 1. Direct match on disk
+    if (fs.existsSync(targetPreviewPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=864000");
+      return res.sendFile(targetPreviewPath);
+    }
+
+    // 2. From local PDF file
+    if (job && job.filePath && fs.existsSync(job.filePath)) {
+      const rendered = await renderPdfToJpeg(job.filePath, targetPreviewPath);
+      if (rendered && fs.existsSync(targetPreviewPath)) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        return res.sendFile(targetPreviewPath);
+      }
+    }
+
+    // 3. High-Res Google Drive Preview (=s1600 or PDF download & render)
+    let driveFileId = job?.rawDriveId || (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null);
+    if (!driveFileId && typeof id === "string" && !id.includes("-") && id.length >= 10) {
+      driveFileId = id;
+    }
+
+    if (driveFileId && fs.existsSync(TOKEN_PATH)) {
+      try {
+        const drive = await driveApi.getClient();
+        const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
+        if (fileInfo.data && fileInfo.data.thumbnailLink) {
+          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s1600");
+          const imgRes = await fetch(link);
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            if (buf && buf.length > 100) {
+              await fs.promises.writeFile(targetPreviewPath, buf);
+              res.setHeader("Content-Type", "image/jpeg");
+              res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+              return res.sendFile(targetPreviewPath);
+            }
+          }
+        }
+
+        // Try downloading first page and rendering HD image
+        const pdfTemp = path.join(localDownloadFolder, `temp_preview_${id}_${Date.now()}.pdf`);
+        try {
+          const dest = fs.createWriteStream(pdfTemp);
+          const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
+          await pipeline(downloadRes.data, dest);
+
+          const rendered = await renderPdfToJpeg(pdfTemp, targetPreviewPath);
+          if (rendered && fs.existsSync(targetPreviewPath)) {
+            res.setHeader("Content-Type", "image/jpeg");
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            return res.sendFile(targetPreviewPath);
+          }
+        } finally {
+          if (fs.existsSync(pdfTemp)) await fs.promises.unlink(pdfTemp).catch(() => {});
+        }
+      } catch (e) {
+        console.warn(`[PREVIEW] Fehler beim Laden des HD-Drive-Thumbnails für ${id}:`, e.message);
+      }
+    }
+
+    // 4. Fallback: Check standard thumbnail
+    const thumbPath = await getOrGenerateThumbnailPath(id);
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      return res.sendFile(thumbPath);
+    }
+
+    return res.status(404).send("Vorschau nicht gefunden");
+  } catch (err) {
+    console.error("[PREVIEW] Fehler beim Ausliefern der Vorschau:", err);
+    return res.status(500).send("Error generating preview");
   }
 });
 
@@ -1001,6 +1317,42 @@ async function checkDriveForNewFiles() {
 }
 
 // File routing
+// PWA Web Share Target for Android "Share with" / "Open in"
+app.post("/share-target", upload.array("files"), async (req, res) => {
+  try {
+    if (req.files && req.files.length > 0) {
+      const jobs = req.files.map((file) => {
+        const job = {
+          id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+          originalName: file.originalname,
+          status: "pending",
+          source: "share_target",
+          inAiPipeline: true,
+          aiPipelineStartedAt: new Date().toISOString(),
+          result: null,
+          error: null,
+          filePath: file.path,
+          uploadDate: new Date().toISOString(),
+        };
+        uploadJobs[job.id] = job;
+        uploadQueue.push(job.id);
+        return job;
+      });
+      saveJobs();
+      processQueue();
+      console.log(`[PWA SHARE] ${jobs.length} geteilte Datei(en) über Android Share Target empfangen.`);
+      return res.redirect(`/?shared=true&count=${jobs.length}`);
+    }
+  } catch (err) {
+    console.error("[PWA SHARE] Fehler beim Empfang geteilter Dateien:", err);
+  }
+  res.redirect("/");
+});
+
+app.get("/share-target", (req, res) => {
+  res.redirect("/");
+});
+
 app.post("/api/upload", upload.array("files"), async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
 
@@ -1171,7 +1523,7 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/drive/sync-status", (req, res) => {
+app.get("/api/drive/sync-status", requireAdmin, (req, res) => {
   res.json({
     success: true,
     syncState: driveSyncState,
@@ -1285,6 +1637,416 @@ app.post("/api/drive/sync-execute", requireAdmin, async (req, res) => {
   }
 });
 
+// ==========================================
+// --- Google Mail (Workmail) Endpoints ---
+// ==========================================
+
+// 0. Accounts Endpoints
+app.get("/api/gmail/accounts", requireAdmin, async (req, res) => {
+  try {
+    const accounts = await gmailApi.getAccountsList();
+    res.json({ success: true, accounts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/gmail/accounts/delete", requireAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.body;
+    if (!accountId) return res.status(400).json({ success: false, error: "accountId erforderlich" });
+    const deleted = await gmailApi.removeAccount(accountId);
+    const accounts = await gmailApi.getAccountsList();
+    res.json({ success: deleted, accounts });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 0.1 Attachment Preview Endpoint
+app.get("/api/gmail/attachment/preview", requireAdmin, async (req, res) => {
+  try {
+    const { messageId, attachmentId, accountId, filename, download } = req.query;
+    if (!messageId || !attachmentId) {
+      return res.status(400).send("messageId und attachmentId erforderlich");
+    }
+
+    const buffer = await gmailApi.downloadAttachment(messageId, attachmentId, accountId);
+    const safeName = (filename || "Anhang.pdf").replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+
+    res.setHeader("Content-Type", "application/pdf");
+    if (download === "true") {
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
+    } else {
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+    }
+    res.setHeader("Content-Length", buffer.length);
+    res.send(buffer);
+  } catch (err) {
+    console.error("[GMAIL PREVIEW] Fehler:", err);
+    res.status(500).send("Fehler beim Laden des PDF-Anhangs: " + err.message);
+  }
+});
+
+// 1. GET /api/gmail/inbox
+app.get("/api/gmail/inbox", requireAdmin, async (req, res) => {
+  try {
+    if (!fs.existsSync(TOKEN_PATH)) {
+      return res.status(400).json({ success: false, error: "Google Konto ist nicht authentifiziert." });
+    }
+
+    const query = req.query.query || appSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
+    const accountId = req.query.accountId || "all";
+    const allEmails = await gmailApi.listInboxEmailsWithPdfs({ query, accountId });
+    const accountsList = await gmailApi.getAccountsList();
+
+    // Filtere übersprungene Mails heraus
+    const activeEmails = [];
+    let detectedCount = 0;
+
+    for (const email of allEmails) {
+      if (skippedEmails[email.id]) {
+        continue;
+      }
+      if (email.isDetected) {
+        detectedCount++;
+      }
+      activeEmails.push(email);
+    }
+
+    res.json({
+      success: true,
+      emails: activeEmails,
+      accounts: accountsList,
+      totalFound: allEmails.length,
+      detectedCount: detectedCount,
+      skippedCount: Object.keys(skippedEmails).length,
+    });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/inbox:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Abrufen der Posteingangs-Mails." });
+  }
+});
+
+// 2. GET /api/gmail/skipped
+app.get("/api/gmail/skipped", requireAdmin, (req, res) => {
+  try {
+    const list = Object.values(skippedEmails).sort(
+      (a, b) => new Date(b.skippedAt || b.date) - new Date(a.skippedAt || a.date)
+    );
+    res.json({ success: true, skippedEmails: list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. POST /api/gmail/skip
+app.post("/api/gmail/skip", requireAdmin, (req, res) => {
+  try {
+    const { messageId, accountId, accountEmail, subject, from, fromName, fromEmail, date, snippet, attachments, isDetected } = req.body;
+    if (!messageId) {
+      return res.status(400).json({ success: false, error: "messageId erforderlich" });
+    }
+
+    skippedEmails[messageId] = {
+      id: messageId,
+      accountId: accountId || "",
+      accountEmail: accountEmail || "",
+      subject: subject || "(Kein Betreff)",
+      from: from || fromName || fromEmail || "Unbekannt",
+      fromName: fromName || "",
+      fromEmail: fromEmail || "",
+      date: date || new Date().toISOString(),
+      snippet: snippet || "",
+      attachments: attachments || [],
+      isDetected: !!isDetected,
+      skippedAt: new Date().toISOString(),
+    };
+    saveSkippedEmails();
+
+    console.log(`[GMAIL] E-Mail ${messageId} zu übersprungenen Mails hinzugefügt.`);
+    res.json({ success: true, skippedCount: Object.keys(skippedEmails).length });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/skip:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 4. POST /api/gmail/unskip
+app.post("/api/gmail/unskip", requireAdmin, (req, res) => {
+  try {
+    const { messageId } = req.body;
+    if (!messageId) {
+      return res.status(400).json({ success: false, error: "messageId erforderlich" });
+    }
+
+    if (skippedEmails[messageId]) {
+      delete skippedEmails[messageId];
+      saveSkippedEmails();
+      console.log(`[GMAIL] E-Mail ${messageId} aus übersprungenen Mails entfernt.`);
+    }
+
+    res.json({ success: true, skippedCount: Object.keys(skippedEmails).length });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/unskip:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. POST /api/gmail/process
+app.post("/api/gmail/process", requireAdmin, async (req, res) => {
+  try {
+    const { messageId, accountId, subject, fromName, fromEmail, date, attachmentIds, archive } = req.body;
+    if (!messageId) {
+      return res.status(400).json({ success: false, error: "messageId erforderlich" });
+    }
+
+    const shouldArchive = archive !== undefined ? !!archive : appSettings.GMAIL_AUTO_ARCHIVE !== false;
+
+    // Falls attachmentIds nicht explizit übergeben wurden, Anhänge aus Mail laden
+    let attachmentsToProcess = [];
+    if (Array.isArray(attachmentIds) && attachmentIds.length > 0) {
+      attachmentsToProcess = attachmentIds;
+    } else {
+      const gmail = await gmailApi.getClient(accountId);
+      const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+      const foundAttachments = [];
+      gmailApi.extractPdfParts(msg.data.payload?.parts || [], foundAttachments);
+      attachmentsToProcess = foundAttachments;
+    }
+
+    if (attachmentsToProcess.length === 0) {
+      return res.status(400).json({ success: false, error: "Keine PDF-Anhänge in dieser E-Mail gefunden." });
+    }
+
+    const createdJobs = [];
+
+    for (const att of attachmentsToProcess) {
+      const attId = typeof att === "string" ? att : att.attachmentId;
+      const attName = typeof att === "object" && att.filename ? att.filename : `Email_Anhang_${Date.now()}.pdf`;
+
+      // Dateinamen bereinigen
+      const safeFilename = attName.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+      const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
+
+      // Buffer herunterladen & speichern
+      const buffer = await gmailApi.downloadAttachment(messageId, attId, accountId);
+      await fs.promises.writeFile(localFilePath, buffer);
+
+      const job = {
+        id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+        originalName: attName,
+        status: "pending",
+        source: "gmail",
+        gmailMessageId: messageId,
+        gmailAccountId: accountId || "",
+        emailSubject: subject || "",
+        emailSender: fromName ? `${fromName} <${fromEmail}>` : fromEmail || "",
+        emailDate: date || new Date().toISOString(),
+        inAiPipeline: true,
+        aiPipelineStartedAt: new Date().toISOString(),
+        result: null,
+        error: null,
+        filePath: localFilePath,
+        uploadDate: new Date().toISOString(),
+      };
+
+      uploadJobs[job.id] = job;
+      uploadQueue.push(job.id);
+      createdJobs.push(job);
+    }
+
+    saveJobs();
+    processQueue();
+
+    // Falls vorher übersprungen, aus der Liste entfernen
+    if (skippedEmails[messageId]) {
+      delete skippedEmails[messageId];
+      saveSkippedEmails();
+    }
+
+    // Optional: Archivieren
+    let archived = false;
+    if (shouldArchive) {
+      try {
+        await gmailApi.archiveEmail(messageId, accountId);
+        archived = true;
+      } catch (archErr) {
+        console.error(`[GMAIL] Archivieren für Mail ${messageId} (${accountId}):`, archErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      jobs: createdJobs,
+      archived: archived,
+      message: `${createdJobs.length} Beleg(e) in Pipeline gestellt.${archived ? " E-Mail wurde archiviert." : ""}`,
+    });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/process:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler bei der E-Mail-Verarbeitung." });
+  }
+});
+
+// 6. POST /api/gmail/process-batch
+app.post("/api/gmail/process-batch", requireAdmin, async (req, res) => {
+  try {
+    const { items, archive } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: "Keine E-Mails zum Verarbeiten übergeben." });
+    }
+
+    const shouldArchive = archive !== undefined ? !!archive : appSettings.GMAIL_AUTO_ARCHIVE !== false;
+    const createdJobs = [];
+    const errors = [];
+    let archivedCount = 0;
+
+    for (const item of items) {
+      const messageId = item.messageId || item.id;
+      const accountId = item.accountId || "";
+      if (!messageId) continue;
+
+      try {
+        let attachments = item.attachments || [];
+        if (attachments.length === 0) {
+          const gmail = await gmailApi.getClient(accountId);
+          const msg = await gmail.users.messages.get({ userId: "me", id: messageId, format: "full" });
+          const found = [];
+          gmailApi.extractPdfParts(msg.data.payload?.parts || [], found);
+          attachments = found;
+        }
+
+        for (const att of attachments) {
+          const attId = att.attachmentId;
+          const attName = att.filename || "Anhang.pdf";
+          const safeFilename = attName.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+          const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
+
+          const buffer = await gmailApi.downloadAttachment(messageId, attId, accountId);
+          await fs.promises.writeFile(localFilePath, buffer);
+
+          const job = {
+            id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+            originalName: attName,
+            status: "pending",
+            source: "gmail",
+            gmailMessageId: messageId,
+            gmailAccountId: accountId,
+            emailSubject: item.subject || "",
+            emailSender: item.fromName ? `${item.fromName} <${item.fromEmail}>` : item.from || item.fromEmail || "",
+            emailDate: item.date || new Date().toISOString(),
+            inAiPipeline: true,
+            aiPipelineStartedAt: new Date().toISOString(),
+            result: null,
+            error: null,
+            filePath: localFilePath,
+            uploadDate: new Date().toISOString(),
+          };
+
+          uploadJobs[job.id] = job;
+          uploadQueue.push(job.id);
+          createdJobs.push(job);
+        }
+
+        if (skippedEmails[messageId]) {
+          delete skippedEmails[messageId];
+        }
+
+        if (shouldArchive) {
+          try {
+            await gmailApi.archiveEmail(messageId, accountId);
+            archivedCount++;
+          } catch (archErr) {
+            console.error(`[GMAIL BATCH] Archivieren für Mail ${messageId}:`, archErr.message);
+          }
+        }
+      } catch (itemErr) {
+        console.error(`[GMAIL BATCH] Fehler bei Mail ${messageId}:`, itemErr);
+        errors.push({ messageId, error: itemErr.message });
+      }
+    }
+
+    saveJobs();
+    saveSkippedEmails();
+    processQueue();
+
+    res.json({
+      success: true,
+      processedCount: items.length - errors.length,
+      totalJobs: createdJobs.length,
+      archivedCount: archivedCount,
+      errors: errors,
+    });
+  } catch (err) {
+    console.error("[GMAIL] Fehler bei /api/gmail/process-batch:", err);
+    res.status(500).json({ success: false, error: err.message || "Fehler beim Verarbeiten der E-Mails." });
+  }
+});
+
+// Prepared background monitoring function
+async function checkGmailForNewFiles() {
+  if (!appSettings.MONITOR_GMAIL || !fs.existsSync(TOKEN_PATH)) return;
+
+  try {
+    const unarchivedEmails = await gmailApi.listInboxEmailsWithPdfs({ query: appSettings.GMAIL_SCAN_QUERY });
+    if (!unarchivedEmails || unarchivedEmails.length === 0) return;
+
+    let newCount = 0;
+    for (const email of unarchivedEmails) {
+      if (skippedEmails[email.id]) continue;
+
+      // Check if already processed
+      const alreadyProcessed = Object.values(uploadJobs).some(
+        (j) => j.source === "gmail" && j.gmailMessageId === email.id
+      );
+      if (alreadyProcessed) continue;
+
+      for (const att of email.attachments) {
+        const safeFilename = att.filename.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
+        const localFilePath = path.join(localDownloadFolder, `${Date.now()}-${safeFilename}`);
+        const buffer = await gmailApi.downloadAttachment(email.id, att.attachmentId);
+        await fs.promises.writeFile(localFilePath, buffer);
+
+        const job = {
+          id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+          originalName: att.filename,
+          status: "pending",
+          source: "gmail",
+          gmailMessageId: email.id,
+          emailSubject: email.subject || "",
+          emailSender: email.fromName ? `${email.fromName} <${email.fromEmail}>` : email.fromEmail || "",
+          emailDate: email.date || new Date().toISOString(),
+          inAiPipeline: true,
+          aiPipelineStartedAt: new Date().toISOString(),
+          result: null,
+          error: null,
+          filePath: localFilePath,
+          uploadDate: new Date().toISOString(),
+        };
+
+        uploadJobs[job.id] = job;
+        uploadQueue.push(job.id);
+        newCount++;
+      }
+
+      if (appSettings.GMAIL_AUTO_ARCHIVE !== false) {
+        try {
+          await gmailApi.archiveEmail(email.id);
+        } catch (e) { }
+      }
+    }
+
+    if (newCount > 0) {
+      saveJobs();
+      processQueue();
+      console.log(`[GMAIL MONITOR] ${newCount} neue Anhänge aus Posteingang in Pipeline gestellt.`);
+    }
+  } catch (err) {
+    if (debug) console.error("[GMAIL MONITOR] Fehler:", err.message);
+  }
+}
+
+
 app.post("/api/jobs/:id/private", requireAdmin, async (req, res) => {
   const jobId = req.params.id;
   const isPrivate = req.body.isPrivate;
@@ -1319,7 +2081,7 @@ app.post("/api/jobs/:id/private", requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/jobs/:id/category", (req, res) => {
+app.post("/api/jobs/:id/category", requireAdmin, (req, res) => {
   const jobId = req.params.id;
   const newCategory = req.body.category;
   if (uploadJobs[jobId] && uploadJobs[jobId].result) {
@@ -1342,6 +2104,234 @@ app.post("/api/jobs/:id/target-company", requireAdmin, (req, res) => {
     res.status(404).json({ success: false, error: "Job not found" });
   }
 });
+
+app.get("/api/jobs/:id/duplicates", async (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  if (job.isPrivate && !checkIsAdmin(req)) {
+    return res.status(403).json({ success: false, error: "Forbidden" });
+  }
+
+  const curInv = job.result?.invoiceNumber && job.result.invoiceNumber !== "none" && job.result.invoiceNumber !== "-" ? normalizeAlphaNum(job.result.invoiceNumber) : null;
+  const curName = (job.originalName || "").trim().toLowerCase();
+  const curSorted = (job.result?.full || "").trim().toLowerCase();
+  const curAmount = job.result?.invoiceAmmount || job.invoiceAmmount || null;
+  const curDate = job.result?.documentDate || job.result?.date || null;
+  const curCompany = (job.result?.company || "").trim().toLowerCase();
+
+  const duplicates = [];
+
+  for (const jId in uploadJobs) {
+    if (jId === jobId) continue;
+    const j = uploadJobs[jId];
+    if (j.isPrivate && !checkIsAdmin(req)) continue;
+
+    const matchReasons = [];
+    const otherInv = j.result?.invoiceNumber && j.result.invoiceNumber !== "none" && j.result.invoiceNumber !== "-" ? normalizeAlphaNum(j.result.invoiceNumber) : null;
+    const otherName = (j.originalName || "").trim().toLowerCase();
+    const otherSorted = (j.result?.full || "").trim().toLowerCase();
+    const otherAmount = j.result?.invoiceAmmount || j.invoiceAmmount || null;
+    const otherDate = j.result?.documentDate || j.result?.date || null;
+    const otherCompany = (j.result?.company || "").trim().toLowerCase();
+
+    // 1. Matching Invoice Number
+    if (curInv && otherInv && curInv === otherInv) {
+      matchReasons.push(`Gleiche Rechnungsnummer (${j.result?.invoiceNumber || j.invoiceNumber})`);
+    }
+
+    // 2. Matching Target Filename
+    if (curSorted && otherSorted && curSorted === otherSorted) {
+      matchReasons.push(`Identischer generierter Dateiname (${j.result?.full})`);
+    }
+
+    // 3. Matching Original Filename
+    if (curName && otherName && curName === otherName) {
+      matchReasons.push(`Gleicher Original-Dateiname (${j.originalName})`);
+    }
+
+    // 4. Matching Amount + Date + Company
+    if (curAmount && otherAmount && curAmount === otherAmount && curDate && otherDate && curDate === otherDate) {
+      matchReasons.push(`Gleicher Rechnungsbetrag (${(curAmount / 100).toFixed(2).replace(".", ",")} €) und Datum (${curDate})`);
+    }
+
+    if (matchReasons.length > 0) {
+      duplicates.push({
+        job: j,
+        matchReasons,
+        score: matchReasons.length,
+      });
+    }
+  }
+
+  duplicates.sort((a, b) => b.score - a.score);
+
+  res.json({
+    success: true,
+    currentJob: job,
+    duplicates,
+  });
+});
+
+app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  job.suspectedDuplicate = false;
+  saveJobs();
+  res.json({ success: true });
+});
+
+app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
+  const jobId = req.params.id;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+
+  const previewPath = path.join(localDownloadFolder, `preview_${jobId}.jpg`);
+  const thumbPath = path.join(localDownloadFolder, `thumb_${jobId}.jpg`);
+  if (fs.existsSync(previewPath)) await fs.promises.unlink(previewPath).catch(() => {});
+  if (fs.existsSync(thumbPath)) await fs.promises.unlink(thumbPath).catch(() => {});
+  if (job.filePath && fs.existsSync(job.filePath)) await fs.promises.unlink(job.filePath).catch(() => {});
+
+  delete uploadJobs[jobId];
+  uploadQueue = uploadQueue.filter(id => id !== jobId);
+  saveJobs();
+
+  res.json({ success: true });
+});
+
+function normalizeAlphaNum(s) {
+  return (s || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+}
+
+async function fetchLexofficeWithRetry(url, options, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    const res = await fetch(url, options);
+    if (res.status === 429) {
+      console.warn(`[LEXOFFICE] Rate limit (429) erreicht. Warte ${500 * (i + 1)}ms vor erneutem Versuch...`);
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+      continue;
+    }
+    return res;
+  }
+  return fetch(url, options);
+}
+
+async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amountInCents, documentDate, company }) {
+  if (!apiKey) return { found: false, matches: [] };
+
+  try {
+    const cleanInvNum = invoiceNumber && invoiceNumber !== "none" && invoiceNumber !== "-" ? invoiceNumber.trim() : null;
+    const targetAmountEuro = amountInCents !== undefined && amountInCents !== null ? amountInCents / 100 : null;
+    const cleanFileName = fileName ? fileName.trim().toLowerCase() : null;
+    const cleanCompany = company && company !== "-" ? company.trim().toLowerCase() : null;
+
+    const allVouchers = [];
+    const seenVoucherIds = new Set();
+
+    const voucherStatuses = "draft,open,paid,paidoff,voided,transferred,sepadebit";
+    const voucherTypes = "purchaseinvoice,purchasecreditnote,salesinvoice,salescreditnote,invoice,downpaymentinvoice,creditnote";
+
+    // 1. Direct query by voucherNumber if available
+    if (cleanInvNum) {
+      try {
+        const directUrl = `https://api.lexoffice.io/v1/voucherlist?voucherNumber=${encodeURIComponent(cleanInvNum)}&voucherStatus=${voucherStatuses}&voucherType=${voucherTypes}&page=0&size=100`;
+        const directRes = await fetchLexofficeWithRetry(directUrl, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          (directData.content || []).forEach((v) => {
+            if (v && v.id && !seenVoucherIds.has(v.id)) {
+              seenVoucherIds.add(v.id);
+              allVouchers.push(v);
+            }
+          });
+        }
+      } catch (e) {}
+    }
+
+    // 2. Query general recent vouchers list
+    try {
+      const generalUrl = `https://api.lexoffice.io/v1/voucherlist?voucherStatus=${voucherStatuses}&voucherType=${voucherTypes}&page=0&size=250`;
+      const genRes = await fetchLexofficeWithRetry(generalUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (genRes.ok) {
+        const genData = await genRes.json();
+        (genData.content || []).forEach((v) => {
+          if (v && v.id && !seenVoucherIds.has(v.id)) {
+            seenVoucherIds.add(v.id);
+            allVouchers.push(v);
+          }
+        });
+      }
+    } catch (e) {}
+
+    return matchLexofficeList(allVouchers, { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany });
+  } catch (err) {
+    console.error("[LEXOFFICE SEARCH] Fehler:", err);
+    return { found: false, matches: [], error: err.message };
+  }
+}
+
+function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany }) {
+  const matches = [];
+  const normSearchInv = cleanInvNum ? normalizeAlphaNum(cleanInvNum) : null;
+
+  for (const v of vouchers) {
+    const matchReasons = [];
+    const vNum = v.voucherNumber || "";
+    const normVoucherNum = normalizeAlphaNum(vNum);
+    const vDate = v.voucherDate || "";
+    const vAmount = parseFloat(v.totalAmount || "0");
+    const vContact = (v.contactName || "").toLowerCase();
+    const vStatus = v.voucherStatus || "offen";
+
+    // 1. Invoice Number Match (exact or normalized substring)
+    if (normSearchInv && normVoucherNum && (normSearchInv.includes(normVoucherNum) || normVoucherNum.includes(normSearchInv))) {
+      matchReasons.push(`Rechnungsnummer stimmt überein (${v.voucherNumber})`);
+    }
+
+    // 2. Amount Match (within 2 cents tolerance)
+    if (targetAmountEuro !== null && vAmount > 0 && Math.abs(vAmount - targetAmountEuro) < 0.02) {
+      matchReasons.push(`Betrag stimmt überein (${vAmount.toFixed(2).replace(".", ",")} €)`);
+    }
+
+    // 3. Date Match
+    if (documentDate && documentDate !== "-" && documentDate !== "unknown") {
+      const cleanDocDate = documentDate.replace(/[^0-9]/g, "");
+      const cleanVDate = vDate.replace(/[^0-9]/g, "");
+      if (vDate.startsWith(documentDate) || (cleanDocDate.length >= 6 && cleanVDate.includes(cleanDocDate))) {
+        matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+      }
+    }
+
+    // 4. Contact / Company Match
+    if (cleanCompany && vContact && (vContact.includes(cleanCompany) || cleanCompany.includes(vContact))) {
+      matchReasons.push(`Lieferant / Kontakt stimmt überein (${v.contactName})`);
+    }
+
+    if (matchReasons.length > 0) {
+      matches.push({
+        id: v.id,
+        voucherNumber: v.voucherNumber || "-",
+        voucherDate: v.voucherDate || "-",
+        voucherStatus: vStatus,
+        totalAmount: vAmount > 0 ? `${vAmount.toFixed(2).replace(".", ",")} €` : "-",
+        contactName: v.contactName || "-",
+        voucherType: v.voucherType || "Rechnung",
+        matchReasons,
+        score: matchReasons.length,
+      });
+    }
+  }
+
+  matches.sort((a, b) => b.score - a.score);
+  return { found: matches.length > 0, matches };
+}
 
 // Accounting Endpoints (Lexoffice & BuchhaltungsButler) - Admin only
 app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async (req, res) => {
@@ -1382,6 +2372,13 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
   let apiValid = false;
   let apiError = null;
   let organizationName = null;
+  let liveSearch = { performed: false, found: false, matches: [] };
+
+  const invNum = job.result?.invoiceNumber || job.invoiceNumber || "";
+  const docDate = job.result?.documentDate || "";
+  const invAmt = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : (job.invoiceAmmount || 0);
+  const compName = job.result?.company || "";
+  const fileName = job.result?.full || job.originalName || "";
 
   if (targetComp === "thewire") {
     provider = "buchhaltungsbutler";
@@ -1395,6 +2392,26 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
       apiValid = verifyRes.valid;
       apiError = verifyRes.error || null;
       organizationName = verifyRes.organizationName || "The Wire UG";
+
+      if (apiValid) {
+        // Live search for matching vouchers in BuchhaltungsButler
+        const searchRes = await butlerApi.searchReceipts({
+          client,
+          secret,
+          key,
+          invoiceNumber: invNum,
+          fileName,
+          amountInCents: invAmt,
+          documentDate: docDate,
+          company: compName,
+        });
+        liveSearch = {
+          performed: true,
+          found: searchRes.found,
+          matches: searchRes.matches || [],
+          error: searchRes.error,
+        };
+      }
     } else {
       apiValid = false;
       apiError = "BuchhaltungsButler Zugangsdaten (Client, Secret, Key) für The Wire fehlen in den Einstellungen.";
@@ -1408,13 +2425,28 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
 
     if (apiKey) {
       try {
-        const apiRes = await fetch("https://api.lexoffice.io/v1/profile", {
+        const apiRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/profile", {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         if (apiRes.ok) {
           apiValid = true;
           const profData = await apiRes.json().catch(() => ({}));
           organizationName = profData.companyName || profData.name || null;
+
+          // Live search for matching vouchers in Lexoffice
+          const searchRes = await searchLexofficeVouchers(apiKey, {
+            invoiceNumber: invNum,
+            fileName,
+            amountInCents: invAmt,
+            documentDate: docDate,
+            company: compName,
+          });
+          liveSearch = {
+            performed: true,
+            found: searchRes.found,
+            matches: searchRes.matches || [],
+            error: searchRes.error,
+          };
         } else {
           apiValid = false;
           apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
@@ -1444,6 +2476,7 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
     organizationName,
     alreadyTransferred,
     transferredInfo,
+    liveSearch,
     allTransfers: job.lexofficeTransfers || {},
     documentDetails: {
       title: job.result?.full || job.originalName,
@@ -1458,6 +2491,186 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
       rawDriveId: job.rawDriveId,
     },
   });
+});
+
+app.post("/api/accounting/mark-synced", requireAdmin, async (req, res) => {
+  const { jobId, companyKey, fileId } = req.body;
+  const job = uploadJobs[jobId];
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
+
+  if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+  const provider = companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice";
+  job.lexofficeTransfers[companyKey] = {
+    provider,
+    fileId: fileId || `manual_${Date.now()}`,
+    transferredAt: new Date().toISOString(),
+    manuallyMatched: true,
+  };
+  saveJobs();
+  res.json({ success: true, allTransfers: job.lexofficeTransfers });
+});
+
+app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
+  try {
+    const { companyKey, voucherId, fileId } = req.query;
+    if (!companyKey) return res.status(400).send("companyKey erforderlich");
+
+    if (companyKey === "thewire") {
+      return res.status(404).send("Vorschau für BuchhaltungsButler derzeit nicht als Datei verfügbar");
+    }
+
+    const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    if (!apiKey) return res.status(400).send("Kein API-Key für " + companyKey);
+
+    let targetFileId = fileId;
+    if (!targetFileId && voucherId) {
+      try {
+        const vRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (vRes.ok) {
+          const vData = await vRes.json();
+          if (vData.files && vData.files.length > 0) {
+            targetFileId = vData.files[0].id || vData.files[0];
+          }
+        }
+      } catch (e) {}
+
+      if (!targetFileId) {
+        try {
+          const invRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          });
+          if (invRes.ok) {
+            const invData = await invRes.json();
+            if (invData.documentFileId) targetFileId = invData.documentFileId;
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (!targetFileId) {
+      targetFileId = voucherId;
+    }
+
+    const fileRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!fileRes.ok) {
+      return res.status(fileRes.status).send("Dokument in Lexoffice nicht abrufbar (Status: " + fileRes.status + ")");
+    }
+
+    const contentType = fileRes.headers.get("content-type") || "application/pdf";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", "inline");
+
+    const arrayBuffer = await fileRes.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (err) {
+    console.error("[ACCOUNTING FILE] Fehler:", err);
+    res.status(500).send("Fehler beim Abrufen der Datei: " + err.message);
+  }
+});
+
+app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
+  try {
+    const { companyKey, voucherId, fileId } = req.query;
+    if (!companyKey) return res.status(400).send("companyKey erforderlich");
+
+    if (companyKey === "thewire") {
+      return res.status(404).send("Vorschau für BuchhaltungsButler derzeit nicht als Bild verfügbar");
+    }
+
+    const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    if (!apiKey) return res.status(400).send("Kein API-Key für " + companyKey);
+
+    const safeId = (voucherId || fileId || "doc").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const targetThumbPath = path.join(localDownloadFolder, `thumb_lex_${companyKey}_${safeId}.jpg`);
+
+    // Force fresh re-render if requested or if file doesn't exist
+    const isForce = req.query.force === "true" || !!req.query._t || !!req.query.t;
+    if (!isForce && fs.existsSync(targetThumbPath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      return res.sendFile(targetThumbPath);
+    }
+
+    // 2. Resolve fileId from voucher if needed
+    let targetFileId = fileId;
+    if (!targetFileId && voucherId) {
+      try {
+        const vRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (vRes.ok) {
+          const vData = await vRes.json();
+          if (vData.files && vData.files.length > 0) {
+            targetFileId = vData.files[0].id || vData.files[0];
+          }
+        }
+      } catch (e) {}
+
+      if (!targetFileId) {
+        try {
+          const invRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          });
+          if (invRes.ok) {
+            const invData = await invRes.json();
+            if (invData.documentFileId) targetFileId = invData.documentFileId;
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (!targetFileId) {
+      targetFileId = voucherId;
+    }
+
+    // 3. Download binary file from Lexoffice
+    const fileRes = await fetchLexofficeWithRetry(`https://api.lexoffice.io/v1/files/${targetFileId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (!fileRes.ok) {
+      return res.status(fileRes.status).send("Dokument in Lexoffice nicht abrufbar (Status: " + fileRes.status + ")");
+    }
+
+    const contentType = fileRes.headers.get("content-type") || "application/pdf";
+    const arrayBuffer = await fileRes.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
+
+    // 4. If image, save and return directly
+    if (contentType.includes("image/jpeg") || contentType.includes("image/png") || contentType.includes("image/webp")) {
+      await fs.promises.writeFile(targetThumbPath, fileBuffer);
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      return res.sendFile(targetThumbPath);
+    }
+
+    // 5. If PDF, render Page 1 to JPEG
+    const tempPdf = path.join(localDownloadFolder, `temp_lex_${safeId}_${Date.now()}.pdf`);
+    await fs.promises.writeFile(tempPdf, fileBuffer);
+
+    try {
+      const rendered = await renderPdfToJpeg(tempPdf, targetThumbPath);
+      if (rendered && fs.existsSync(targetThumbPath)) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        return res.sendFile(targetThumbPath);
+      }
+    } finally {
+      if (fs.existsSync(tempPdf)) await fs.promises.unlink(tempPdf).catch(() => {});
+    }
+
+    return res.status(500).send("Konnte Vorschau für Lexoffice Beleg nicht erzeugen.");
+  } catch (err) {
+    console.error("[ACCOUNTING PREVIEW] Fehler:", err);
+    res.status(500).send("Fehler beim Erzeugen der Vorschau: " + err.message);
+  }
 });
 
 app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, async (req, res) => {
@@ -1906,7 +3119,7 @@ app.post("/api/scan", upload.array("images", 50), async (req, res) => {
     const runScannerTask = (inputPath, tempPdfPath, coordsStr) =>
       new Promise((resolve, reject) => {
         execFile(
-          "./venv/bin/python",
+          process.platform === "win32" ? ".\\venv\\Scripts\\python.exe" : "./venv/bin/python",
           ["./app/scanner.py", inputPath, tempPdfPath, coordsStr, algorithm],
           (error, stdout, stderr) => {
             if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
@@ -1993,7 +3206,7 @@ app.post("/api/preview", upload.single("image"), async (req, res) => {
   try {
     await new Promise((resolve, reject) => {
       execFile(
-        "./venv/bin/python",
+        process.platform === "win32" ? ".\\venv\\Scripts\\python.exe" : "./venv/bin/python",
         ["./app/scanner.py", inputPath, outputJpgPath, req.body.coords || "skip", algorithm],
         (error, stdout, stderr) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
@@ -2026,6 +3239,8 @@ async function init() {
     aiAgent.init(debug);
     setInterval(checkDriveForNewFiles, 15 * 1000); // 15 Sekunden Intervall für schnellen Upload-Sync
     setTimeout(checkDriveForNewFiles, 10000);
+    setInterval(checkGmailForNewFiles, 60 * 1000); // 60 Sekunden Intervall für vorbereiteten Gmail-Monitor
+    setTimeout(checkGmailForNewFiles, 15000);
   }
   if (testrun) {
     await aiAgent.getPdfName("./samples-scanner/1.pdf", appSettings);
