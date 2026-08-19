@@ -1233,6 +1233,7 @@ async function processSingleJob(jobId) {
     await fs.promises.unlink(job.filePath).catch(() => { });
 
     // --- Duplikat-Erkennung (umfassend) ---
+    // Wenn der Job bereits manuell als "kein Duplikat" bestätigt wurde, nicht erneut markieren
     const normInvNum = sortedName.invoiceNumber && sortedName.invoiceNumber !== "none" && sortedName.invoiceNumber !== "-"
       ? normalizeAlphaNum(sortedName.invoiceNumber) : null;
     const normAmount = sortedName.invoiceAmmount || null;
@@ -1240,7 +1241,7 @@ async function processSingleJob(jobId) {
     const normFull = (sortedName.full || "").trim().toLowerCase();
     const normOrigName = (job.originalName || "").trim().toLowerCase();
 
-    const isDuplicate = Object.values(uploadJobs).some(j => {
+    const isDuplicate = job.duplicateDismissed ? false : Object.values(uploadJobs).some(j => {
       if (j.id === jobId) return false;
       if (j.status !== "completed" || !j.result) return false;
 
@@ -2270,13 +2271,18 @@ app.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
 
   job.suspectedDuplicate = false;
+  job.duplicateDismissed = true; // Manuell bestätigt: nicht erneut als Duplikat markieren
   saveJobs();
+  console.log(`[DUPLICATE] Job ${jobId} (${job.originalName || job.result?.full}) als kein Duplikat bestätigt.`);
   res.json({ success: true });
 });
 
 // Rückwirkende Duplikat-Erkennung für alle abgeschlossenen Jobs
+// Jobs mit duplicateDismissed=true werden übersprungen (manuell als kein Duplikat bestätigt)
 app.post("/api/jobs/rescan-duplicates", requireAdmin, (req, res) => {
-  const completedJobs = Object.values(uploadJobs).filter(j => j.status === "completed" && j.result && !j.suspectedDuplicate);
+  const completedJobs = Object.values(uploadJobs).filter(j =>
+    j.status === "completed" && j.result && !j.suspectedDuplicate && !j.duplicateDismissed
+  );
   let markedCount = 0;
 
   for (const job of completedJobs) {
