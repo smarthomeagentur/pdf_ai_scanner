@@ -703,13 +703,15 @@ app.get("/api/documents/deep-search", async (req, res) => {
           } else {
             // Unlinked Google Drive cloud file: Check if it matches any hidden or duplicate local job
             const fNorm = normalizeDocName(file.name);
+            const fKey = normalizeDocKey(file.name);
             const isHiddenOrDup = Object.values(uploadJobs).some((j) => {
               const isDup = !!(j.suspectedDuplicate || j.isDuplicate || j.duplicateOf || j.status === "duplicate");
               const isHid = !!j.isHidden;
               if (!isDup && !isHid) return false;
               if (j.id === file.id || j.driveFileId === file.id) return true;
               const jNorm = normalizeDocName(j.result?.full || j.originalName);
-              return jNorm && fNorm && jNorm === fNorm;
+              const jKey = normalizeDocKey(j.result?.full || j.originalName);
+              return (jNorm && fNorm && jNorm === fNorm) || (jKey && fKey && jKey === fKey);
             });
             if (isHiddenOrDup) {
               continue; // Exclude from search
