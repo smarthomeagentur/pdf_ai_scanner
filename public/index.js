@@ -1117,8 +1117,17 @@ function filterActiveJobs(jobs) {
   const matchedJobs = jobs.filter((job) => {
     const res = job.result || {};
 
-    // 0. Hidden filter: hide unless admin is showing hidden items
-    if (job.isHidden && !window.showHiddenJobs) return false;
+    // 0. Exclude duplicates and hidden documents from search
+    const isDuplicate = !!(job.suspectedDuplicate || job.isDuplicate || job.duplicateOf || job.status === "duplicate");
+    const isHidden = !!job.isHidden;
+
+    if (startSearchQuery) {
+      // In search mode: strictly exclude both duplicates and hidden documents
+      if (isDuplicate || isHidden) return false;
+    } else {
+      // Normal list view: hide unless admin is showing hidden items
+      if (isHidden && !window.showHiddenJobs) return false;
+    }
 
     // 1. Search Query (Metadata Match OR OCR / Deep Search Match)
     if (startSearchQuery) {
@@ -1209,24 +1218,38 @@ function filterActiveJobs(jobs) {
 
   // If search query is active and there are unlinked Drive-only results, append them seamlessly
   if (startSearchQuery && typeof driveOnlySearchResults !== "undefined" && driveOnlySearchResults.length > 0 && startCompanyFilter === "alle" && startDateFilter === "alle" && startSelectedCategories.size === 0) {
-    const driveItems = driveOnlySearchResults.map((df) => ({
-      id: "gdrive_" + df.id,
-      isDriveOnly: true,
-      originalName: df.name,
-      uploadDate: df.date,
-      status: "completed",
-      source: "gdrive",
-      webViewLink: df.webViewLink,
-      downloadLink: df.downloadLink,
-      thumbnailLink: df.thumbnailLink,
-      snippet: df.snippet,
-      result: {
-        full: df.name,
-        company: "Google Drive (Cloud)",
-        category: "Cloud Beleg",
+    const driveItems = driveOnlySearchResults
+      .filter((df) => {
+        // Exclude Drive results that match any hidden or duplicate local job
+        const dfNormName = (df.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const isHiddenOrDup = activeJobs.some((j) => {
+          const isDup = !!(j.suspectedDuplicate || j.isDuplicate || j.duplicateOf || j.status === "duplicate");
+          const isHid = !!j.isHidden;
+          if (!isDup && !isHid) return false;
+          if (j.id === df.id || j.id === `gdrive_${df.id}` || j.driveFileId === df.id) return true;
+          const jNorm = (j.result?.full || j.originalName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          return jNorm && dfNormName && jNorm === dfNormName;
+        });
+        return !isHiddenOrDup;
+      })
+      .map((df) => ({
+        id: "gdrive_" + df.id,
+        isDriveOnly: true,
+        originalName: df.name,
+        uploadDate: df.date,
+        status: "completed",
+        source: "gdrive",
         webViewLink: df.webViewLink,
-      },
-    }));
+        downloadLink: df.downloadLink,
+        thumbnailLink: df.thumbnailLink,
+        snippet: df.snippet,
+        result: {
+          full: df.name,
+          company: "Google Drive (Cloud)",
+          category: "Cloud Beleg",
+          webViewLink: df.webViewLink,
+        },
+      }));
     return [...matchedJobs, ...driveItems];
   }
 

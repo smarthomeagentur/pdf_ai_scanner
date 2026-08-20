@@ -633,6 +633,14 @@ app.get("/api/documents/deep-search", async (req, res) => {
           let snippet = "";
 
           if (matchedJob) {
+            // Exclude hidden or duplicate documents from search
+            const isDup = !!(matchedJob.suspectedDuplicate || matchedJob.isDuplicate || matchedJob.duplicateOf || matchedJob.status === "duplicate");
+            const isHid = !!matchedJob.isHidden;
+            if (isDup || isHid) {
+              seenJobIds.add(matchedJob.id);
+              continue;
+            }
+
             seenJobIds.add(matchedJob.id);
             // 1. Try local PDF text first (fastest)
             if (matchedJob.filePath && fs.existsSync(matchedJob.filePath)) {
@@ -676,7 +684,20 @@ app.get("/api/documents/deep-search", async (req, res) => {
               snippet: snippet,
             });
           } else {
-            // Unlinked Google Drive cloud file
+            // Unlinked Google Drive cloud file: Check if it matches any hidden or duplicate local job
+            const fNorm = normalizeDocName(file.name);
+            const isHiddenOrDup = Object.values(uploadJobs).some((j) => {
+              const isDup = !!(j.suspectedDuplicate || j.isDuplicate || j.duplicateOf || j.status === "duplicate");
+              const isHid = !!j.isHidden;
+              if (!isDup && !isHid) return false;
+              if (j.id === file.id || j.driveFileId === file.id) return true;
+              const jNorm = normalizeDocName(j.result?.full || j.originalName);
+              return jNorm && fNorm && jNorm === fNorm;
+            });
+            if (isHiddenOrDup) {
+              continue; // Exclude from search
+            }
+
             if (drive) {
               try {
                 const driveText = await getDrivePdfText(drive, file.id, file.createdTime);
@@ -713,7 +734,13 @@ app.get("/api/documents/deep-search", async (req, res) => {
     }
 
     // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing & Metadata)
-    const localJobs = Object.values(uploadJobs).filter((job) => !job.isPrivate || isAdmin);
+    const localJobs = Object.values(uploadJobs).filter((job) => {
+      if (job.isPrivate && !isAdmin) return false;
+      const isDup = !!(job.suspectedDuplicate || job.isDuplicate || job.duplicateOf || job.status === "duplicate");
+      const isHid = !!job.isHidden;
+      if (isDup || isHid) return false;
+      return true;
+    });
     for (const job of localJobs) {
       if (seenJobIds.has(job.id)) continue; // Already linked and processed from Drive
       const normJobName = normalizeDocName(job.result?.full || job.originalName);
