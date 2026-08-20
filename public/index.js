@@ -1403,19 +1403,19 @@ function renderJobs() {
       div.innerHTML = `
         <div style="padding-right: 94px; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-start;">
           <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
-            <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
+            <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
               <div class="d-flex align-items-center gap-1 flex-wrap">
                 <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;">
                   <span class="material-symbols-outlined" style="font-size: 14px;">cloud</span> Google Drive
                 </span>
               </div>
-              <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 3px;">
-                <span class="material-symbols-outlined text-primary" style="font-size: 15px;">calendar_today</span>
-                <span><strong>Dokumentendatum:</strong> ${docDateStr}</span>
+              <div style="font-size: 12.5px; color: #64748b; display: flex; align-items: center; gap: 5px; margin-top: 3px; word-break: break-all;">
+                <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">description</span>
+                <span><strong style="color: #475569; font-weight: 600;">Dateiname Upload:</strong> <span style="color: #1e293b; font-weight: 400;">${highlightedTitle}</span></span>
               </div>
-              <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 2px; word-break: break-all;">
-                <span class="material-symbols-outlined text-secondary" style="font-size: 15px;">description</span>
-                <span><strong>Dateiname Upload:</strong> ${highlightedTitle}</span>
+              <div style="font-size: 12.5px; color: #64748b; display: flex; align-items: center; gap: 5px; margin-top: 2px;">
+                <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">calendar_today</span>
+                <span><strong style="color: #475569; font-weight: 600;">Dokumentendatum:</strong> <span style="color: #1e293b; font-weight: 400;">${docDateStr}</span></span>
               </div>
             </div>
           </div>
@@ -1445,15 +1445,16 @@ function renderJobs() {
 
     let privateBadgeHtml = '';
     if (window.isAdmin) {
-        const bg = job.isPrivate ? '#f44336' : '#e0e0e0';
-        const color = job.isPrivate ? 'white' : '#666';
+        const bg = job.isPrivate ? '#fef2f2' : '#f1f5f9';
+        const color = job.isPrivate ? '#dc2626' : '#475569';
+        const border = job.isPrivate ? '#fecaca' : '#cbd5e1';
         const icon = job.isPrivate ? 'lock' : 'lock_open';
         const text = job.isPrivate ? 'PRIVAT' : 'ÖFFENTLICH';
-        privateBadgeHtml = `<span class="toggle-private-pill" data-job-id="${job.id}" style="cursor: pointer; background: ${bg}; color: ${color}; padding: 2px 8px; border-radius: 12px; font-size: 10px; margin-left: 8px; vertical-align: middle; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s; user-select: none;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+        privateBadgeHtml = `<span class="toggle-private-pill" data-job-id="${job.id}" style="cursor: pointer; background: ${bg}; color: ${color}; border: 1px solid ${border}; padding: 2px 8px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; transition: all 0.2s; user-select: none; font-weight: 600;" title="Klicken zum Umschalten (Privat/Öffentlich)">
             <span class="material-symbols-outlined" style="font-size: 12px;">${icon}</span> ${text}
         </span>`;
     } else if (job.isPrivate) {
-        privateBadgeHtml = '<span style="background: #f44336; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;">🔒 PRIVAT</span>';
+        privateBadgeHtml = '<span style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; padding: 2px 7px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;">🔒 PRIVAT</span>';
     }
 
     const lexTransfers = job.lexofficeTransfers || {};
@@ -1468,12 +1469,12 @@ function renderJobs() {
 
     let lexofficeBadgeHtml = '';
     if (window.isAdmin && isLexTransferred) {
-        lexofficeBadgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle;" title="An Buchhaltung übertragen">✓ ${providerLabel} (${activeCompany})</span>`;
+        lexofficeBadgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 7px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;" title="An Buchhaltung übertragen">✓ ${providerLabel} (${activeCompany})</span>`;
     }
 
     let duplicateBadgeHtml = '';
     if (job.suspectedDuplicate) {
-        duplicateBadgeHtml = `<span class="badge-open-duplicate-compare" data-job-id="${job.id}" style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); font-weight: 500;" title="Klicken, um Beleg mit erkannten Duplikaten gegenüberzustellen">⚠️ DUPLIKAT VERDACHT</span>`;
+        duplicateBadgeHtml = `<span class="badge-open-duplicate-compare" data-job-id="${job.id}" style="background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; padding: 2px 8px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;" title="Klicken, um Beleg mit erkannten Duplikaten gegenüberzustellen"><span class="material-symbols-outlined" style="font-size: 12px;">warning</span> DUPLIKAT VERDACHT</span>`;
     }
 
     let cancelJobButtonHtml = "";
@@ -1711,24 +1712,28 @@ ${lexofficeDetailsHtml}
     div.innerHTML = `
                 <div style="padding-right: 94px; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-start;">
                     <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
-                        <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
-                                <div style="flex-grow: 1; min-width: 0;">
-                                    ${titleHtml}
-                                </div>
-                                <div style="flex-shrink: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
-                                    ${privateBadgeHtml}
-                                    ${lexofficeBadgeHtml}
-                                    ${duplicateBadgeHtml}
-                                </div>
+                        <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
+                            <!-- Zeile 1: Kategorie, Tags, Unternehmen -->
+                            <div>
+                                ${titleHtml}
                             </div>
-                            <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 3px;">
-                                <span class="material-symbols-outlined text-primary" style="font-size: 15px;">calendar_today</span>
-                                <span><strong>Dokumentendatum:</strong> ${docDateDisplay}</span>
+                            <!-- Zeile 2: Status-Badges (Öffentlich/Privat, Duplikat-Verdacht, Buchhaltung) -->
+                            ${(privateBadgeHtml || duplicateBadgeHtml || lexofficeBadgeHtml) ? `
+                              <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+                                ${privateBadgeHtml}
+                                ${duplicateBadgeHtml}
+                                ${lexofficeBadgeHtml}
+                              </div>
+                            ` : ''}
+                            <!-- Zeile 3: Dateiname Upload (oben) -->
+                            <div style="font-size: 12.5px; color: #64748b; display: flex; align-items: center; gap: 5px; margin-top: 3px; word-break: break-all;">
+                                <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">description</span>
+                                <span><strong style="color: #475569; font-weight: 600;">Dateiname Upload:</strong> <span style="color: #1e293b; font-weight: 400;">${highlightQueryText(job.originalName || "-", startSearchQuery)}</span></span>
                             </div>
-                            <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 2px; word-break: break-all;">
-                                <span class="material-symbols-outlined text-secondary" style="font-size: 15px;">description</span>
-                                <span><strong>Dateiname Upload:</strong> ${highlightQueryText(job.originalName || "-", startSearchQuery)}</span>
+                            <!-- Zeile 4: Dokumentendatum (darunter) -->
+                            <div style="font-size: 12.5px; color: #64748b; display: flex; align-items: center; gap: 5px; margin-top: 2px;">
+                                <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">calendar_today</span>
+                                <span><strong style="color: #475569; font-weight: 600;">Dokumentendatum:</strong> <span style="color: #1e293b; font-weight: 400;">${docDateDisplay}</span></span>
                             </div>
                         </div>
                         ${statusHtml}
@@ -3465,9 +3470,10 @@ let pendingClickupTransferJobId = null;
 let pendingClickupTransferBtn = null;
 
 async function executeClickupTransfer(jobId, force = false, btn = null) {
+  const originalBtnHtml = btn ? btn.innerHTML : "";
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> Sende...`;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" style="width: 12px; height: 12px;"></span> <span>Sende...</span>`;
   }
 
   try {
@@ -3509,6 +3515,7 @@ async function executeClickupTransfer(jobId, force = false, btn = null) {
       document.getElementById("confirm-clickup-modal").style.display = "flex";
       if (btn) {
         btn.disabled = false;
+        btn.innerHTML = originalBtnHtml;
       }
       return;
     }
@@ -3525,14 +3532,14 @@ async function executeClickupTransfer(jobId, force = false, btn = null) {
       alert("ClickUp Übertragung fehlgeschlagen: " + (data.error || "Unbekannter Fehler"));
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span> <span>Zu ClickUp</span>`;
+        btn.innerHTML = originalBtnHtml;
       }
     }
   } catch (err) {
     alert("Fehler bei ClickUp-Übertragung: " + err.message);
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span> <span>Zu ClickUp</span>`;
+      btn.innerHTML = originalBtnHtml;
     }
   }
 }
@@ -3545,6 +3552,11 @@ const confirmClickupModal = document.getElementById("confirm-clickup-modal");
 
 const hideClickupConfirmModal = () => {
   if (confirmClickupModal) confirmClickupModal.style.display = "none";
+  if (pendingClickupTransferBtn) {
+    pendingClickupTransferBtn.disabled = false;
+    renderJobs();
+    if (typeof renderRechnungenList === "function") renderRechnungenList();
+  }
   pendingClickupTransferJobId = null;
   pendingClickupTransferBtn = null;
 };
