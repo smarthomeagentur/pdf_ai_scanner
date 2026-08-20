@@ -565,10 +565,19 @@ async function getDrivePdfText(drive, fileId, modifiedTime) {
   return "";
 }
 
+function normalizeDocName(str) {
+  return (str || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+}
+
+function normalizeDocKey(str) {
+  return (str || "").toLowerCase().replace(/\.pdf$/i, "").replace(/[^a-z0-9]/g, "");
+}
+
 // Helper: Find matching job in local uploadJobs for a given Drive file
 function findMatchingJobForDriveFile(file, isAdmin = true) {
   if (!file) return null;
-  const fName = (file.name || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+  const fName = normalizeDocName(file.name);
+  const fKey = normalizeDocKey(file.name);
   const fId = file.id;
 
   for (const job of Object.values(uploadJobs)) {
@@ -579,10 +588,13 @@ function findMatchingJobForDriveFile(file, isAdmin = true) {
     if (job.result && job.result.webViewLink && job.result.webViewLink.includes(fId)) return job;
     if (file.webViewLink && job.result?.webViewLink && job.result.webViewLink === file.webViewLink) return job;
 
-    const normFull = (job.result?.full || "").toLowerCase().replace(/\.pdf$/i, "").trim();
-    const normOrig = (job.originalName || "").toLowerCase().replace(/\.pdf$/i, "").trim();
-
+    const normFull = normalizeDocName(job.result?.full);
+    const normOrig = normalizeDocName(job.originalName);
     if (fName && (fName === normFull || fName === normOrig)) return job;
+
+    const keyFull = normalizeDocKey(job.result?.full);
+    const keyOrig = normalizeDocKey(job.originalName);
+    if (fKey && (fKey === keyFull || fKey === keyOrig)) return job;
   }
   return null;
 }
@@ -1740,6 +1752,19 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
           id: file.id,
           name: file.name,
           reason: "Manuell ausgeblendet",
+          size: file.size,
+          webViewLink: file.webViewLink,
+        });
+        continue;
+      }
+
+      // Check if duplicate document (marked as duplicate)
+      const isDuplicate = matchingJob && (matchingJob.suspectedDuplicate || matchingJob.isDuplicate || matchingJob.duplicateOf || matchingJob.status === "duplicate");
+      if (isDuplicate) {
+        skipped.push({
+          id: file.id,
+          name: file.name,
+          reason: "Als Duplikat markiert",
           size: file.size,
           webViewLink: file.webViewLink,
         });
