@@ -1129,6 +1129,7 @@ function filterActiveJobs(jobs) {
       const invNum = (res.invoiceNumber || job.invoiceNumber || "").toLowerCase();
       const cat = (res.category || "").toLowerCase();
       const tags = (res.tags && Array.isArray(res.tags) ? res.tags.join(" ") : "").toLowerCase();
+      const notes = (job.notes || "").toLowerCase();
       const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
 
       const matchesMetadata =
@@ -1138,6 +1139,7 @@ function filterActiveJobs(jobs) {
         invNum.includes(q) ||
         cat.includes(q) ||
         tags.includes(q) ||
+        notes.includes(q) ||
         amtStr.includes(q);
 
       const matchesOcr = typeof deepSearchSnippetsMap !== "undefined" && deepSearchSnippetsMap.has(job.id);
@@ -1335,9 +1337,8 @@ function renderStartPagination(totalItems, totalPages) {
 }
 
 function renderJobs() {
-  if (document.querySelector('.category-picker-box')) {
-    // Ein Picker ist offen, wir überspringen das Neu-Zeichnen,
-    // damit das Menü nicht durch den 5-Sekunden-Refresh geschlossen wird.
+  if (document.querySelector('.category-picker-box') || document.querySelector('.company-picker-box') || document.activeElement?.classList.contains('job-notes-input')) {
+    // Ein Picker ist offen oder Nutzer tippt in Notizen, Neu-Zeichnen überspringen
     return;
   }
 
@@ -1604,20 +1605,19 @@ function renderJobs() {
         `;
       }
 
-      // Hide / unhide button (only for admins)
+      // Hide / unhide icon button (only for admins)
       let hideButtonHtml = "";
       if (window.isAdmin) {
         const isHidden = job.isHidden === true;
         hideButtonHtml = `
-          <button type="button" class="btn btn-sm btn-hide-job d-inline-flex align-items-center gap-1" data-job-id="${job.id}" data-is-hidden="${isHidden}"
-            style="border-radius: 8px; font-size: 12px; padding: 3px 8px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
+          <button type="button" class="btn btn-sm btn-hide-job" data-job-id="${job.id}" data-is-hidden="${isHidden}"
+            style="position: absolute; top: 12px; right: 12px; border-radius: 8px; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-weight: 500; cursor: pointer; transition: all 0.2s ease; z-index: 2;
               ${isHidden
                 ? 'background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;'
                 : 'background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1;'
               }"
-            title="${isHidden ? 'Datei wieder einblenden (wird in Zukunft nicht erneut per Drive-Sync importiert)' : 'Datei ausblenden (bleibt in Google Drive, wird nicht erneut importiert)'}">
-            <span class="material-symbols-outlined" style="font-size: 14px;">${isHidden ? 'visibility' : 'visibility_off'}</span>
-            <span>${isHidden ? 'Einblenden' : 'Ausblenden'}</span>
+            title="${isHidden ? 'Datei wieder einblenden' : 'Datei ausblenden (wird bei Drive-Sync nicht erneut importiert)'}">
+            <span class="material-symbols-outlined" style="font-size: 18px;">${isHidden ? 'visibility' : 'visibility_off'}</span>
           </button>
         `;
       }
@@ -1634,7 +1634,8 @@ function renderJobs() {
                       </div>
                       <details class="job-result" data-job-id="${job.id}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
                         <summary style="display: none;"></summary>
-                        <div style="margin-top: 6px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
+                        <div style="position: relative; margin-top: 6px; padding: 14px; padding-right: 48px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
+                            ${hideButtonHtml}
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Generierter Dateiname:</strong> ${
                                 job.result.full || "-"
                             }<br>
@@ -1645,9 +1646,12 @@ function renderJobs() {
                                 job.result.documentDate || "-"
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Hochgeladen am:</strong> ${displayDate}<br>
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> ${
-                                job.result.company || "-"
-                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> 
+                            <div style="position: relative; display: inline-block;">
+                                <span class="company-editable" data-job-id="${job.id}" data-current-comp="${job.result.company || '-'}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: #e0f2fe; color: #0369a1; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+                                    ${job.result.company || "-"} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                                </span>
+                            </div><br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Kategorie:</strong> 
                             <div style="position: relative; display: inline-block;">
                                 <span class="category-editable" data-job-id="${job.id}" data-current-cat="${job.result.category || '-'}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: var(--md-sys-color-primary-container, #eaddff); color: var(--md-sys-color-on-primary-container, #21005d); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
@@ -1657,14 +1661,17 @@ function renderJobs() {
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${tagsStr}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
 ${invoiceHtml}                            <strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
+                            <div class="job-notes-section mt-2 pt-2 border-top" style="border-color: var(--md-sys-color-outline-variant, #CAC4D0) !important;">
+                                <div class="d-flex align-items-center justify-content-between mb-1">
+                                    <strong style="color: var(--md-sys-color-on-surface-variant, #49454F); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
+                                        <span class="material-symbols-outlined" style="font-size: 16px; color: #64748b;">edit_note</span> Notizen:
+                                    </strong>
+                                    <span class="notes-save-indicator text-success small" style="font-size: 11px; display: none;">✓ Gespeichert</span>
+                                </div>
+                                <textarea class="form-control job-notes-input" data-job-id="${job.id}" placeholder="Notiz oder Stichworte zu diesem Beleg hinterlegen (durchsuchbar)..." rows="2" style="font-size: 13px; border-radius: 8px; resize: vertical; background: #fafafa; border-color: #cbd5e1; line-height: 1.4;">${job.notes || ""}</textarea>
+                            </div>
 ${clickupDetailsHtml}
 ${lexofficeDetailsHtml}
-                            <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
-                              <div class="text-muted" style="font-size: 12px;">
-                                ${job.isHidden ? '<span style="color: #e65100;"><span class="material-symbols-outlined" style="font-size: 14px; vertical-align: middle;">visibility_off</span> Ausgeblendet – wird bei Drive-Sync nicht erneut importiert</span>' : '<span style="color: #888;">Sichtbar in der Liste</span>'}
-                              </div>
-                              ${hideButtonHtml}
-                            </div>
                         </div>
                       </details>
                     </div>
@@ -2074,30 +2081,87 @@ jobList.addEventListener('click', async (e) => {
     // Remove picker
     pickerBox.remove();
     
-    // Optimistic UI update
-    editableSpan.innerHTML = `${newCategory} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>`;
-    editableSpan.setAttribute('data-current-cat', newCategory);
+    // 1. Instant local state update for all lists
+    const job = activeJobs.find(j => j.id === jobId);
+    if (job) {
+      if (!job.result) job.result = {};
+      job.result.category = newCategory;
+    }
+    if (typeof allRechnungenJobs !== "undefined" && Array.isArray(allRechnungenJobs)) {
+      const rJob = allRechnungenJobs.find(j => j.id === jobId);
+      if (rJob) {
+        if (!rJob.result) rJob.result = {};
+        rJob.result.category = newCategory;
+      }
+    }
 
-    // Call API
+    // 2. Immediately re-render so overview card badges and filter bubbles update right away!
+    renderJobs();
+    if (typeof renderRechnungenList === "function") renderRechnungenList();
+
+    // 3. Background API call
     try {
-        const res = await fetch(`/api/jobs/${jobId}/category`, {
+        fetch(`/api/jobs/${jobId}/category`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ category: newCategory })
-        });
-        if (res.ok) {
-          const job = activeJobs.find(j => j.id === jobId);
-          if (job && job.result) {
-            job.result.category = newCategory;
-          }
-        }
+        }).catch(err => console.error("Fehler beim Speichern der Kategorie", err));
     } catch(err) {
         console.error("Fehler beim Ändern der Kategorie", err);
     }
     return;
   }
 
-  // Handle click on the main editable pill
+  // Handle click on a company option pill
+  const compOptionPill = e.target.closest('.comp-option-pill');
+  if (compOptionPill) {
+    e.stopPropagation();
+    e.preventDefault();
+    const newCompany = compOptionPill.getAttribute('data-value');
+    const pickerBox = compOptionPill.closest('.company-picker-box');
+    const editableSpan = pickerBox.parentElement.querySelector('.company-editable');
+    const jobId = editableSpan.getAttribute('data-job-id');
+
+    // Remove picker
+    pickerBox.remove();
+
+    // 1. Instant local state update for all lists
+    const job = activeJobs.find(j => j.id === jobId);
+    if (job) {
+      if (!job.result) job.result = {};
+      job.result.company = newCompany;
+      const compLower = (newCompany || "").toLowerCase();
+      if (compLower.includes("wirewire")) job.targetCompany = "wirewire";
+      else if (compLower.includes("the wire") || compLower.includes("thewire")) job.targetCompany = "thewire";
+      else if (compLower.includes("polyxo")) job.targetCompany = "polyxo";
+      else if (compLower.includes("daniel")) job.targetCompany = "daniel";
+    }
+    if (typeof allRechnungenJobs !== "undefined" && Array.isArray(allRechnungenJobs)) {
+      const rJob = allRechnungenJobs.find(j => j.id === jobId);
+      if (rJob) {
+        if (!rJob.result) rJob.result = {};
+        rJob.result.company = newCompany;
+      }
+    }
+
+    // 2. Immediately re-render so overview card badges and dropdown counts update right away!
+    renderJobs();
+    if (typeof renderRechnungenList === "function") renderRechnungenList();
+
+    // 3. Background API call
+    try {
+      fetch(`/api/jobs/${jobId}/company`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: newCompany })
+      }).catch(err => console.error("Fehler beim Speichern des Unternehmens", err));
+    } catch(err) {
+      console.error("Fehler beim Ändern des Unternehmens", err);
+    }
+    return;
+  }
+
+  // Handle click on the main category editable pill
   const target = e.target.closest('.category-editable');
   if (target) {
     // Check if we already have a picker box open here
@@ -2107,7 +2171,7 @@ jobList.addEventListener('click', async (e) => {
     e.preventDefault();
     
     // Close other pickers
-    document.querySelectorAll('.category-picker-box').forEach(box => box.remove());
+    document.querySelectorAll('.category-picker-box, .company-picker-box').forEach(box => box.remove());
 
     const currentCat = target.getAttribute('data-current-cat');
     const jobId = target.getAttribute('data-job-id');
@@ -2134,19 +2198,109 @@ jobList.addEventListener('click', async (e) => {
     `;
     
     target.parentElement.insertAdjacentHTML('beforeend', pickerBoxHtml);
+    return;
+  }
+
+  // Handle click on the main company editable pill
+  const compTarget = e.target.closest('.company-editable');
+  if (compTarget) {
+    if (compTarget.parentElement.querySelector('.company-picker-box')) return;
+    
+    e.stopPropagation();
+    e.preventDefault();
+    
+    document.querySelectorAll('.category-picker-box, .company-picker-box').forEach(box => box.remove());
+
+    const currentComp = compTarget.getAttribute('data-current-comp');
+    const jobId = compTarget.getAttribute('data-job-id');
+    
+    const companies = [
+      "The Wire UG",
+      "wirewire GmbH",
+      "Polyxo Studios GmbH",
+      "Daniel (Privat)",
+      "Andere / Unbekannt"
+    ];
+    
+    if (currentComp && currentComp !== "-" && currentComp !== "Unbekannt" && !companies.some(c => c.toLowerCase() === currentComp.toLowerCase())) {
+      companies.unshift(currentComp);
+    }
+
+    let pillsHtml = companies.map(c => {
+        const isSelected = c.toLowerCase() === (currentComp || "").toLowerCase();
+        const bg = isSelected ? '#0284c7' : '#f0f9ff';
+        const color = isSelected ? '#ffffff' : '#0369a1';
+        const border = isSelected ? '#0284c7' : '#bae6fd';
+        return `<span class="comp-option-pill" data-value="${c}" style="cursor: pointer; padding: 6px 12px; border-radius: 16px; background: ${bg}; color: ${color}; border: 1px solid ${border}; font-size: 13px; font-weight: 500; white-space: nowrap; transition: filter 0.2s;" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">${c}</span>`;
+    }).join('');
+
+    const pickerBoxHtml = `
+      <div class="company-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); border: 1px solid #e0e0e0; z-index: 1000; width: 320px; display: flex; flex-wrap: wrap; gap: 8px; cursor: default;">
+        <div style="width: 100%; font-size: 12px; color: #777; margin-bottom: 4px; font-weight: 600;">Unternehmen auswählen:</div>
+        ${pillsHtml}
+      </div>
+    `;
+    
+    compTarget.parentElement.insertAdjacentHTML('beforeend', pickerBoxHtml);
+    return;
   }
 });
 
 
 // Close picker when clicking outside
 document.addEventListener('click', (e) => {
-    if (!e.target.closest('.category-picker-box') && !e.target.closest('.category-editable')) {
-        const boxes = document.querySelectorAll('.category-picker-box');
+    if (!e.target.closest('.category-picker-box') && !e.target.closest('.category-editable') &&
+        !e.target.closest('.company-picker-box') && !e.target.closest('.company-editable')) {
+        const boxes = document.querySelectorAll('.category-picker-box, .company-picker-box');
         if (boxes.length > 0) {
             boxes.forEach(box => box.remove());
             renderJobs();
         }
     }
+});
+
+// Auto-save job notes with debounce & on input/blur
+const notesDebounceTimers = new Map();
+
+document.addEventListener("input", (e) => {
+  const notesInput = e.target.closest(".job-notes-input");
+  if (notesInput) {
+    const jobId = notesInput.getAttribute("data-job-id");
+    const val = notesInput.value;
+    const indicator = notesInput.parentElement.querySelector(".notes-save-indicator");
+
+    // 1. Immediately update memory state for instant search without reload
+    const job = (activeJobs && activeJobs.find(j => j.id === jobId));
+    if (job) job.notes = val;
+    if (typeof allRechnungenJobs !== "undefined" && Array.isArray(allRechnungenJobs)) {
+      const rJob = allRechnungenJobs.find(j => j.id === jobId);
+      if (rJob) rJob.notes = val;
+    }
+
+    if (notesDebounceTimers.has(jobId)) {
+      clearTimeout(notesDebounceTimers.get(jobId));
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes: val }),
+        });
+        if (res.ok && indicator) {
+          indicator.style.display = "inline-block";
+          setTimeout(() => {
+            indicator.style.display = "none";
+          }, 2000);
+        }
+      } catch (err) {
+        console.error("Fehler beim Speichern der Notiz:", err);
+      }
+    }, 500);
+
+    notesDebounceTimers.set(jobId, timer);
+  }
 });
 
 // ==========================================
