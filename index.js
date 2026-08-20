@@ -565,6 +565,28 @@ async function getDrivePdfText(drive, fileId, modifiedTime) {
   return "";
 }
 
+// Helper: Find matching job in local uploadJobs for a given Drive file
+function findMatchingJobForDriveFile(file, isAdmin = true) {
+  if (!file) return null;
+  const fName = (file.name || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+  const fId = file.id;
+
+  for (const job of Object.values(uploadJobs)) {
+    if (job.isPrivate && !isAdmin) continue;
+    if (job.driveFileId && job.driveFileId === fId) return job;
+    if (job.rawDriveId && (job.rawDriveId === fId || job.rawDriveId === fId.replace("gdrive_", ""))) return job;
+    if (job.id && (job.id === fId || job.id === `gdrive_${fId}`)) return job;
+    if (job.result && job.result.webViewLink && job.result.webViewLink.includes(fId)) return job;
+    if (file.webViewLink && job.result?.webViewLink && job.result.webViewLink === file.webViewLink) return job;
+
+    const normFull = (job.result?.full || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+    const normOrig = (job.originalName || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+
+    if (fName && (fName === normFull || fName === normOrig)) return job;
+  }
+  return null;
+}
+
 // Deep Document Content Search (OCR & Full-Text with Database Linking & Deduplication)
 app.get("/api/documents/deep-search", async (req, res) => {
   try {
@@ -582,23 +604,6 @@ app.get("/api/documents/deep-search", async (req, res) => {
     const seenNames = new Set();
 
     const normalizeDocName = (str) => (str || "").toLowerCase().replace(/\.pdf$/i, "").trim();
-
-    // Helper: Find matching job in local uploadJobs for a given Drive file
-    const findMatchingJobForDriveFile = (file) => {
-      if (!file) return null;
-      for (const job of Object.values(uploadJobs)) {
-        if (job.isPrivate && !isAdmin) continue;
-        if (job.driveFileId && job.driveFileId === file.id) return job;
-        if (job.rawDriveId && job.rawDriveId === file.id) return job;
-        if (job.result?.webViewLink && job.result.webViewLink.includes(file.id)) return job;
-        const normJobName = normalizeDocName(job.result?.full || job.originalName);
-        const normFileName = normalizeDocName(file.name);
-        if (normJobName && normFileName && normJobName === normFileName) {
-          return job;
-        }
-      }
-      return null;
-    };
 
     // 1. Search Google Drive (Fulltext & OCR Search across sorted and target folders)
     if (fs.existsSync(TOKEN_PATH)) {
@@ -1723,13 +1728,7 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
       }
 
       // Check if matching job in database
-      const matchingJob = existingJobsList.find((j) => {
-        if (j.rawDriveId === file.id || j.driveFileId === file.id) return true;
-        if (j.result && j.result.webViewLink && j.result.webViewLink.includes(file.id)) return true;
-        if (j.originalName === file.name) return true;
-        if (j.result && j.result.full && (j.result.full === file.name || j.result.full + ".pdf" === file.name)) return true;
-        return false;
-      });
+      const matchingJob = findMatchingJobForDriveFile(file, true);
 
       const isManuallyHidden = hiddenDriveFiles.includes(file.id) || (matchingJob && matchingJob.isHidden);
       if (isManuallyHidden) {
