@@ -30,22 +30,38 @@
     <link rel="prefetch" href="/vendor/onnx/ort-wasm-simd-threaded.wasm" as="fetch" crossorigin="anonymous" />
     <style>
       .pdf-preview-container {
-        position: absolute; right: 15px; top: 17px; width: 60px; height: 84px; text-decoration: none; z-index: 1;
+        position: absolute;
+        right: 14px;
+        top: 14px;
+        width: 82px;
+        height: calc(100% - 28px);
+        max-height: 135px;
+        text-decoration: none;
+        z-index: 1;
         transition: z-index 0.2s;
+        display: flex;
+        align-items: stretch;
       }
       .pdf-preview-container:hover {
         z-index: 100;
       }
       .pdf-preview-img {
-        width: 100%; height: 100%; object-fit: fill; border-radius: 4px; 
-        box-shadow: 0 1px 3px rgba(0,0,0,0.2); background: #fff; display: block; 
-        border: 1px solid #ddd; 
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        background: #fff;
+        display: block;
+        border: 1px solid #cbd5e1;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
         transform-origin: top right;
       }
       .pdf-preview-container:hover .pdf-preview-img {
-        transform: scale(6);
-        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        transform: scale(4.2);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+        border-color: #94a3b8;
       }
     </style>
   </head>
@@ -117,35 +133,48 @@
             </div>
 
             <!-- Startseite Filter Card -->
-            <div class="card p-3 my-3 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
-              <!-- Row 1: Search & Dropdowns -->
-              <div class="row g-2 align-items-center">
-                <div class="col-12 col-md-5">
-                  <div class="input-group">
-                    <span class="input-group-text bg-white border-end-0" id="search-prefix-addon" style="border-radius: 8px 0 0 8px;">
-                      <span class="material-symbols-outlined text-primary" id="search-icon-symbol" style="font-size: 18px;">search</span>
-                    </span>
-                    <input
-                      type="text"
-                      id="start-search-input"
-                      class="form-control border-start-0 ps-1"
-                      placeholder="Belege & PDF-Inhalte suchen (Name, Firma, Rechnungs-Nr, Betrag, OCR)..."
-                      style="font-size: 14px;"
-                    />
+            <div class="card p-3 my-3 shadow-sm border" style="background-color: #ffffff; border-radius: 14px; border-color: #e2e8f0 !important;">
+              <!-- Zeile 1: Nur die Suche (Full-Width) -->
+              <div class="mb-2">
+                <div class="input-group search-input-group shadow-none">
+                  <span class="input-group-text bg-light border-end-0" id="search-prefix-addon" style="border-radius: 10px 0 0 10px; border-color: #cbd5e1; padding-left: 14px; padding-right: 10px;">
+                    <span class="material-symbols-outlined text-primary" id="search-icon-symbol" style="font-size: 20px;">search</span>
+                  </span>
+                  <input
+                    type="text"
+                    id="start-search-input"
+                    class="form-control bg-light border-start-0 border-end-0 ps-1"
+                    placeholder="Belege & PDF-Inhalte suchen (Name, Firma, Rechnungs-Nr, Betrag, OCR)..."
+                    style="font-size: 14px; height: 42px; border-color: #cbd5e1;"
+                  />
+                  <span class="input-group-text bg-light border-start-0" id="search-suffix-addon" style="border-radius: 0 10px 10px 0; border-color: #cbd5e1; padding-right: 8px;">
                     <button
                       id="search-clear-btn"
-                      class="btn btn-outline-secondary border border-start-0 text-muted px-2"
+                      class="btn btn-sm btn-light border-0 text-muted rounded-circle p-1 d-flex align-items-center justify-content-center"
                       type="button"
                       title="Suche leeren"
-                      style="display: none; background: #fff; border-radius: 0 8px 8px 0;"
+                      style="display: none; width: 26px; height: 26px;"
                     >
-                      <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">close</span>
+                      <span class="material-symbols-outlined" style="font-size: 16px;">close</span>
                     </button>
-                  </div>
+                  </span>
                 </div>
-                <div class="col-6 col-md-3">
-                  <select id="start-filter-date" class="form-select" style="border-radius: 8px; font-size: 14px;">
-                    <option value="alle">📅 Alle Zeiträume</option>
+              </div>
+
+              <!-- Zeile 2: Die Dropdowns (Sortierung, Zeitraum, Unternehmen) -->
+              <div class="row g-2 align-items-center mb-2">
+                <div class="col-12 col-md-4">
+                  <select id="start-sort-select" class="form-select start-filter-dropdown" title="Sortierung">
+                    <option value="docdate_desc" selected>📅 Belegdatum (Neu ➔ Alt)</option>
+                    <option value="docdate_asc">📅 Belegdatum (Alt ➔ Neu)</option>
+                    <option value="uploaddate_desc">🕒 Upload (Neu ➔ Alt)</option>
+                    <option value="company_asc">🏢 Unternehmen (A ➔ Z)</option>
+                    <option value="amount_desc">💶 Betrag (Höchste zuerst)</option>
+                  </select>
+                </div>
+                <div class="col-12 col-sm-6 col-md-4">
+                  <select id="start-filter-date" class="form-select start-filter-dropdown">
+                    <option value="alle">📅 Zeitraum: Alle</option>
                     <option value="7days">Letzte 7 Tage</option>
                     <option value="30days">Letzte 30 Tage</option>
                     <option value="month">Dieser Monat</option>
@@ -154,8 +183,8 @@
                     <option value="older">Älter als 2025</option>
                   </select>
                 </div>
-                <div class="col-6 col-md-4">
-                  <select id="start-filter-company" class="form-select" style="border-radius: 8px; font-size: 14px;">
+                <div class="col-12 col-sm-6 col-md-4">
+                  <select id="start-filter-company" class="form-select start-filter-dropdown">
                     <option value="alle">🏢 Alle Unternehmen</option>
                     <option value="thewire">The Wire UG</option>
                     <option value="wirewire">wirewire GmbH</option>
@@ -166,17 +195,25 @@
                 </div>
               </div>
 
-              <!-- Row 2: Category / Type Filter Bubbles (Multi-Select) -->
-              <div class="mt-3 pt-2 border-top">
+              <!-- Zeile 3: Kategorie-Filter (Pills / Badges) -->
+              <div class="pt-2 border-top" style="border-color: #f1f5f9 !important;">
                 <div class="d-flex align-items-center justify-content-between mb-2">
-                  <span class="text-muted small fw-medium" style="font-size: 12px;">Kategorie / Typ Filter (Mehrfachauswahl):</span>
-                  <button id="start-reset-filters-btn" class="btn btn-sm btn-link text-decoration-none text-muted p-0" style="font-size: 12px; display: none;">
-                    Filter zurücksetzen
-                  </button>
+                  <span class="text-muted small fw-bold" style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.5px;">Kategorie / Typ Filter (Mehrfachauswahl):</span>
                 </div>
                 <div id="start-filter-category-bubbles" class="d-flex flex-wrap gap-1">
                   <!-- Dynamic Category Bubbles rendered here -->
                 </div>
+              </div>
+
+              <!-- Zeile 4: Alles zurücksetzen (unter den Filtern, nur sichtbar wenn Filter aktiv) -->
+              <div id="start-reset-filters-container" class="mt-2 pt-2 border-top d-flex align-items-center justify-content-between flex-wrap gap-2" style="display: none !important; border-color: #f1f5f9 !important;">
+                <div id="start-active-filters-summary" class="text-muted small" style="font-size: 12px;">
+                  Filter aktiv
+                </div>
+                <button id="start-reset-filters-btn" type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 8px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">restart_alt</span>
+                  <span>Alles zurücksetzen</span>
+                </button>
               </div>
             </div>
 
@@ -870,14 +907,35 @@
 
       <!-- Confirm ClickUp Single Re-Transfer Modal -->
       <div id="confirm-clickup-modal" class="modal-overlay" style="z-index: 3000;">
-        <div class="modal-content" style="max-width: 420px; text-align: center;">
-          <h3 style="margin-top: 0; color: #333;">Bereits übertragen</h3>
-          <p id="confirm-clickup-text" style="color: #666; font-size: 14px; margin-bottom: 20px;">
-            Dieses Dokument wurde bereits an ClickUp übertragen. Möchtest du es aktualisieren?
-          </p>
-          <div style="display: flex; gap: 10px; justify-content: center;">
-            <button id="cancel-clickup-transfer-btn" class="action-button" style="background: #e0e0e0; color: #333; flex: 1; margin: 0;">Abbrechen</button>
-            <button id="confirm-clickup-transfer-btn" class="action-button" style="background: #7b68ee; color: white; flex: 1; margin: 0;">Erneut übertragen</button>
+        <div class="modal-content" style="max-width: 450px; width: 95%; text-align: left; padding: 22px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 class="m-0 fw-bold d-flex align-items-center gap-2" style="color: #1a1a1a; font-size: 18px;">
+              <span class="material-symbols-outlined" style="color: #7b68ee; font-size: 24px;">cloud_done</span>
+              <span>ClickUp Übertragung</span>
+            </h4>
+            <button id="close-clickup-modal-x" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <div class="p-3 mb-3 border rounded-3" style="background-color: #f8fafc; border-color: #e2e8f0 !important;">
+            <p id="confirm-clickup-text" class="mb-2 text-dark" style="font-size: 13.5px; line-height: 1.5;">
+              Dieses Dokument wurde bereits an ClickUp übertragen.
+            </p>
+            <div id="confirm-clickup-link-container" style="display: none;" class="mt-2 pt-2 border-top">
+              <a id="confirm-clickup-task-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-sm d-inline-flex align-items-center gap-1 text-decoration-none" style="background-color: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; border-radius: 8px; font-weight: 600; font-size: 13px; padding: 6px 14px;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
+                <span>ClickUp Task öffnen <span id="confirm-clickup-task-id-badge" class="badge bg-white text-dark border ms-1" style="font-size: 11px;">#</span></span>
+              </a>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2 justify-content-end">
+            <button id="cancel-clickup-transfer-btn" class="btn btn-light px-3" style="border: 1px solid #cbd5e1; font-weight: 500; border-radius: 8px; font-size: 13px;">Abbrechen</button>
+            <button id="confirm-clickup-transfer-btn" class="btn px-3 d-inline-flex align-items-center gap-1" style="background-color: #7b68ee; color: white; border: none; font-weight: 500; border-radius: 8px; font-size: 13px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">sync</span>
+              <span>Erneut übertragen</span>
+            </button>
           </div>
         </div>
       </div>
@@ -916,20 +974,13 @@
             </div>
           </div>
 
-          <!-- Target Company Selection -->
+          <!-- Target Company Selection via Interactive Badges -->
           <div class="mb-3">
-            <label for="lex-modal-company-select" class="form-label fw-bold small text-secondary mb-1">
-              Ziel-Unternehmen & Buchhaltungssystem:
+            <label class="form-label fw-bold small text-secondary mb-1">
+              Ziel-Unternehmen & Buchhaltungssystem auswählen:
             </label>
-            <div class="input-group">
-              <span class="input-group-text bg-white">
-                <span class="material-symbols-outlined" style="font-size: 20px; color: #0d6efd;">domain</span>
-              </span>
-              <select id="lex-modal-company-select" class="form-select" style="font-size: 14px; cursor: pointer;">
-                <option value="thewire">The Wire UG (BuchhaltungsButler)</option>
-                <option value="wirewire">wirewire GmbH (Lexoffice)</option>
-                <option value="polyxo">Polyxo Studios GmbH (Lexoffice)</option>
-              </select>
+            <div id="lex-modal-company-badges" class="d-flex flex-wrap gap-2">
+              <!-- Dynamically populated interactive company badges -->
             </div>
           </div>
 
@@ -1274,7 +1325,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260820_unified_search_v1"></script>
+      <script src="/index.js?v=20260820_fullheight_preview_v14"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

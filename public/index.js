@@ -754,11 +754,172 @@ startPolling();
 
 // Startseite Filter & Paginierung State
 let startSearchQuery = "";
+let startSortOrder = "docdate_desc";
 let startDateFilter = "alle";
 let startCompanyFilter = "alle";
 let startSelectedCategories = new Set();
 let startCurrentPage = 1;
 const START_PAGE_SIZE = 50;
+
+function parseDocumentDate(dateStr) {
+  if (!dateStr || dateStr === "unknown" || dateStr === "none" || dateStr === "-") return null;
+  const str = String(dateStr).trim();
+  // Match DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
+  const deMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (deMatch) {
+    return new Date(parseInt(deMatch[3], 10), parseInt(deMatch[2], 10) - 1, parseInt(deMatch[1], 10));
+  }
+  // Match YYYY-MM-DD or YYYY.MM.DD
+  const isoMatch = str.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+  if (isoMatch) {
+    return new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
+  }
+  // Match YYMMDD (6 digits from filename prefix, e.g. 260215 -> 2026-02-15)
+  const prefixMatch = str.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (prefixMatch) {
+    return new Date(2000 + parseInt(prefixMatch[1], 10), parseInt(prefixMatch[2], 10) - 1, parseInt(prefixMatch[3], 10));
+  }
+  const parsed = new Date(str);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getJobDocumentDate(job) {
+  if (!job) return null;
+  const res = job.result || {};
+  // 1. Direct documentDate field
+  if (res.documentDate && res.documentDate !== "unknown" && res.documentDate !== "none") {
+    const d = parseDocumentDate(res.documentDate);
+    if (d) return d;
+  }
+  // 2. Direct job.documentDate (if set)
+  if (job.documentDate && job.documentDate !== "unknown" && job.documentDate !== "none") {
+    const d = parseDocumentDate(job.documentDate);
+    if (d) return d;
+  }
+  // 3. Check generated filename or original name for date prefix (e.g. 260215 or 2026-02-15 or 15.02.2026)
+  const full = res.full || job.originalName || "";
+  const nameDateMatch = full.match(/\b(20\d{2}[.-]\d{2}[.-]\d{2}|\d{6}|\d{2}\.\d{2}\.\d{4})\b/);
+  if (nameDateMatch) {
+    const d = parseDocumentDate(nameDateMatch[1]);
+    if (d) return d;
+  }
+  // 4. Fallback: upload date
+  if (job.uploadDate) {
+    const d = new Date(job.uploadDate);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+function sortJobs(jobs, sortOrder) {
+  return [...jobs].sort((a, b) => {
+    if (sortOrder === "docdate_desc") {
+      const dateA = getJobDocumentDate(a);
+      const dateB = getJobDocumentDate(b);
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateB.getTime() - dateA.getTime();
+    }
+    if (sortOrder === "docdate_asc") {
+      const dateA = getJobDocumentDate(a);
+      const dateB = getJobDocumentDate(b);
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateA.getTime() - dateB.getTime();
+    }
+    if (sortOrder === "uploaddate_desc") {
+      const dateA = a.uploadDate ? new Date(a.uploadDate).getTime() : 0;
+      const dateB = b.uploadDate ? new Date(b.uploadDate).getTime() : 0;
+      return dateB - dateA;
+    }
+    if (sortOrder === "company_asc") {
+      const compA = (a.result?.company || a.targetCompany || "").toLowerCase();
+      const compB = (b.result?.company || b.targetCompany || "").toLowerCase();
+      return compA.localeCompare(compB);
+    }
+    if (sortOrder === "amount_desc") {
+      const amtA = (a.invoiceAmmount !== undefined ? a.invoiceAmmount : a.result?.invoiceAmmount) || 0;
+      const amtB = (b.invoiceAmmount !== undefined ? b.invoiceAmmount : b.result?.invoiceAmmount) || 0;
+      return amtB - amtA;
+    }
+    return 0;
+  });
+}
+
+function getCleanJobTags(tagsRaw, fallbackText = "") {
+  let tags = [];
+  if (Array.isArray(tagsRaw)) {
+    tags = tagsRaw
+      .map((t) => (t !== null && t !== undefined ? String(t).trim() : ""))
+      .filter((t) => {
+        if (!t || t.toLowerCase() === "none" || t.toLowerCase() === "unknown") return false;
+        const lower = t.toLowerCase();
+        if (
+          lower.startsWith("isinvoice:") ||
+          lower.startsWith("invoiceammount:") ||
+          lower.startsWith("invoicenumber:") ||
+          lower.startsWith("datum:") ||
+          lower === "isinvoice" ||
+          lower === "invoiceammount"
+        ) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  // If no tags from AI array, try extracting meaningful tags from description/filename
+  if (tags.length === 0 && fallbackText) {
+    const descMatch = fallbackText.match(/-\s*([^()]+?)\s*(?:\(|$)/);
+    if (descMatch) {
+      const parts = descMatch[1]
+        .split(/[\s,]+/)
+        .filter((w) => w.length > 2 && w.toLowerCase() !== "unbekannt");
+      if (parts.length > 0) {
+        tags = parts.slice(0, 3);
+      }
+    }
+  }
+
+  return tags.slice(0, 3);
+}
+
+function formatGeneratedFileNameHtml(job, searchQuery = "") {
+  const res = job.result || {};
+
+  // If the job is still pending or processing without AI result
+  if (job.status !== "completed" || !job.result) {
+    return `<span class="fw-bold text-dark" style="font-size: 14px; word-break: break-word;">${highlightQueryText(job.originalName || "Dokument", searchQuery)}</span>`;
+  }
+
+  const category = (res.category && res.category !== "unknown") ? res.category : (res.isInvoice ? "Rechnungen" : "Dokumente");
+  const company = (res.company && res.company !== "unknown") ? res.company : (job.targetCompany || "Unbekannt");
+  const cleanTags = getCleanJobTags(res.tags, res.full || job.originalName || "");
+
+  const categoryBadge = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;" title="Kategorie"><span class="material-symbols-outlined" style="font-size: 14px;">folder</span> ${highlightQueryText(category, searchQuery)}</span>`;
+
+  const companyBadge = `<span class="badge bg-secondary-subtle text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;" title="Unternehmen"><span class="material-symbols-outlined" style="font-size: 14px;">domain</span> ${highlightQueryText(company, searchQuery)}</span>`;
+
+  let tagsBadges = "";
+  if (cleanTags.length > 0) {
+    tagsBadges = cleanTags
+      .map(
+        (t) =>
+          `<span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 8px; border-radius: 6px; font-weight: 500;" title="Tag / Inhalt"><span class="material-symbols-outlined text-muted" style="font-size: 13px;">label</span> ${highlightQueryText(t, searchQuery)}</span>`
+      )
+      .join(" ");
+  }
+
+  return `
+    <div class="d-flex align-items-center gap-1 flex-wrap" style="line-height: 1.4;">
+      ${categoryBadge}
+      ${tagsBadges}
+      ${companyBadge}
+    </div>
+  `;
+}
 
 function updateStartFilterDropdownCounts() {
   const dateSelect = document.getElementById("start-filter-date");
@@ -777,13 +938,12 @@ function updateStartFilterDropdownCounts() {
   let countOlder = 0;
 
   activeJobs.forEach((job) => {
-    const res = job.result || {};
-    const dateVal = res.documentDate && res.documentDate !== "unknown" ? new Date(res.documentDate) : (job.uploadDate ? new Date(job.uploadDate) : null);
+    const dateVal = getJobDocumentDate(job);
     if (dateVal && !isNaN(dateVal.getTime())) {
       const diffDays = (now - dateVal) / (1000 * 60 * 60 * 24);
       const year = dateVal.getFullYear();
-      if (diffDays <= 7) count7Days++;
-      if (diffDays <= 30) count30Days++;
+      if (diffDays <= 7 && diffDays >= -1) count7Days++;
+      if (diffDays <= 30 && diffDays >= -1) count30Days++;
       if (dateVal.getMonth() === now.getMonth() && dateVal.getFullYear() === now.getFullYear()) countMonth++;
       if (year === 2026) countYear2026++;
       if (year === 2025) countYear2025++;
@@ -891,9 +1051,8 @@ function renderStartCategoryBubbles() {
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = `btn btn-sm ${isSelected ? 'btn-primary text-white shadow-sm' : 'btn-outline-secondary'} start-cat-bubble`;
-    btn.style.cssText = "border-radius: 16px; font-size: 12px; padding: 2px 10px; transition: all 0.15s ease;";
-    btn.innerHTML = `${cat} <span class="badge ${isSelected ? 'bg-white text-primary' : 'bg-secondary-subtle text-secondary'} rounded-pill" style="font-size: 10px; font-weight: normal; margin-left: 2px;">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">check</span>' : ''}`;
+    btn.className = `start-cat-bubble ${isSelected ? 'active' : ''}`;
+    btn.innerHTML = `<span>${cat}</span> <span class="bubble-count">(${count})</span>${isSelected ? ' <span class="material-symbols-outlined" style="font-size: 14px; margin-left: 2px;">check</span>' : ''}`;
     
     btn.addEventListener("click", () => {
       const key = cat.toLowerCase();
@@ -910,10 +1069,47 @@ function renderStartCategoryBubbles() {
     container.appendChild(btn);
   });
 
-  const resetBtn = document.getElementById("start-reset-filters-btn");
-  if (resetBtn) {
-    const hasFilters = startSearchQuery || startDateFilter !== "alle" || startCompanyFilter !== "alle" || startSelectedCategories.size > 0;
-    resetBtn.style.display = hasFilters ? "inline-block" : "none";
+  updateStartResetButtonVisibility();
+}
+
+function updateStartResetButtonVisibility() {
+  const container = document.getElementById("start-reset-filters-container");
+  const summaryEl = document.getElementById("start-active-filters-summary");
+  if (!container) return;
+
+  const hasSearch = !!startSearchQuery;
+  const hasDate = startDateFilter !== "alle";
+  const hasComp = startCompanyFilter !== "alle";
+  const hasCats = startSelectedCategories.size > 0;
+  const hasCustomSort = startSortOrder !== "docdate_desc";
+
+  const isFiltered = hasSearch || hasDate || hasComp || hasCats || hasCustomSort;
+
+  if (isFiltered) {
+    container.style.setProperty("display", "flex", "important");
+    if (summaryEl) {
+      const activeFilters = [];
+      if (hasSearch) activeFilters.push(`Suche: "${startSearchQuery}"`);
+      if (hasDate) {
+        const dateOpt = document.querySelector(`#start-filter-date option[value="${startDateFilter}"]`);
+        activeFilters.push(dateOpt ? dateOpt.text.split("(")[0].trim() : "Zeitraum");
+      }
+      if (hasComp) {
+        const compOpt = document.querySelector(`#start-filter-company option[value="${startCompanyFilter}"]`);
+        activeFilters.push(compOpt ? compOpt.text.split("(")[0].trim() : "Unternehmen");
+      }
+      if (hasCats) {
+        activeFilters.push(`${startSelectedCategories.size} Kategorie(n)`);
+      }
+      if (hasCustomSort) {
+        const sortOpt = document.querySelector(`#start-sort-select option[value="${startSortOrder}"]`);
+        activeFilters.push(sortOpt ? sortOpt.text : "Sortierung");
+      }
+
+      summaryEl.innerHTML = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle me-1"><span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">filter_alt</span> ${activeFilters.length} Filter aktiv:</span> <span class="text-secondary">${activeFilters.join(" • ")}</span>`;
+    }
+  } else {
+    container.style.setProperty("display", "none", "important");
   }
 }
 
@@ -967,14 +1163,14 @@ function filterActiveJobs(jobs) {
 
     // 3. Date Filter
     if (startDateFilter !== "alle") {
-      const dateVal = res.documentDate && res.documentDate !== "unknown" ? new Date(res.documentDate) : (job.uploadDate ? new Date(job.uploadDate) : null);
+      const dateVal = getJobDocumentDate(job);
       if (dateVal && !isNaN(dateVal.getTime())) {
         const now = new Date();
         const diffDays = (now - dateVal) / (1000 * 60 * 60 * 24);
         const year = dateVal.getFullYear();
 
-        if (startDateFilter === "7days" && diffDays > 7) return false;
-        if (startDateFilter === "30days" && diffDays > 30) return false;
+        if (startDateFilter === "7days" && (diffDays > 7 || diffDays < -1)) return false;
+        if (startDateFilter === "30days" && (diffDays > 30 || diffDays < -1)) return false;
         if (startDateFilter === "month" && (dateVal.getMonth() !== now.getMonth() || dateVal.getFullYear() !== now.getFullYear())) return false;
         if (startDateFilter === "year2026" && year !== 2026) return false;
         if (startDateFilter === "year2025" && year !== 2025) return false;
@@ -1147,8 +1343,9 @@ function renderJobs() {
 
   renderStartCategoryBubbles();
   updateStartFilterDropdownCounts();
+  updateStartResetButtonVisibility();
 
-  const filteredJobs = filterActiveJobs(activeJobs);
+  const filteredJobs = sortJobs(filterActiveJobs(activeJobs), startSortOrder);
   const totalFiltered = filteredJobs.length;
   const totalPages = Math.ceil(totalFiltered / START_PAGE_SIZE) || 1;
   if (startCurrentPage > totalPages) startCurrentPage = totalPages;
@@ -1195,23 +1392,31 @@ function renderJobs() {
 
     // Special handling for Drive-only results (unlinked cloud files found via OCR / deep search)
     if (job.isDriveOnly) {
-      const dateFormatted = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
+      const docDateObj = getJobDocumentDate(job);
+      const docDateStr = docDateObj ? docDateObj.toLocaleDateString("de-DE") : (job.uploadDate ? new Date(job.uploadDate).toLocaleDateString("de-DE") : "-");
       const snippet = job.snippet || "";
       const highlightedSnippet = highlightQueryText(snippet, startSearchQuery);
       const highlightedTitle = highlightQueryText(job.originalName || "Google Drive Dokument", startSearchQuery);
-      const imgSrc = job.thumbnailLink || "";
+      const rawDriveId = (job.id && job.id.startsWith("gdrive_")) ? job.id.replace("gdrive_", "") : (job.id || "");
+      const imgSrc = `/api/thumbnail/${rawDriveId}`;
 
       div.innerHTML = `
-        <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
+        <div style="padding-right: 94px; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-start;">
           <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
             <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-              <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center; flex-wrap: wrap;">
-                ${highlightedTitle}
-                <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px; margin-left: 8px;">
-                  <span class="material-symbols-outlined" style="font-size: 12px;">cloud</span> Google Drive
+              <div class="d-flex align-items-center gap-1 flex-wrap">
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;">
+                  <span class="material-symbols-outlined" style="font-size: 14px;">cloud</span> Google Drive
                 </span>
-              </span>
-              <span style="font-size: 12px; font-weight: normal; color: #888;">Google Drive Cloud-Dokument: ${dateFormatted}</span>
+              </div>
+              <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 3px;">
+                <span class="material-symbols-outlined text-primary" style="font-size: 15px;">calendar_today</span>
+                <span><strong>Dokumentendatum:</strong> ${docDateStr}</span>
+              </div>
+              <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 2px; word-break: break-all;">
+                <span class="material-symbols-outlined text-secondary" style="font-size: 15px;">description</span>
+                <span><strong>Dateiname Upload:</strong> ${highlightedTitle}</span>
+              </div>
             </div>
           </div>
           ${
@@ -1230,8 +1435,8 @@ function renderJobs() {
             ${job.downloadLink ? `<a href="${job.downloadLink}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 12px; font-size: 12px; padding: 2px 10px;"><span class="material-symbols-outlined" style="font-size: 14px;">download</span> Herunterladen</a>` : ""}
           </div>
         </div>
-        <a href="${job.webViewLink || '#'}" target="_blank" class="pdf-preview-container">
-          <img src="${imgSrc}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.outerHTML='<span class=\\'material-symbols-outlined text-danger\\' style=\\'font-size: 36px;\\'>picture_as_pdf</span>';">
+        <a href="${job.webViewLink || '#'}" target="_blank" class="pdf-preview-container" title="Beleg in Google Drive öffnen">
+          <img src="${imgSrc}" loading="lazy" alt="Beleg Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
         </a>
       `;
       jobList.appendChild(div);
@@ -1271,15 +1476,6 @@ function renderJobs() {
         duplicateBadgeHtml = `<span class="badge-open-duplicate-compare" data-job-id="${job.id}" style="background: #ff9800; color: white; padding: 2px 8px; border-radius: 4px; font-size: 10px; margin-left: 6px; vertical-align: middle; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); font-weight: 500;" title="Klicken, um Beleg mit erkannten Duplikaten gegenüberzustellen">⚠️ DUPLIKAT VERDACHT</span>`;
     }
 
-    let statusText =
-      job.status === "pending"
-        ? "In der Warteschlange..."
-        : job.status === "processing"
-        ? "Wird verarbeitet (KI)..."
-        : job.status === "completed"
-        ? "Erfolgreich abgeschlossen"
-        : "Fehlergeschlagen";
-
     let cancelJobButtonHtml = "";
     if (job.status === "pending" || job.status === "processing") {
       cancelJobButtonHtml = `
@@ -1289,13 +1485,48 @@ function renderJobs() {
       `;
     }
 
-    const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
+    let statusHtml = "";
+    if (job.status === "pending") {
+      statusHtml = `
+        <div class="job-status" style="margin-top: 5px; display: flex; align-items: center; flex-wrap: wrap;">
+          <span class="badge bg-warning-subtle text-dark border d-inline-flex align-items-center gap-1" style="font-size: 11.5px; padding: 3px 8px;">
+            <span class="spinner-border spinner-border-sm text-warning" style="width: 11px; height: 11px;" role="status"></span> In der Warteschlange...
+          </span>
+          ${cancelJobButtonHtml}
+        </div>
+      `;
+    } else if (job.status === "processing") {
+      statusHtml = `
+        <div class="job-status" style="margin-top: 5px; display: flex; align-items: center; flex-wrap: wrap;">
+          <span class="badge bg-info-subtle text-primary border border-info-subtle d-inline-flex align-items-center gap-1" style="font-size: 11.5px; padding: 3px 8px;">
+            <span class="spinner-border spinner-border-sm text-primary" style="width: 11px; height: 11px;" role="status"></span> Wird verarbeitet (KI)...
+          </span>
+          ${cancelJobButtonHtml}
+        </div>
+      `;
+    } else if (job.status === "error") {
+      statusHtml = `
+        <div class="job-status" style="margin-top: 5px; display: flex; align-items: center; flex-wrap: wrap;">
+          <span class="badge bg-danger-subtle text-danger border border-danger-subtle d-inline-flex align-items-center gap-1" style="font-size: 11.5px; padding: 3px 8px;">
+            <span class="material-symbols-outlined" style="font-size: 13px;">error</span> Fehlergeschlagen
+          </span>
+        </div>
+      `;
+    }
 
-    let resultHtml = "";
-    let previewHtml = "";
+    const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
+    const docDateObj = getJobDocumentDate(job);
+    const docDateDisplay = job.result?.documentDate && job.result.documentDate !== "unknown" ? job.result.documentDate : (docDateObj ? docDateObj.toLocaleDateString("de-DE") : "Unbekannt");
+
+    const webViewLink = job.result?.webViewLink || job.webViewLink || "#";
+    const imgSrc = job.id ? `/api/jobs/${job.id}/thumbnail` : `/api/thumbnail/${job.rawDriveId || ''}`;
+    let previewHtml = `<a href="${webViewLink}" target="_blank" class="pdf-preview-container" title="Beleg öffnen">
+                    <img src="${imgSrc}" loading="lazy" alt="PDF Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
+                </a>`;
 
     if (job.status === "completed" && job.result) {
-      const tagsStr = job.result.tags && Array.isArray(job.result.tags) ? job.result.tags.slice(0, 3).join(", ") : "-";
+      const cleanDetailsTags = getCleanJobTags(job.result.tags);
+      const tagsStr = cleanDetailsTags.length > 0 ? cleanDetailsTags.join(", ") : "-";
       const isInvoiceStr = job.result.isInvoice ? "Ja" : "Nein";
       const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : "-";
 
@@ -1308,13 +1539,6 @@ function renderJobs() {
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsnummer:</strong> ${invNum}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsbetrag:</strong> ${invAmtFormatted} €<br>`;
       }
-
-      const imgSrc = `/api/jobs/${job.id}/thumbnail`;
-      previewHtml = `<a href="${
-        job.result.webViewLink || "#"
-      }" target="_blank" class="pdf-preview-container">
-                      <img src="${imgSrc}" loading="lazy" alt="PDF Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
-                  </a>`;
 
       let clickupDetailsHtml = `
         <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
@@ -1363,28 +1587,18 @@ function renderJobs() {
 
       if (window.isAdmin) {
         clickupButtonHtml = `
-          <button type="button" class="btn btn-sm btn-manual-clickup-transfer d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
-            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
-              isClickupSynced
-                ? 'background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;'
-                : 'background: #ffffff; color: #7b68ee; border: 1px solid #7b68ee;'
-            }" 
+          <button type="button" class="job-action-btn btn-manual-clickup-transfer ${isClickupSynced ? 'btn-clickup-synced' : 'btn-clickup-pending'}" data-job-id="${job.id}" 
             title="${isClickupSynced ? `ClickUp Task #${clickupTaskId} (${clickupStatus}) - Klicken zum Aktualisieren` : 'Zu ClickUp übertragen'}">
-            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isClickupSynced ? '#2e7d32' : '#7b68ee'};">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
-            <span>${isClickupSynced ? '✓ ClickUp' : 'ClickUp'}</span>
+            <span class="material-symbols-outlined">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
+            <span>ClickUp</span>
           </button>
         `;
 
         buchhaltungButtonHtml = `
-          <button type="button" class="btn btn-sm btn-manual-lexoffice-sync d-inline-flex align-items-center gap-1" data-job-id="${job.id}" 
-            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; transition: all 0.2s ease; cursor: pointer; ${
-              isLexTransferred
-                ? 'background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7;'
-                : 'background: #ffffff; color: #0d6efd; border: 1px solid #0d6efd;'
-            }" 
+          <button type="button" class="job-action-btn btn-manual-lexoffice-sync ${isLexTransferred ? 'btn-accounting-synced' : 'btn-accounting-pending'}" data-job-id="${job.id}" 
             title="${isLexTransferred ? `Bereits in ${providerLabel} (${activeCompany}) synchronisiert - Klicken für Details / erneuten Abgleich` : `In Buchhaltung (${providerLabel}) übertragen`}">
-            <span class="material-symbols-outlined" style="font-size: 15px; color: ${isLexTransferred ? '#2e7d32' : '#0d6efd'};">${isLexTransferred ? 'check_circle' : 'sync'}</span>
-            <span>${isLexTransferred ? '✓ Buchhaltung' : 'Buchhaltung'}</span>
+            <span class="material-symbols-outlined">${isLexTransferred ? 'check_circle' : 'sync'}</span>
+            <span>Buchhalt.</span>
           </button>
         `;
       }
@@ -1395,23 +1609,24 @@ function renderJobs() {
         const isHidden = job.isHidden === true;
         hideButtonHtml = `
           <button type="button" class="btn btn-sm btn-hide-job d-inline-flex align-items-center gap-1" data-job-id="${job.id}" data-is-hidden="${isHidden}"
-            style="border-radius: 12px; font-size: 12px; padding: 3px 10px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
+            style="border-radius: 8px; font-size: 12px; padding: 3px 8px; font-weight: 500; cursor: pointer; transition: all 0.2s ease;
               ${isHidden
                 ? 'background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;'
-                : 'background: #f5f5f5; color: #555; border: 1px solid #ccc;'
+                : 'background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1;'
               }"
             title="${isHidden ? 'Datei wieder einblenden (wird in Zukunft nicht erneut per Drive-Sync importiert)' : 'Datei ausblenden (bleibt in Google Drive, wird nicht erneut importiert)'}">
-            <span class="material-symbols-outlined" style="font-size: 15px;">${isHidden ? 'visibility' : 'visibility_off'}</span>
+            <span class="material-symbols-outlined" style="font-size: 14px;">${isHidden ? 'visibility' : 'visibility_off'}</span>
             <span>${isHidden ? 'Einblenden' : 'Ausblenden'}</span>
           </button>
         `;
       }
 
       resultHtml = `
-                    <div style="margin-top: 10px; width: 100%;">
-                      <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-                        <button type="button" class="btn-toggle-details btn btn-sm border-0 d-inline-flex align-items-center gap-1" data-job-id="${job.id}" style="color: var(--md-sys-color-primary, #1A1A1A); font-weight: 500; font-size: 13px; padding: 3px 10px; border-radius: 12px; background: var(--md-sys-color-surface-container-high, #E7E0EC); user-select: none; cursor: pointer;">
-                          <span class="material-symbols-outlined" style="font-size: 16px;">info</span> Details
+                    <div style="margin-top: 6px; width: 100%;">
+                      <div class="job-action-bar">
+                        <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}" title="Details anzeigen / ausblenden">
+                          <span class="material-symbols-outlined">info</span>
+                          <span>Details</span>
                         </button>
                         ${clickupButtonHtml}
                         ${buchhaltungButtonHtml}
@@ -1419,12 +1634,16 @@ function renderJobs() {
                       <details class="job-result" data-job-id="${job.id}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
                         <summary style="display: none;"></summary>
                         <div style="margin-top: 6px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dateiname:</strong> ${
-                                job.result.full
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Generierter Dateiname:</strong> ${
+                                job.result.full || "-"
+                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Originaler Dateiname:</strong> ${
+                                job.originalName || "-"
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dokumentendatum:</strong> ${
                                 job.result.documentDate || "-"
                             }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Hochgeladen am:</strong> ${displayDate}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> ${
                                 job.result.company || "-"
                             }<br>
@@ -1487,22 +1706,32 @@ ${lexofficeDetailsHtml}
       `;
     }
 
+    const titleHtml = formatGeneratedFileNameHtml(job, startSearchQuery);
+
     div.innerHTML = `
-                <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
+                <div style="padding-right: 94px; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-start;">
                     <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
                         <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
-                            <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center; flex-wrap: wrap;">
-                                ${job.originalName}
-                                ${privateBadgeHtml}
-                                ${lexofficeBadgeHtml}
-                                ${duplicateBadgeHtml}
-                            </span>
-                            <span style="font-size: 12px; font-weight: normal; color: #888;">Hochgeladen am: ${displayDate}</span>
+                            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+                                <div style="flex-grow: 1; min-width: 0;">
+                                    ${titleHtml}
+                                </div>
+                                <div style="flex-shrink: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+                                    ${privateBadgeHtml}
+                                    ${lexofficeBadgeHtml}
+                                    ${duplicateBadgeHtml}
+                                </div>
+                            </div>
+                            <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 3px;">
+                                <span class="material-symbols-outlined text-primary" style="font-size: 15px;">calendar_today</span>
+                                <span><strong>Dokumentendatum:</strong> ${docDateDisplay}</span>
+                            </div>
+                            <div style="font-size: 12.5px; color: #555; display: flex; align-items: center; gap: 5px; margin-top: 2px; word-break: break-all;">
+                                <span class="material-symbols-outlined text-secondary" style="font-size: 15px;">description</span>
+                                <span><strong>Dateiname Upload:</strong> ${highlightQueryText(job.originalName || "-", startSearchQuery)}</span>
+                            </div>
                         </div>
-                        <div class="job-status" style="margin-top: 4px; display: flex; align-items: center; flex-wrap: wrap;">
-                            <span>${statusText}</span>
-                            ${cancelJobButtonHtml}
-                        </div>
+                        ${statusHtml}
                     </div>
                     ${snippetHtml}
                     ${resultHtml}
@@ -2286,6 +2515,7 @@ function createRechnungCard(job) {
 
 let currentLexJobId = null;
 let currentLexCheckData = null;
+let currentSelectedLexCompany = "thewire";
 
 const lexSyncModal = document.getElementById("lexoffice-sync-modal");
 const lexModalHeading = document.getElementById("lex-modal-heading");
@@ -2294,7 +2524,7 @@ const lexModalCloseBtn = document.getElementById("lex-modal-close-btn");
 const lexModalCancelBtn = document.getElementById("lex-modal-cancel-btn");
 const lexModalSubmitBtn = document.getElementById("lex-modal-submit-btn");
 const lexModalSubmitText = document.getElementById("lex-modal-submit-text");
-const lexModalCompanySelect = document.getElementById("lex-modal-company-select");
+const lexModalCompanyBadgesContainer = document.getElementById("lex-modal-company-badges");
 const lexModalStatusContainer = document.getElementById("lex-modal-status-container");
 
 const lexDocThumbContainer = document.getElementById("lex-doc-thumb-container");
@@ -2308,6 +2538,7 @@ function closeLexofficeModal() {
   if (lexSyncModal) lexSyncModal.style.display = "none";
   currentLexJobId = null;
   currentLexCheckData = null;
+  currentSelectedLexCompany = "thewire";
 }
 
 if (lexModalCloseBtn) lexModalCloseBtn.addEventListener("click", closeLexofficeModal);
@@ -2361,40 +2592,314 @@ async function openLexofficeSyncModal(jobId) {
   }
 
   // Default target company
-  const defaultCompany = job.targetCompany || detectDefaultTargetCompany(res.company) || "thewire";
-  if (lexModalCompanySelect) {
-    lexModalCompanySelect.value = defaultCompany;
-  }
+  currentSelectedLexCompany = job.targetCompany || detectDefaultTargetCompany(res.company) || "thewire";
 
-  await checkLexofficeTarget(jobId, lexModalCompanySelect ? lexModalCompanySelect.value : "thewire");
+  await checkLexofficeTarget(jobId, currentSelectedLexCompany);
 }
 
-if (lexModalCompanySelect) {
-  lexModalCompanySelect.addEventListener("change", async () => {
-    if (currentLexJobId) {
-      await checkLexofficeTarget(currentLexJobId, lexModalCompanySelect.value);
+function renderAccountingModalContent() {
+  if (!currentLexCheckData || !currentLexJobId) return;
+
+  const data = currentLexCheckData;
+  const companyKey = currentSelectedLexCompany || "thewire";
+  const allCompanyChecks = data.allCompanyChecks || {};
+  const selectedData = allCompanyChecks[companyKey] || {
+    companyKey,
+    companyDisplayName: companyKey === "thewire" ? "The Wire UG" : (companyKey === "wirewire" ? "wirewire GmbH" : "Polyxo Studios GmbH"),
+    provider: companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice",
+    providerName: companyKey === "thewire" ? "BuchhaltungsButler" : "Lexoffice",
+    apiValid: false,
+    alreadyTransferred: false,
+    liveSearch: { found: false, matches: [] },
+  };
+
+  const isButler = companyKey === "thewire";
+  const providerName = selectedData.providerName || (isButler ? "BuchhaltungsButler" : "Lexoffice");
+
+  if (lexModalProviderBadge) {
+    lexModalProviderBadge.innerText = providerName;
+    lexModalProviderBadge.className = isButler
+      ? "badge bg-info-subtle text-info-emphasis border border-info-subtle small"
+      : "badge bg-primary-subtle text-primary border border-primary-subtle small";
+  }
+
+  const companyKeys = ["thewire", "wirewire", "polyxo"];
+
+  // 1. Interactive Company Badges (Target Selection)
+  const badgesContainer = document.getElementById("lex-modal-company-badges");
+  const companyBadgesHtml = companyKeys
+    .map((ck) => {
+      const cInfo = allCompanyChecks[ck];
+      if (!cInfo) return "";
+      const isSelected = ck === companyKey;
+      const shortName = ck === "thewire" ? "The Wire UG" : (ck === "wirewire" ? "wirewire GmbH" : "Polyxo Studios");
+      const providerLabel = ck === "thewire" ? "BuchhaltungsButler" : "Lexoffice";
+
+      let badgeClass = "bg-light text-muted border";
+      let statusIcon = "radio_button_unchecked";
+      let statusText = "Kein Beleg";
+
+      if (cInfo.alreadyTransferred) {
+        badgeClass = "bg-success text-white";
+        statusIcon = "check_circle";
+        statusText = "Übertragen";
+      } else if (cInfo.liveSearch && cInfo.liveSearch.found && cInfo.liveSearch.matches && cInfo.liveSearch.matches.length > 0) {
+        badgeClass = "bg-warning text-dark border-warning";
+        statusIcon = "find_in_page";
+        statusText = "Treffer";
+      } else if (!cInfo.apiValid) {
+        badgeClass = "bg-secondary-subtle text-secondary";
+        statusIcon = "block";
+        statusText = "Nicht eingerichtet";
+      }
+
+      const cardStyle = isSelected
+        ? "border: 2px solid #0d6efd !important; background: #eef4ff; box-shadow: 0 0 0 1px #0d6efd;"
+        : "border: 1px solid #dee2e6; background: #ffffff; cursor: pointer;";
+
+      return `
+        <div class="company-select-badge p-2 px-3 rounded-3 d-flex flex-column gap-1 flex-grow-1" 
+             style="${cardStyle} min-width: 140px; transition: all 0.15s ease;"
+             data-company="${ck}"
+             title="${shortName} (${providerLabel}): ${statusText} (Klicken zum Auswählen)">
+          <div class="d-flex align-items-center justify-content-between gap-2">
+            <div class="d-flex align-items-center gap-1">
+              <span class="material-symbols-outlined" style="font-size: 16px; color: ${isSelected ? '#0d6efd' : '#666'};">
+                ${isSelected ? 'radio_button_checked' : 'radio_button_unchecked'}
+              </span>
+              <strong style="font-size: 13px; color: ${isSelected ? '#0d6efd' : '#222'};">${shortName}</strong>
+            </div>
+            <span class="badge ${badgeClass} d-inline-flex align-items-center gap-1" style="font-size: 10px; padding: 2px 6px;">
+              <span class="material-symbols-outlined" style="font-size: 11px;">${statusIcon}</span> ${statusText}
+            </span>
+          </div>
+          <div class="text-muted" style="font-size: 11px; padding-left: 20px;">
+            ${providerLabel}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  if (badgesContainer) {
+    badgesContainer.innerHTML = companyBadgesHtml;
+    badgesContainer.querySelectorAll(".company-select-badge").forEach((badge) => {
+      badge.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const targetComp = badge.getAttribute("data-company");
+        if (targetComp && targetComp !== currentSelectedLexCompany) {
+          currentSelectedLexCompany = targetComp;
+          renderAccountingModalContent();
+        }
+      });
+    });
+  }
+
+  // 2. Cross-Company Warning Alerts for Other Companies
+  let otherCompanyAlertsHtml = "";
+  companyKeys.forEach((ck) => {
+    if (ck === companyKey) return;
+    const otherInfo = allCompanyChecks[ck];
+    if (!otherInfo) return;
+
+    if (otherInfo.alreadyTransferred) {
+      const dateFormatted = otherInfo.transferredInfo?.transferredAt
+        ? new Date(otherInfo.transferredInfo.transferredAt).toLocaleString("de-DE", {
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "-";
+      otherCompanyAlertsHtml += `
+        <div class="p-2 mb-2 rounded-3 border bg-success-subtle text-success-emphasis d-flex align-items-center justify-content-between flex-wrap gap-2" style="border-color: #a5d6a7 !important;">
+          <div class="d-flex align-items-center gap-2">
+            <span class="material-symbols-outlined text-success" style="font-size: 20px;">task_alt</span>
+            <div style="font-size: 12.5px;">
+              <strong>Bereits übertragen:</strong> Beleg existiert schon in <strong>${otherInfo.companyDisplayName}</strong> (${otherInfo.providerName}, übertragen am ${dateFormatted} Uhr).
+            </div>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-success btn-switch-modal-company py-1 px-2 d-inline-flex align-items-center gap-1" data-company="${ck}" style="border-radius: 6px; font-size: 11.5px; font-weight: 500;">
+            <span class="material-symbols-outlined" style="font-size: 14px;">swap_horiz</span>
+            <span>Zu ${otherInfo.companyDisplayName} wechseln</span>
+          </button>
+        </div>
+      `;
+    } else if (otherInfo.liveSearch && otherInfo.liveSearch.found && otherInfo.liveSearch.matches && otherInfo.liveSearch.matches.length > 0) {
+      const topMatch = otherInfo.liveSearch.matches[0];
+      otherCompanyAlertsHtml += `
+        <div class="p-2 mb-2 rounded-3 border bg-warning-subtle text-dark d-flex align-items-center justify-content-between flex-wrap gap-2" style="border-color: #ffc107 !important;">
+          <div class="d-flex align-items-center gap-2">
+            <span class="material-symbols-outlined text-warning-emphasis" style="font-size: 20px;">find_in_page</span>
+            <div style="font-size: 12.5px;">
+              <strong>Gefunden in anderem Unternehmen:</strong> In <strong>${otherInfo.companyDisplayName}</strong> (${otherInfo.providerName}) existiert bereits ein übereinstimmender Beleg (${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : (topMatch.amount || topMatch.totalAmount || '')}).
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-1">
+            <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal py-1 px-2 d-inline-flex align-items-center gap-1" data-job-id="${currentLexJobId}" data-company="${ck}" data-match-index="0" style="border-radius: 6px; font-size: 11.5px;">
+              <span class="material-symbols-outlined" style="font-size: 14px;">compare</span>
+              <span>Vorschau</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-dark btn-switch-modal-company py-1 px-2 d-inline-flex align-items-center gap-1" data-company="${ck}" style="border-radius: 6px; font-size: 11.5px; font-weight: 500;">
+              <span class="material-symbols-outlined" style="font-size: 14px;">swap_horiz</span>
+              <span>Zu ${otherInfo.companyDisplayName} wechseln</span>
+            </button>
+          </div>
+        </div>
+      `;
     }
+  });
+
+  // Check API validity of selected company
+  if (!selectedData.apiValid) {
+    lexModalStatusContainer.innerHTML = `
+      ${otherCompanyAlertsHtml}
+      <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-start gap-2">
+        <span class="material-symbols-outlined flex-shrink-0" style="font-size: 20px;">warning</span>
+        <div>
+          <strong>API-Prüfung fehlgeschlagen:</strong><br>
+          ${selectedData.apiError || `Keine gültigen Zugangsdaten für ${providerName} (${companyKey}) hinterlegt.`}
+          <div class="small mt-1 text-muted">Bitte hinterlege die Zugangsdaten in den Einstellungen.</div>
+        </div>
+      </div>
+    `;
+    lexModalSubmitBtn.disabled = true;
+    lexModalSubmitBtn.className = "btn btn-secondary px-4 d-flex align-items-center gap-2";
+    if (lexModalSubmitText) lexModalSubmitText.innerText = "API-Key erforderlich";
+    wireModalInternalButtons();
+    return;
+  }
+
+  // 3. Live Match in Selected Company
+  const hasLiveMatch = selectedData.liveSearch && selectedData.liveSearch.found && selectedData.liveSearch.matches && selectedData.liveSearch.matches.length > 0;
+  let liveMatchHtml = "";
+  if (hasLiveMatch) {
+    const topMatch = selectedData.liveSearch.matches[0];
+    const matchBadge = `<span class="badge bg-warning text-dark border border-warning-subtle">${topMatch.matchReasons.length} Übereinstimmungen</span>`;
+    const reasonsList = topMatch.matchReasons.map(r => `<li><span class="text-success fw-medium">✓</span> ${r}</li>`).join("");
+
+    liveMatchHtml = `
+      <div class="p-3 mb-2 rounded-3 border bg-warning-subtle text-dark" style="border-color: #ffc107 !important;">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-1 mb-2">
+          <div class="d-flex align-items-center gap-1 fw-bold" style="font-size: 13.5px; color: #664d03;">
+            <span class="material-symbols-outlined" style="font-size: 20px;">find_in_page</span>
+            <span>Beleg bereits in ${providerName} (${companyKey}) gefunden!</span>
+          </div>
+          ${matchBadge}
+        </div>
+        
+        <div class="p-2 rounded bg-white border mb-2" style="font-size: 12.5px; line-height: 1.5;">
+          <div class="d-flex justify-content-between flex-wrap gap-2">
+            <div><strong>Gefundener Beleg:</strong> ${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : topMatch.fileName}</div>
+            <div><strong>Betrag:</strong> <span class="font-monospace text-success fw-bold">${topMatch.amount || topMatch.totalAmount}</span></div>
+          </div>
+          <div class="text-muted small mt-1">
+            <span>Datum: <strong>${topMatch.date || topMatch.voucherDate}</strong></span>
+            ${topMatch.partner || topMatch.contactName ? ` | <span>Partner: <strong>${topMatch.partner || topMatch.contactName}</strong></span>` : ''}
+            ${topMatch.voucherStatus ? ` | Status: <span class="badge bg-light text-dark border">${topMatch.voucherStatus}</span>` : ''}
+          </div>
+          <div class="mt-2 pt-2 border-top">
+            <span class="text-muted fw-bold small" style="font-size: 11px;">Abgeglichene Datenpunkte:</span>
+            <ul class="mb-0 ps-0 mt-1 small" style="font-size: 12px; list-style-type: none;">
+              ${reasonsList}
+            </ul>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-1">
+          <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal d-inline-flex align-items-center gap-1" data-job-id="${currentLexJobId}" data-company="${companyKey}" data-match-index="0" style="border-radius: 12px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
+            <span class="material-symbols-outlined" style="font-size: 16px;">compare</span>
+            <span>Belege gegenüberstellen (Vorschau)</span>
+          </button>
+          <button type="button" class="btn btn-sm btn-success btn-mark-synced-direct d-inline-flex align-items-center gap-1" data-job-id="${currentLexJobId}" data-company="${companyKey}" data-file-id="${topMatch.id}" style="border-radius: 12px; font-size: 12px; padding: 4px 12px;">
+            <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
+            <span>Als synchronisiert markieren</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // 4. Overall status in Selected Company
+  if (selectedData.alreadyTransferred && selectedData.transferredInfo) {
+    const dateFormatted = new Date(selectedData.transferredInfo.transferredAt).toLocaleString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const fileId = selectedData.transferredInfo.fileId || selectedData.transferredInfo.lexofficeFileId || "-";
+    lexModalStatusContainer.innerHTML = `
+      ${otherCompanyAlertsHtml}
+      ${liveMatchHtml}
+      <div class="p-2 rounded bg-success-subtle text-success-emphasis border border-success-subtle d-flex align-items-start gap-2">
+        <span class="material-symbols-outlined text-success flex-shrink-0" style="font-size: 20px;">check_circle</span>
+        <div style="font-size: 13px;">
+          <strong>Bereits bei ${providerName} vorhanden:</strong><br>
+          Übertragen an <strong>${companyKey}</strong> am <strong>${dateFormatted} Uhr</strong>.<br>
+          <span class="small text-muted font-monospace">Beleg-ID: ${fileId}</span>
+        </div>
+      </div>
+    `;
+    lexModalSubmitBtn.disabled = false;
+    lexModalSubmitBtn.className = "btn btn-outline-primary px-4 d-flex align-items-center gap-2";
+    if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem erneut übertragen";
+  } else if (hasLiveMatch) {
+    lexModalStatusContainer.innerHTML = `
+      ${otherCompanyAlertsHtml}
+      ${liveMatchHtml}
+    `;
+    lexModalSubmitBtn.disabled = false;
+    lexModalSubmitBtn.className = "btn btn-outline-warning text-dark px-4 d-flex align-items-center gap-2";
+    if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem übertragen (Duplikat)";
+  } else {
+    lexModalStatusContainer.innerHTML = `
+      ${otherCompanyAlertsHtml}
+      <div class="p-2 rounded bg-info-subtle text-info-emphasis border border-info-subtle d-flex align-items-start gap-2">
+        <span class="material-symbols-outlined text-primary flex-shrink-0" style="font-size: 20px;">cloud_upload</span>
+        <div style="font-size: 13px;">
+          <strong>Bereit zum Upload:</strong><br>
+          API verbunden mit <strong>${selectedData.organizationName || providerName}</strong>.<br>
+          <span class="text-success small fw-medium">✓ Kein übereinstimmender Beleg in ${providerName} (${companyKey}) gefunden.</span>
+        </div>
+      </div>
+    `;
+    lexModalSubmitBtn.disabled = false;
+    lexModalSubmitBtn.className = "btn btn-primary px-4 d-flex align-items-center gap-2";
+    if (lexModalSubmitText) lexModalSubmitText.innerText = "Upload starten";
+  }
+
+  wireModalInternalButtons();
+}
+
+function wireModalInternalButtons() {
+  if (!lexModalStatusContainer) return;
+  lexModalStatusContainer.querySelectorAll(".btn-switch-modal-company").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetComp = btn.getAttribute("data-company");
+      if (targetComp && targetComp !== currentSelectedLexCompany) {
+        currentSelectedLexCompany = targetComp;
+        renderAccountingModalContent();
+      }
+    });
   });
 }
 
 async function checkLexofficeTarget(jobId, companyKey) {
   if (!lexModalSubmitBtn || !lexModalStatusContainer) return;
 
-  const isButler = companyKey === "thewire";
-  const expectedProvider = isButler ? "BuchhaltungsButler" : "Lexoffice";
-
-  if (lexModalProviderBadge) {
-    lexModalProviderBadge.innerText = expectedProvider;
-    lexModalProviderBadge.className = isButler
-      ? "badge bg-info-subtle text-info-emphasis border border-info-subtle small"
-      : "badge bg-primary-subtle text-primary border border-primary-subtle small";
-  }
+  currentSelectedLexCompany = companyKey || currentSelectedLexCompany || "thewire";
 
   lexModalSubmitBtn.disabled = true;
   lexModalStatusContainer.innerHTML = `
-    <div class="d-flex align-items-center gap-2 text-muted">
+    <div class="d-flex align-items-center gap-2 text-muted py-2">
       <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-      <span>Validiere ${expectedProvider} API & prüfe Status für <strong>${companyKey}</strong>...</span>
+      <span>Prüfe alle angebundenen Unternehmen & Buchhaltungssysteme auf Belege...</span>
     </div>
   `;
 
@@ -2402,7 +2907,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
     const res = await fetch("/api/accounting/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId, companyKey }),
+      body: JSON.stringify({ jobId, companyKey: currentSelectedLexCompany }),
     });
 
     const data = await res.json();
@@ -2419,122 +2924,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
       return;
     }
 
-    const providerName = data.providerName || expectedProvider;
-
-    // Check API validity
-    if (!data.apiValid) {
-      lexModalStatusContainer.innerHTML = `
-        <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-start gap-2">
-          <span class="material-symbols-outlined flex-shrink-0" style="font-size: 20px;">warning</span>
-          <div>
-            <strong>API-Prüfung fehlgeschlagen:</strong><br>
-            ${data.apiError || `Keine gültigen Zugangsdaten für ${providerName} (${companyKey}) hinterlegt.`}
-            <div class="small mt-1 text-muted">Bitte hinterlege die Zugangsdaten in den Einstellungen.</div>
-          </div>
-        </div>
-      `;
-      lexModalSubmitBtn.disabled = true;
-      lexModalSubmitBtn.className = "btn btn-secondary px-4 d-flex align-items-center gap-2";
-      if (lexModalSubmitText) lexModalSubmitText.innerText = "API-Key erforderlich";
-      return;
-    }
-
-    // 1. Check if Live Match found in accounting system (Lexoffice / BuchhaltungsButler)
-    const hasLiveMatch = data.liveSearch && data.liveSearch.found && data.liveSearch.matches && data.liveSearch.matches.length > 0;
-    
-    let liveMatchHtml = "";
-    if (hasLiveMatch) {
-      const topMatch = data.liveSearch.matches[0];
-      const matchBadge = `<span class="badge bg-warning text-dark border border-warning-subtle">${topMatch.matchReasons.length} Übereinstimmungen</span>`;
-      
-      const reasonsList = topMatch.matchReasons.map(r => `<li><span class="text-success fw-medium">✓</span> ${r}</li>`).join("");
-
-      liveMatchHtml = `
-        <div class="p-3 mb-2 rounded-3 border bg-warning-subtle text-dark" style="border-color: #ffc107 !important;">
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-1 mb-2">
-            <div class="d-flex align-items-center gap-1 fw-bold" style="font-size: 13.5px; color: #664d03;">
-              <span class="material-symbols-outlined" style="font-size: 20px;">find_in_page</span>
-              <span>Beleg bereits in ${providerName} gefunden!</span>
-            </div>
-            ${matchBadge}
-          </div>
-          
-          <div class="p-2 rounded bg-white border mb-2" style="font-size: 12.5px; line-height: 1.5;">
-            <div class="d-flex justify-content-between flex-wrap gap-2">
-              <div><strong>Gefundener Beleg:</strong> ${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : topMatch.fileName}</div>
-              <div><strong>Betrag:</strong> <span class="font-monospace text-success fw-bold">${topMatch.amount || topMatch.totalAmount}</span></div>
-            </div>
-            <div class="text-muted small mt-1">
-              <span>Datum: <strong>${topMatch.date || topMatch.voucherDate}</strong></span>
-              ${topMatch.partner || topMatch.contactName ? ` | <span>Partner: <strong>${topMatch.partner || topMatch.contactName}</strong></span>` : ''}
-              ${topMatch.voucherStatus ? ` | Status: <span class="badge bg-light text-dark border">${topMatch.voucherStatus}</span>` : ''}
-            </div>
-            <div class="mt-2 pt-2 border-top">
-              <span class="text-muted fw-bold small" style="font-size: 11px;">Abgeglichene Datenpunkte:</span>
-              <ul class="mb-0 ps-0 mt-1 small" style="font-size: 12px; list-style-type: none;">
-                ${reasonsList}
-              </ul>
-            </div>
-          </div>
-
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-1">
-            <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-match-index="0" style="border-radius: 12px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
-              <span class="material-symbols-outlined" style="font-size: 16px;">compare</span>
-              <span>Belege gegenüberstellen (Vorschau)</span>
-            </button>
-            <button type="button" class="btn btn-sm btn-success btn-mark-synced-direct d-inline-flex align-items-center gap-1" data-job-id="${jobId}" data-company="${companyKey}" data-file-id="${topMatch.id}" style="border-radius: 12px; font-size: 12px; padding: 4px 12px;">
-              <span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span>
-              <span>Als synchronisiert markieren</span>
-            </button>
-          </div>
-        </div>
-      `;
-    }
-
-    // 2. Check if already marked as transferred locally or found via live search
-    if (data.alreadyTransferred && data.transferredInfo) {
-      const dateFormatted = new Date(data.transferredInfo.transferredAt).toLocaleString("de-DE", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const fileId = data.transferredInfo.fileId || data.transferredInfo.lexofficeFileId || "-";
-      lexModalStatusContainer.innerHTML = `
-        ${liveMatchHtml}
-        <div class="p-2 rounded bg-success-subtle text-success-emphasis border border-success-subtle d-flex align-items-start gap-2">
-          <span class="material-symbols-outlined text-success flex-shrink-0" style="font-size: 20px;">check_circle</span>
-          <div style="font-size: 13px;">
-            <strong>Bereits bei ${providerName} vorhanden:</strong><br>
-            Übertragen an <strong>${companyKey}</strong> am <strong>${dateFormatted} Uhr</strong>.<br>
-            <span class="small text-muted font-monospace">Beleg-ID: ${fileId}</span>
-          </div>
-        </div>
-      `;
-      lexModalSubmitBtn.disabled = false;
-      lexModalSubmitBtn.className = "btn btn-outline-primary px-4 d-flex align-items-center gap-2";
-      if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem erneut übertragen";
-    } else if (hasLiveMatch) {
-      lexModalStatusContainer.innerHTML = liveMatchHtml;
-      lexModalSubmitBtn.disabled = false;
-      lexModalSubmitBtn.className = "btn btn-outline-warning text-dark px-4 d-flex align-items-center gap-2";
-      if (lexModalSubmitText) lexModalSubmitText.innerText = "Trotzdem übertragen (Duplikat)";
-    } else {
-      lexModalStatusContainer.innerHTML = `
-        <div class="p-2 rounded bg-info-subtle text-info-emphasis border border-info-subtle d-flex align-items-start gap-2">
-          <span class="material-symbols-outlined text-primary flex-shrink-0" style="font-size: 20px;">cloud_upload</span>
-          <div style="font-size: 13px;">
-            <strong>Bereit zum Upload:</strong><br>
-            API verbunden mit <strong>${data.organizationName || providerName}</strong>.<br>
-            <span class="text-success small fw-medium">✓ Kein übereinstimmender Beleg in ${providerName} gefunden.</span>
-          </div>
-        </div>
-      `;
-      lexModalSubmitBtn.disabled = false;
-      lexModalSubmitBtn.className = "btn btn-primary px-4 d-flex align-items-center gap-2";
-      if (lexModalSubmitText) lexModalSubmitText.innerText = "Upload starten";
-    }
+    renderAccountingModalContent();
   } catch (err) {
     lexModalStatusContainer.innerHTML = `
       <div class="text-danger d-flex align-items-center gap-2">
@@ -2548,11 +2938,11 @@ async function checkLexofficeTarget(jobId, companyKey) {
 
 if (lexModalSubmitBtn) {
   lexModalSubmitBtn.addEventListener("click", async () => {
-    if (!currentLexJobId || !lexModalCompanySelect) return;
+    if (!currentLexJobId) return;
     const jobId = currentLexJobId;
-    const companyKey = lexModalCompanySelect.value;
-    const isForce = currentLexCheckData && currentLexCheckData.alreadyTransferred;
-    const providerName = currentLexCheckData?.providerName || (companyKey === "thewire" ? "BuchhaltungsButler" : "Lexoffice");
+    const companyKey = currentSelectedLexCompany || "thewire";
+    const isForce = currentLexCheckData && currentLexCheckData.allCompanyChecks && currentLexCheckData.allCompanyChecks[companyKey]?.alreadyTransferred;
+    const providerName = (currentLexCheckData?.allCompanyChecks && currentLexCheckData.allCompanyChecks[companyKey]?.providerName) || (companyKey === "thewire" ? "BuchhaltungsButler" : "Lexoffice");
 
     lexModalSubmitBtn.disabled = true;
     if (lexModalCancelBtn) lexModalCancelBtn.disabled = true;
@@ -3092,11 +3482,33 @@ async function executeClickupTransfer(jobId, force = false, btn = null) {
     if (data.alreadyTransferred && !force) {
       pendingClickupTransferJobId = jobId;
       pendingClickupTransferBtn = btn;
-      document.getElementById("confirm-clickup-text").innerText = data.error || "Dokument wurde bereits an ClickUp übertragen.";
+      const targetJob = activeJobs.find((j) => j.id === jobId) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+      const cu = data.clickup || targetJob?.clickup;
+      const taskId = cu?.taskId;
+      const taskUrl = cu?.taskUrl || (taskId ? `https://app.clickup.com/t/${taskId}` : "");
+
+      const textEl = document.getElementById("confirm-clickup-text");
+      if (textEl) {
+        textEl.innerText = data.error || "Dieses Dokument wurde bereits an ClickUp übertragen. Möchtest du es aktualisieren?";
+      }
+
+      const linkContainer = document.getElementById("confirm-clickup-link-container");
+      const taskLink = document.getElementById("confirm-clickup-task-link");
+      const taskIdBadge = document.getElementById("confirm-clickup-task-id-badge");
+
+      if (linkContainer && taskLink) {
+        if (taskId || taskUrl) {
+          linkContainer.style.display = "block";
+          taskLink.href = taskUrl || `https://app.clickup.com/t/${taskId}`;
+          if (taskIdBadge) taskIdBadge.innerText = `#${taskId || ""}`;
+        } else {
+          linkContainer.style.display = "none";
+        }
+      }
+
       document.getElementById("confirm-clickup-modal").style.display = "flex";
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span> <span>Aktualisieren</span>`;
       }
       return;
     }
@@ -3127,19 +3539,27 @@ async function executeClickupTransfer(jobId, force = false, btn = null) {
 
 // Modal handlers for single ClickUp transfer
 const cancelClickupBtn = document.getElementById("cancel-clickup-transfer-btn");
+const closeClickupXBtn = document.getElementById("close-clickup-modal-x");
 const confirmClickupBtn = document.getElementById("confirm-clickup-transfer-btn");
+const confirmClickupModal = document.getElementById("confirm-clickup-modal");
 
-if (cancelClickupBtn) {
-  cancelClickupBtn.addEventListener("click", () => {
-    document.getElementById("confirm-clickup-modal").style.display = "none";
-    pendingClickupTransferJobId = null;
-    pendingClickupTransferBtn = null;
+const hideClickupConfirmModal = () => {
+  if (confirmClickupModal) confirmClickupModal.style.display = "none";
+  pendingClickupTransferJobId = null;
+  pendingClickupTransferBtn = null;
+};
+
+if (cancelClickupBtn) cancelClickupBtn.addEventListener("click", hideClickupConfirmModal);
+if (closeClickupXBtn) closeClickupXBtn.addEventListener("click", hideClickupConfirmModal);
+if (confirmClickupModal) {
+  confirmClickupModal.addEventListener("click", (e) => {
+    if (e.target === confirmClickupModal) hideClickupConfirmModal();
   });
 }
 
 if (confirmClickupBtn) {
   confirmClickupBtn.addEventListener("click", async () => {
-    document.getElementById("confirm-clickup-modal").style.display = "none";
+    hideClickupConfirmModal();
     if (pendingClickupTransferJobId) {
       const jobId = pendingClickupTransferJobId;
       const btn = pendingClickupTransferBtn;
@@ -3194,6 +3614,22 @@ document.addEventListener("click", (e) => {
     const companyKey = compareBtn.getAttribute("data-company");
     const matchIdx = parseInt(compareBtn.getAttribute("data-match-index") || "0", 10);
     openAccountingCompareModal(jobId, companyKey, matchIdx);
+    return;
+  }
+
+  const switchCompBtn = e.target.closest(".btn-switch-modal-company") || e.target.closest(".company-select-badge") || e.target.closest(".company-check-badge");
+  if (switchCompBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const targetComp = switchCompBtn.getAttribute("data-company");
+    if (targetComp && targetComp !== currentSelectedLexCompany) {
+      currentSelectedLexCompany = targetComp;
+      if (currentLexCheckData) {
+        renderAccountingModalContent();
+      } else if (currentLexJobId) {
+        checkLexofficeTarget(currentLexJobId, targetComp);
+      }
+    }
     return;
   }
 
@@ -3573,9 +4009,18 @@ if (confirmSyncModalBtn) {
 
 const startSearchInput = document.getElementById("start-search-input");
 const searchClearBtn = document.getElementById("search-clear-btn");
+const startSortSelect = document.getElementById("start-sort-select");
 const startFilterDate = document.getElementById("start-filter-date");
 const startFilterCompany = document.getElementById("start-filter-company");
 const startResetFiltersBtn = document.getElementById("start-reset-filters-btn");
+
+if (startSortSelect) {
+  startSortSelect.addEventListener("change", (e) => {
+    startSortOrder = e.target.value;
+    startCurrentPage = 1;
+    renderJobs();
+  });
+}
 
 if (startSearchInput) {
   startSearchInput.addEventListener("input", (e) => {
@@ -3646,6 +4091,7 @@ if (startFilterCompany) {
 if (startResetFiltersBtn) {
   startResetFiltersBtn.addEventListener("click", () => {
     startSearchQuery = "";
+    startSortOrder = "docdate_desc";
     startDateFilter = "alle";
     startCompanyFilter = "alle";
     startSelectedCategories.clear();
@@ -3655,6 +4101,7 @@ if (startResetFiltersBtn) {
 
     if (startSearchInput) startSearchInput.value = "";
     if (searchClearBtn) searchClearBtn.style.display = "none";
+    if (startSortSelect) startSortSelect.value = "docdate_desc";
     if (startFilterDate) startFilterDate.value = "alle";
     if (startFilterCompany) startFilterCompany.value = "alle";
 
