@@ -596,6 +596,19 @@ function findMatchingJobForDriveFile(file, isAdmin = true) {
     const keyOrig = normalizeDocKey(job.originalName);
     if (fKey && (fKey === keyFull || fKey === keyOrig)) return job;
   }
+
+  // Fallback: match by invoice number
+  for (const job of Object.values(uploadJobs)) {
+    if (job.isPrivate && !isAdmin) continue;
+    const invNum = job.result?.invoiceNumber;
+    if (invNum && invNum !== "none" && invNum !== "-" && invNum.length >= 4) {
+      const invClean = invNum.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (invClean.length >= 4 && fKey.includes(invClean)) {
+        return job;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -1697,71 +1710,31 @@ app.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
     }
 
     const drive = await driveApi.getClient();
-    const allFolderIds = new Set();
-    const folderCandidates = [appSettings.FOLDER_ID, appSettings.FOLDER_ID_SORTED].filter(Boolean);
-
-    for (let fid of folderCandidates) {
-      if (!driveApi.isValidGoogleDriveId(fid)) {
-        fid = await driveApi.findFolderId(fid);
-      }
-      if (fid) allFolderIds.add(fid);
+    let folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+    if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+      folderId = await driveApi.findFolderId(folderId);
     }
 
-    if (allFolderIds.size === 0) {
+    if (!folderId) {
       return res.status(400).json({ success: false, error: "Kein Google Drive Ordner in den Einstellungen hinterlegt." });
     }
 
-    // Discover subfolders recursively
-    const folderQueue = Array.from(allFolderIds);
-    while (folderQueue.length > 0) {
-      const currentParent = folderQueue.shift();
-      try {
-        const subRes = await drive.files.list({
-          q: `mimeType = 'application/vnd.google-apps.folder' and trashed = false and '${currentParent}' in parents`,
-          fields: "files(id)",
-          pageSize: 100,
-        });
-        if (subRes.data.files) {
-          for (const sub of subRes.data.files) {
-            if (!allFolderIds.has(sub.id)) {
-              allFolderIds.add(sub.id);
-              folderQueue.push(sub.id);
-            }
-          }
-        }
-      } catch (e) {}
-    }
-
     const driveFiles = [];
-    const seenFetchedIds = new Set();
-    const parentChunks = [];
-    const folderArray = Array.from(allFolderIds);
-    for (let i = 0; i < folderArray.length; i += 10) {
-      parentChunks.push(folderArray.slice(i, i + 10));
-    }
+    let nextPageToken = null;
 
-    for (const chunk of parentChunks) {
-      const parentQ = chunk.map((fid) => `'${fid}' in parents`).join(" or ");
-      let nextPageToken = null;
-      do {
-        const listRes = await drive.files.list({
-          q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and (${parentQ})`,
-          fields: "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description)",
-          pageSize: 1000,
-          pageToken: nextPageToken,
-        });
+    do {
+      const listRes = await drive.files.list({
+        q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and '${folderId}' in parents`,
+        fields: "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description)",
+        pageSize: 1000,
+        pageToken: nextPageToken,
+      });
 
-        if (listRes.data.files) {
-          for (const f of listRes.data.files) {
-            if (!seenFetchedIds.has(f.id)) {
-              seenFetchedIds.add(f.id);
-              driveFiles.push(f);
-            }
-          }
-        }
-        nextPageToken = listRes.data.nextPageToken;
-      } while (nextPageToken);
-    }
+      if (listRes.data.files) {
+        driveFiles.push(...listRes.data.files);
+      }
+      nextPageToken = listRes.data.nextPageToken;
+    } while (nextPageToken);
 
     const toImport = [];
     const needsEnrichment = [];
