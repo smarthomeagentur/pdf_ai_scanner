@@ -436,5 +436,16 @@ body {
   color: #fff;
 }
 
+/* Spinner Animation for Search Icon */
+@keyframes spinIcon {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spin-animation {
+  display: inline-block;
+  animation: spinIcon 1s linear infinite;
+}
+
 
 

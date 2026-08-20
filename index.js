@@ -510,7 +510,7 @@ async function getLocalPdfText(filePath) {
   }
 }
 
-// Deep Document Content Search (OCR & Full-Text)
+// Deep Document Content Search (OCR & Full-Text with Database Linking & Deduplication)
 app.get("/api/documents/deep-search", async (req, res) => {
   try {
     const q = (req.query.q || "").trim();
@@ -522,7 +522,28 @@ app.get("/api/documents/deep-search", async (req, res) => {
     const safeQ = q.replace(/'/g, "\\'");
     const qLower = q.toLowerCase();
     const results = [];
+    const seenJobIds = new Set();
+    const seenDriveIds = new Set();
     const seenNames = new Set();
+
+    const normalizeDocName = (str) => (str || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+
+    // Helper: Find matching job in local uploadJobs for a given Drive file
+    const findMatchingJobForDriveFile = (file) => {
+      if (!file) return null;
+      for (const job of Object.values(uploadJobs)) {
+        if (job.isPrivate && !isAdmin) continue;
+        if (job.driveFileId && job.driveFileId === file.id) return job;
+        if (job.rawDriveId && job.rawDriveId === file.id) return job;
+        if (job.result?.webViewLink && job.result.webViewLink.includes(file.id)) return job;
+        const normJobName = normalizeDocName(job.result?.full || job.originalName);
+        const normFileName = normalizeDocName(file.name);
+        if (normJobName && normFileName && normJobName === normFileName) {
+          return job;
+        }
+      }
+      return null;
+    };
 
     // 1. Search Google Drive (Fulltext & OCR Search across sorted and target folders)
     if (fs.existsSync(TOKEN_PATH)) {
@@ -544,33 +565,80 @@ app.get("/api/documents/deep-search", async (req, res) => {
         const driveRes = await drive.files.list({
           q: driveQuery,
           fields: "files(id, name, webViewLink, thumbnailLink, webContentLink, createdTime, size, mimeType)",
-          pageSize: 30,
+          pageSize: 50,
         });
 
         const driveFiles = driveRes.data.files || [];
         for (const file of driveFiles) {
-          seenNames.add(file.name.toLowerCase());
-          results.push({
-            id: file.id,
-            name: file.name,
-            source: "Google Drive (Cloud)",
-            type: "gdrive",
-            date: file.createdTime,
-            size: file.size ? parseInt(file.size, 10) : 0,
-            webViewLink: file.webViewLink,
-            downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
-            thumbnailLink: file.thumbnailLink,
-            snippet: `Treffer im Google Drive Dokumenteninhalt / Dateinamen`,
-          });
+          seenDriveIds.add(file.id);
+          const normName = normalizeDocName(file.name);
+          if (normName) seenNames.add(normName);
+
+          const matchedJob = findMatchingJobForDriveFile(file);
+          let snippet = `Treffer im Google Drive Dokumenteninhalt / Dateinamen`;
+
+          if (matchedJob) {
+            seenJobIds.add(matchedJob.id);
+            // If local PDF exists, get high-precision context snippet
+            if (matchedJob.filePath && fs.existsSync(matchedJob.filePath)) {
+              try {
+                const fullText = await getLocalPdfText(matchedJob.filePath);
+                const lowerFull = fullText.toLowerCase();
+                if (lowerFull.includes(qLower)) {
+                  const idx = lowerFull.indexOf(qLower);
+                  const start = Math.max(0, idx - 50);
+                  const end = Math.min(fullText.length, idx + q.length + 50);
+                  snippet = (start > 0 ? "..." : "") + fullText.substring(start, end).trim() + (end < fullText.length ? "..." : "");
+                }
+              } catch (e) {}
+            }
+
+            results.push({
+              id: matchedJob.id,
+              jobId: matchedJob.id,
+              name: matchedJob.result?.full || matchedJob.originalName || file.name,
+              source: matchedJob.source === "gmail" ? "E-Mail Inbox" : "Google Drive / Datenbank",
+              type: "local",
+              isLocal: true,
+              isLinked: true,
+              driveFileId: file.id,
+              date: matchedJob.uploadDate || file.createdTime,
+              size: file.size ? parseInt(file.size, 10) : (matchedJob.filePath && fs.existsSync(matchedJob.filePath) ? fs.statSync(matchedJob.filePath).size : 0),
+              filePath: matchedJob.filePath,
+              webViewLink: file.webViewLink || matchedJob.result?.webViewLink,
+              thumbnailLink: `/api/thumbnail/${matchedJob.id}`,
+              snippet: snippet,
+            });
+          } else {
+            // Unlinked Google Drive cloud file
+            results.push({
+              id: file.id,
+              name: file.name,
+              source: "Google Drive (Cloud)",
+              type: "gdrive",
+              isLocal: false,
+              isLinked: false,
+              date: file.createdTime,
+              size: file.size ? parseInt(file.size, 10) : 0,
+              webViewLink: file.webViewLink,
+              downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
+              thumbnailLink: file.thumbnailLink,
+              snippet: snippet,
+            });
+          }
         }
       } catch (driveErr) {
         console.warn("[DEEP SEARCH] Google Drive Suche Warnung:", driveErr.message);
       }
     }
 
-    // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing)
+    // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing & Metadata)
     const localJobs = Object.values(uploadJobs).filter((job) => !job.isPrivate || isAdmin);
     for (const job of localJobs) {
+      if (seenJobIds.has(job.id)) continue; // Already linked and processed from Drive
+      const normJobName = normalizeDocName(job.result?.full || job.originalName);
+      if (normJobName && seenNames.has(normJobName)) continue; // Avoid duplicate by name
+
       if (!job.filePath || !fs.existsSync(job.filePath)) continue;
 
       const fullText = await getLocalPdfText(job.filePath);
@@ -584,7 +652,6 @@ app.get("/api/documents/deep-search", async (req, res) => {
       const matchInMeta = lowerMeta.includes(qLower);
 
       if (matchInPdf || matchInMeta) {
-        // Snippet mit Kontext um den Treffer generieren
         let snippet = "";
         if (matchInPdf) {
           const idx = lowerFull.indexOf(qLower);
@@ -595,21 +662,23 @@ app.get("/api/documents/deep-search", async (req, res) => {
           snippet = `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`;
         }
 
-        if (!seenNames.has((job.originalName || "").toLowerCase())) {
-          results.push({
-            id: job.id,
-            jobId: job.id,
-            name: job.result?.full || job.originalName || "Dokument",
-            source: job.source === "gmail" ? "E-Mail Inbox" : "Lokaler Upload / Scanner",
-            type: "local",
-            date: job.uploadDate,
-            size: fs.statSync(job.filePath).size,
-            filePath: job.filePath,
-            thumbnailLink: `/api/thumbnail/${job.id}`,
-            snippet: snippet,
-            isLocal: true,
-          });
-        }
+        seenJobIds.add(job.id);
+        if (normJobName) seenNames.add(normJobName);
+
+        results.push({
+          id: job.id,
+          jobId: job.id,
+          name: job.result?.full || job.originalName || "Dokument",
+          source: job.source === "gmail" ? "E-Mail Inbox" : "Lokaler Upload / Scanner",
+          type: "local",
+          isLocal: true,
+          isLinked: false,
+          date: job.uploadDate,
+          size: fs.statSync(job.filePath).size,
+          filePath: job.filePath,
+          thumbnailLink: `/api/thumbnail/${job.id}`,
+          snippet: snippet,
+        });
       }
     }
 

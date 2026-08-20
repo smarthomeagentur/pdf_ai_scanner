@@ -918,13 +918,13 @@ function renderStartCategoryBubbles() {
 }
 
 function filterActiveJobs(jobs) {
-  return jobs.filter((job) => {
+  const matchedJobs = jobs.filter((job) => {
     const res = job.result || {};
 
     // 0. Hidden filter: hide unless admin is showing hidden items
     if (job.isHidden && !window.showHiddenJobs) return false;
 
-    // 1. Search Query
+    // 1. Search Query (Metadata Match OR OCR / Deep Search Match)
     if (startSearchQuery) {
       const q = startSearchQuery.toLowerCase();
       const title = (res.full || job.originalName || "").toLowerCase();
@@ -935,7 +935,7 @@ function filterActiveJobs(jobs) {
       const tags = (res.tags && Array.isArray(res.tags) ? res.tags.join(" ") : "").toLowerCase();
       const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
 
-      const matches =
+      const matchesMetadata =
         title.includes(q) ||
         comp.includes(q) ||
         targetComp.includes(q) ||
@@ -944,7 +944,9 @@ function filterActiveJobs(jobs) {
         tags.includes(q) ||
         amtStr.includes(q);
 
-      if (!matches) return false;
+      const matchesOcr = typeof deepSearchSnippetsMap !== "undefined" && deepSearchSnippetsMap.has(job.id);
+
+      if (!matchesMetadata && !matchesOcr) return false;
     }
 
     // 2. Company Filter
@@ -1006,6 +1008,31 @@ function filterActiveJobs(jobs) {
 
     return true;
   });
+
+  // If search query is active and there are unlinked Drive-only results, append them seamlessly
+  if (startSearchQuery && typeof driveOnlySearchResults !== "undefined" && driveOnlySearchResults.length > 0 && startCompanyFilter === "alle" && startDateFilter === "alle" && startSelectedCategories.size === 0) {
+    const driveItems = driveOnlySearchResults.map((df) => ({
+      id: "gdrive_" + df.id,
+      isDriveOnly: true,
+      originalName: df.name,
+      uploadDate: df.date,
+      status: "completed",
+      source: "gdrive",
+      webViewLink: df.webViewLink,
+      downloadLink: df.downloadLink,
+      thumbnailLink: df.thumbnailLink,
+      snippet: df.snippet,
+      result: {
+        full: df.name,
+        company: "Google Drive (Cloud)",
+        category: "Cloud Beleg",
+        webViewLink: df.webViewLink,
+      },
+    }));
+    return [...matchedJobs, ...driveItems];
+  }
+
+  return matchedJobs;
 }
 
 function renderStartPagination(totalItems, totalPages) {
@@ -1160,10 +1187,55 @@ function renderJobs() {
 
   pageJobs.forEach((job) => {
     const div = document.createElement("div");
-    div.className = `job-item ${job.status}`;
+    div.className = `job-item ${job.status || "completed"}`;
     if (job.isPrivate) {
       div.style.borderLeft = "4px solid #f44336";
       div.style.backgroundColor = "#fff8f8";
+    }
+
+    // Special handling for Drive-only results (unlinked cloud files found via OCR / deep search)
+    if (job.isDriveOnly) {
+      const dateFormatted = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
+      const snippet = job.snippet || "";
+      const highlightedSnippet = highlightQueryText(snippet, startSearchQuery);
+      const highlightedTitle = highlightQueryText(job.originalName || "Google Drive Dokument", startSearchQuery);
+      const imgSrc = job.thumbnailLink || "";
+
+      div.innerHTML = `
+        <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
+          <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+            <div class="job-title" style="display: flex; flex-direction: column; gap: 4px;">
+              <span style="word-break: break-word; line-height: 1.2; display: flex; align-items: center; flex-wrap: wrap;">
+                ${highlightedTitle}
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px; margin-left: 8px;">
+                  <span class="material-symbols-outlined" style="font-size: 12px;">cloud</span> Google Drive
+                </span>
+              </span>
+              <span style="font-size: 12px; font-weight: normal; color: #888;">Google Drive Cloud-Dokument: ${dateFormatted}</span>
+            </div>
+          </div>
+          ${
+            snippet ? `
+              <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
+                <div class="d-flex align-items-center gap-1 text-primary small fw-bold mb-1">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">manage_search</span>
+                  <span>Fundstelle im Google Drive Textinhalt / OCR:</span>
+                </div>
+                <div class="font-monospace text-dark" style="font-size: 12px;">${highlightedSnippet}</div>
+              </div>
+            ` : ""
+          }
+          <div class="d-flex align-items-center gap-2 pt-1 flex-wrap">
+            ${job.webViewLink ? `<a href="${job.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 12px; font-size: 12px; padding: 2px 10px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> In Google Drive öffnen</a>` : ""}
+            ${job.downloadLink ? `<a href="${job.downloadLink}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 12px; font-size: 12px; padding: 2px 10px;"><span class="material-symbols-outlined" style="font-size: 14px;">download</span> Herunterladen</a>` : ""}
+          </div>
+        </div>
+        <a href="${job.webViewLink || '#'}" target="_blank" class="pdf-preview-container">
+          <img src="${imgSrc}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.outerHTML='<span class=\\'material-symbols-outlined text-danger\\' style=\\'font-size: 36px;\\'>picture_as_pdf</span>';">
+        </a>
+      `;
+      jobList.appendChild(div);
+      return;
     }
 
     let privateBadgeHtml = '';
@@ -1400,6 +1472,21 @@ ${lexofficeDetailsHtml}
                 `;
     }
 
+    let snippetHtml = "";
+    const currentSnippet = job.snippet || (typeof deepSearchSnippetsMap !== "undefined" ? deepSearchSnippetsMap.get(job.id) : null);
+    if (currentSnippet) {
+      const highlightedSnippet = highlightQueryText(currentSnippet, startSearchQuery);
+      snippetHtml = `
+        <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important; max-width: 100%;">
+          <div class="d-flex align-items-center gap-1 text-primary small fw-bold mb-1">
+            <span class="material-symbols-outlined" style="font-size: 15px;">manage_search</span>
+            <span>Fundstelle im Dateiinhalt / OCR:</span>
+          </div>
+          <div class="font-monospace text-dark" style="font-size: 12px;">${highlightedSnippet}</div>
+        </div>
+      `;
+    }
+
     div.innerHTML = `
                 <div style="padding-right: 75px; min-height: 84px; display: flex; flex-direction: column; justify-content: flex-start;">
                     <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
@@ -1417,6 +1504,7 @@ ${lexofficeDetailsHtml}
                             ${cancelJobButtonHtml}
                         </div>
                     </div>
+                    ${snippetHtml}
                     ${resultHtml}
                 </div>
                 ${previewHtml}
@@ -1553,16 +1641,12 @@ window.addEventListener("appinstalled", () => {
 })();
 
 // ==========================================
-// --- Deep Document Content Search (OCR & Full-Text) ---
+// --- Unified Deep Document Content & OCR Search ---
 // ==========================================
-const deepSearchInput = document.getElementById("deep-search-input");
-const deepSearchBtn = document.getElementById("deep-search-btn");
-const deepSearchResultsCard = document.getElementById("deep-search-results-card");
-const deepSearchHeading = document.getElementById("deep-search-heading");
-const deepSearchBadge = document.getElementById("deep-search-badge");
-const deepSearchCloseBtn = document.getElementById("deep-search-close-btn");
-const deepSearchLoading = document.getElementById("deep-search-loading");
-const deepSearchResultsList = document.getElementById("deep-search-results-list");
+let deepSearchSnippetsMap = new Map();
+let driveOnlySearchResults = [];
+let deepSearchDebounceTimer = null;
+let currentDeepSearchQuery = "";
 
 function highlightQueryText(text, query) {
   if (!text || !query) return text || "";
@@ -1571,139 +1655,59 @@ function highlightQueryText(text, query) {
   return text.replace(regex, `<mark class="bg-warning-subtle text-dark fw-bold px-1 rounded">$1</mark>`);
 }
 
-const performDeepSearch = async () => {
-  if (!deepSearchInput) return;
-  const query = deepSearchInput.value.trim();
-  if (query.length < 2) {
-    alert("Bitte mindestens 2 Zeichen für die Volltextsuche eingeben.");
+function setSearchIconSpinning(isSpinning) {
+  const icon = document.getElementById("search-icon-symbol");
+  if (!icon) return;
+  if (isSpinning) {
+    icon.innerText = "sync";
+    icon.classList.add("spin-animation");
+  } else {
+    icon.innerText = "search";
+    icon.classList.remove("spin-animation");
+  }
+}
+
+async function runDeepSearch(query) {
+  if (!query || query.length < 2) {
+    deepSearchSnippetsMap.clear();
+    driveOnlySearchResults = [];
+    currentDeepSearchQuery = "";
+    setSearchIconSpinning(false);
+    renderJobs();
     return;
   }
 
-  if (deepSearchResultsCard) deepSearchResultsCard.style.display = "block";
-  if (deepSearchLoading) deepSearchLoading.style.display = "block";
-  if (deepSearchResultsList) deepSearchResultsList.innerHTML = "";
-  if (deepSearchHeading) deepSearchHeading.innerText = `Volltextsuche: "${query}"`;
-  if (deepSearchBadge) deepSearchBadge.innerText = "Suche läuft...";
+  currentDeepSearchQuery = query;
+  setSearchIconSpinning(true);
 
   try {
     const res = await fetch("/api/documents/deep-search?q=" + encodeURIComponent(query));
     const data = await res.json();
 
-    if (deepSearchLoading) deepSearchLoading.style.display = "none";
-
-    if (!data.success) {
-      if (deepSearchResultsList) {
-        deepSearchResultsList.innerHTML = `<div class="text-danger p-3">${data.error || "Suche fehlgeschlagen."}</div>`;
-      }
-      if (deepSearchBadge) deepSearchBadge.innerText = "Fehler";
+    // Verify query is still current
+    if (startSearchQuery.toLowerCase() !== query.toLowerCase()) {
       return;
     }
 
-    const results = data.results || [];
-    if (deepSearchBadge) deepSearchBadge.innerText = `${results.length} Treffer`;
+    deepSearchSnippetsMap.clear();
+    driveOnlySearchResults = [];
 
-    if (results.length === 0) {
-      if (deepSearchResultsList) {
-        deepSearchResultsList.innerHTML = `
-          <div class="text-center py-4 text-muted">
-            <span class="material-symbols-outlined" style="font-size: 36px; color: #aaa;">search_off</span>
-            <div class="mt-2 fw-medium">Keine Dokumente mit diesem Textinhalt gefunden.</div>
-            <div class="small text-muted">Tipp: Probiere alternative Suchbegriffe (z. B. Teile der Rechnungsnummer, Firmenname oder Schlagwörter).</div>
-          </div>
-        `;
-      }
-      return;
+    if (data.success && Array.isArray(data.results)) {
+      data.results.forEach((item) => {
+        if (item.jobId) {
+          deepSearchSnippetsMap.set(item.jobId, item.snippet);
+        } else if (item.type === "gdrive" && !item.isLinked) {
+          driveOnlySearchResults.push(item);
+        }
+      });
     }
 
-    let html = "";
-    results.forEach((item) => {
-      const dateFormatted = item.date
-        ? new Date(item.date).toLocaleDateString("de-DE", {
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : "Unbekanntes Datum";
-
-      const isDrive = item.type === "gdrive";
-      const sourceBadge = isDrive
-        ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px;"><span class="material-symbols-outlined" style="font-size: 12px;">cloud</span> Google Drive</span>`
-        : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px;"><span class="material-symbols-outlined" style="font-size: 12px;">upload_file</span> ${item.source}</span>`;
-
-      const titleHighlighted = highlightQueryText(item.name, query);
-      const snippetHighlighted = highlightQueryText(item.snippet, query);
-
-      html += `
-        <div class="card p-3 border shadow-sm" style="border-radius: 10px; background-color: #fdfdfd; transition: all 0.2s ease;">
-          <div class="d-flex gap-3 align-items-start">
-            <div class="flex-shrink-0 pt-1">
-              ${
-                item.thumbnailLink
-                  ? `<img src="${item.thumbnailLink}" style="width: 44px; height: 44px; object-fit: cover; border-radius: 8px; border: 1px solid #dee2e6;" onerror="this.outerHTML='<span class=\\'material-symbols-outlined text-danger\\' style=\\'font-size: 36px;\\'>picture_as_pdf</span>';" />`
-                  : `<span class="material-symbols-outlined text-danger" style="font-size: 36px;">picture_as_pdf</span>`
-              }
-            </div>
-            <div class="flex-grow-1" style="min-width: 0;">
-              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
-                <div class="d-flex align-items-center gap-2 flex-wrap">
-                  <strong class="text-dark" style="font-size: 14px;">${titleHighlighted}</strong>
-                  ${sourceBadge}
-                </div>
-                <span class="text-muted small" style="font-size: 12px;">${dateFormatted}</span>
-              </div>
-
-              <!-- Matching Content Snippet -->
-              <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
-                <span class="text-muted small fw-bold">Fundstelle im Text:</span>
-                <div class="mt-1 font-monospace" style="font-size: 12px;">${snippetHighlighted}</div>
-              </div>
-
-              <!-- Action Buttons -->
-              <div class="d-flex justify-content-end align-items-center gap-2 pt-1">
-                ${
-                  item.isLocal
-                    ? `<a href="/api/jobs/${item.jobId}/file" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 6px; font-size: 12px; padding: 3px 10px;">
-                        <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
-                        <span>Dokument öffnen</span>
-                      </a>`
-                    : ""
-                }
-                ${
-                  item.webViewLink
-                    ? `<a href="${item.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 6px; font-size: 12px; padding: 3px 10px;">
-                        <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
-                        <span>In Google Drive öffnen</span>
-                      </a>`
-                    : ""
-                }
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-    });
-
-    if (deepSearchResultsList) deepSearchResultsList.innerHTML = html;
-  } catch (e) {
-    if (deepSearchLoading) deepSearchLoading.style.display = "none";
-    if (deepSearchResultsList) {
-      deepSearchResultsList.innerHTML = `<div class="text-danger p-3">Netzwerkfehler bei der Volltextsuche: ${e.message}</div>`;
-    }
+    setSearchIconSpinning(false);
+    renderJobs();
+  } catch (err) {
+    console.error("[DEEP SEARCH] Fehler:", err);
+    setSearchIconSpinning(false);
   }
-};
-
-if (deepSearchBtn) deepSearchBtn.addEventListener("click", performDeepSearch);
-if (deepSearchInput) {
-  deepSearchInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") performDeepSearch();
-  });
-}
-if (deepSearchCloseBtn) {
-  deepSearchCloseBtn.addEventListener("click", () => {
-    if (deepSearchResultsCard) deepSearchResultsCard.style.display = "none";
-  });
 }
 
 // Fetch settings globally on load so category options are available
@@ -3568,6 +3572,7 @@ if (confirmSyncModalBtn) {
 // ==========================================
 
 const startSearchInput = document.getElementById("start-search-input");
+const searchClearBtn = document.getElementById("search-clear-btn");
 const startFilterDate = document.getElementById("start-filter-date");
 const startFilterCompany = document.getElementById("start-filter-company");
 const startResetFiltersBtn = document.getElementById("start-reset-filters-btn");
@@ -3576,6 +3581,48 @@ if (startSearchInput) {
   startSearchInput.addEventListener("input", (e) => {
     startSearchQuery = e.target.value.trim();
     startCurrentPage = 1;
+    if (searchClearBtn) {
+      searchClearBtn.style.display = startSearchQuery ? "inline-flex" : "none";
+    }
+
+    // 1. Instant local filter
+    renderJobs();
+
+    // 2. Debounced deep OCR / fulltext search
+    clearTimeout(deepSearchDebounceTimer);
+    if (startSearchQuery.length >= 2) {
+      setSearchIconSpinning(true);
+      deepSearchDebounceTimer = setTimeout(() => {
+        runDeepSearch(startSearchQuery);
+      }, 350);
+    } else {
+      deepSearchSnippetsMap.clear();
+      driveOnlySearchResults = [];
+      setSearchIconSpinning(false);
+      renderJobs();
+    }
+  });
+
+  startSearchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(deepSearchDebounceTimer);
+      if (startSearchQuery.length >= 2) {
+        runDeepSearch(startSearchQuery);
+      }
+    }
+  });
+}
+
+if (searchClearBtn) {
+  searchClearBtn.addEventListener("click", () => {
+    if (startSearchInput) startSearchInput.value = "";
+    startSearchQuery = "";
+    startCurrentPage = 1;
+    deepSearchSnippetsMap.clear();
+    driveOnlySearchResults = [];
+    searchClearBtn.style.display = "none";
+    setSearchIconSpinning(false);
     renderJobs();
   });
 }
@@ -3603,11 +3650,15 @@ if (startResetFiltersBtn) {
     startCompanyFilter = "alle";
     startSelectedCategories.clear();
     startCurrentPage = 1;
+    deepSearchSnippetsMap.clear();
+    driveOnlySearchResults = [];
 
     if (startSearchInput) startSearchInput.value = "";
+    if (searchClearBtn) searchClearBtn.style.display = "none";
     if (startFilterDate) startFilterDate.value = "alle";
     if (startFilterCompany) startFilterCompany.value = "alle";
 
+    setSearchIconSpinning(false);
     renderStartCategoryBubbles();
     renderJobs();
   });

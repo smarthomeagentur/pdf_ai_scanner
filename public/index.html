@@ -122,16 +122,25 @@
               <div class="row g-2 align-items-center">
                 <div class="col-12 col-md-5">
                   <div class="input-group">
-                    <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
-                      <span class="material-symbols-outlined text-muted" style="font-size: 18px;">search</span>
+                    <span class="input-group-text bg-white border-end-0" id="search-prefix-addon" style="border-radius: 8px 0 0 8px;">
+                      <span class="material-symbols-outlined text-primary" id="search-icon-symbol" style="font-size: 18px;">search</span>
                     </span>
                     <input
                       type="text"
                       id="start-search-input"
                       class="form-control border-start-0 ps-1"
-                      placeholder="Belege suchen (Name, Firma, Rechnungs-Nr, Betrag...)"
-                      style="border-radius: 0 8px 8px 0; font-size: 14px;"
+                      placeholder="Belege & PDF-Inhalte suchen (Name, Firma, Rechnungs-Nr, Betrag, OCR)..."
+                      style="font-size: 14px;"
                     />
+                    <button
+                      id="search-clear-btn"
+                      class="btn btn-outline-secondary border border-start-0 text-muted px-2"
+                      type="button"
+                      title="Suche leeren"
+                      style="display: none; background: #fff; border-radius: 0 8px 8px 0;"
+                    >
+                      <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">close</span>
+                    </button>
                   </div>
                 </div>
                 <div class="col-6 col-md-3">
@@ -168,55 +177,6 @@
                 <div id="start-filter-category-bubbles" class="d-flex flex-wrap gap-1">
                   <!-- Dynamic Category Bubbles rendered here -->
                 </div>
-              </div>
-
-              <!-- Row 3: Deep Document Content Search Bar -->
-              <div class="mt-3 pt-2 border-top">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                  <div class="d-flex align-items-center gap-1">
-                    <span class="material-symbols-outlined text-primary" style="font-size: 18px;">manage_search</span>
-                    <span class="fw-bold small text-dark" style="font-size: 13px;">Dokumenten-Volltextsuche (im Dateiinhalt & OCR):</span>
-                  </div>
-                  <span class="text-muted small" style="font-size: 11px;">Durchsucht Text in PDFs & Google Drive</span>
-                </div>
-                <div class="input-group">
-                  <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
-                    <span class="material-symbols-outlined text-primary" style="font-size: 18px;">document_scanner</span>
-                  </span>
-                  <input
-                    type="text"
-                    id="deep-search-input"
-                    class="form-control border-start-0 ps-1"
-                    placeholder="Volltextsuche im PDF-Inhalt (z. B. 'Artikelbezeichnung', 'IBAN', 'Bestellnummer'...)"
-                    style="font-size: 14px;"
-                  />
-                  <button id="deep-search-btn" class="btn btn-primary d-flex align-items-center gap-1 px-3" type="button" style="border-radius: 0 8px 8px 0; font-weight: 500;">
-                    <span class="material-symbols-outlined" style="font-size: 18px;">search</span>
-                    <span>Inhalt durchsuchen</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Deep Search Results Container -->
-            <div id="deep-search-results-card" class="card p-3 my-3 shadow-sm border" style="border-radius: 12px; display: none; background: #ffffff; border-color: #0d6efd !important;">
-              <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom">
-                <div class="d-flex align-items-center gap-2">
-                  <span class="material-symbols-outlined text-primary" style="font-size: 22px;">manage_search</span>
-                  <strong id="deep-search-heading" style="font-size: 15px;">Volltext-Suchergebnisse</strong>
-                  <span id="deep-search-badge" class="badge bg-primary rounded-pill small">0 Treffer</span>
-                </div>
-                <button id="deep-search-close-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 2px 10px;">
-                  <span class="material-symbols-outlined" style="font-size: 16px;">close</span>
-                  <span>Ergebnisse schließen</span>
-                </button>
-              </div>
-              <div id="deep-search-loading" class="text-center py-4 text-muted" style="display: none;">
-                <div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div>
-                <div class="small">Durchsuche Dokumenteninhalte & Google Drive OCR...</div>
-              </div>
-              <div id="deep-search-results-list" class="d-flex flex-column gap-2">
-                <!-- Dynamically rendered deep search results -->
               </div>
             </div>
 
@@ -1314,7 +1274,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260819_gmail_v31"></script>
+      <script src="/index.js?v=20260820_unified_search_v1"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {
