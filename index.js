@@ -723,7 +723,7 @@ app.get("/api/documents/deep-search", async (req, res) => {
 
       const fullText = await getLocalPdfText(job.filePath);
       const resData = job.result || {};
-      const metaText = `${job.originalName || ""} ${resData.full || ""} ${resData.company || ""} ${resData.invoiceNumber || ""} ${resData.category || ""} ${(resData.tags || []).join(" ")}`;
+      const metaText = `${job.originalName || ""} ${resData.full || ""} ${resData.company || ""} ${resData.invoiceNumber || ""} ${resData.category || ""} ${(resData.tags || []).join(" ")} ${job.notes || ""}`;
 
       const lowerFull = fullText.toLowerCase();
       const lowerMeta = metaText.toLowerCase();
@@ -741,6 +741,7 @@ app.get("/api/documents/deep-search", async (req, res) => {
           if (resData.invoiceNumber && resData.invoiceNumber.toLowerCase().includes(qLower)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
           if (resData.category && resData.category.toLowerCase().includes(qLower)) matchingFields.push(`Kategorie: ${resData.category}`);
           if ((job.result?.full || job.originalName || "").toLowerCase().includes(qLower)) matchingFields.push(`Dateiname: ${job.result?.full || job.originalName}`);
+          if (job.notes && job.notes.toLowerCase().includes(qLower)) matchingFields.push(`Notiz: ${job.notes}`);
           snippet = matchingFields.length > 0 ? matchingFields.join(" | ") : `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`.trim();
         }
 
@@ -2377,10 +2378,29 @@ app.post("/api/jobs/:id/private", requireAdmin, async (req, res) => {
 app.post("/api/jobs/:id/category", requireAdmin, (req, res) => {
   const jobId = req.params.id;
   const newCategory = req.body.category;
-  if (uploadJobs[jobId] && uploadJobs[jobId].result) {
+  if (uploadJobs[jobId]) {
+    if (!uploadJobs[jobId].result) uploadJobs[jobId].result = {};
     uploadJobs[jobId].result.category = newCategory;
     saveJobs();
-    res.json({ success: true });
+    res.json({ success: true, category: newCategory });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
+});
+
+app.post("/api/jobs/:id/company", requireAdmin, (req, res) => {
+  const jobId = req.params.id;
+  const newCompany = req.body.company;
+  if (uploadJobs[jobId]) {
+    if (!uploadJobs[jobId].result) uploadJobs[jobId].result = {};
+    uploadJobs[jobId].result.company = newCompany;
+    const compLower = (newCompany || "").toLowerCase();
+    if (compLower.includes("wirewire")) uploadJobs[jobId].targetCompany = "wirewire";
+    else if (compLower.includes("the wire") || compLower.includes("thewire")) uploadJobs[jobId].targetCompany = "thewire";
+    else if (compLower.includes("polyxo")) uploadJobs[jobId].targetCompany = "polyxo";
+    else if (compLower.includes("daniel")) uploadJobs[jobId].targetCompany = "daniel";
+    saveJobs();
+    res.json({ success: true, company: newCompany });
   } else {
     res.status(404).json({ success: false, error: "Job not found" });
   }
@@ -2393,6 +2413,18 @@ app.post("/api/jobs/:id/target-company", requireAdmin, (req, res) => {
     uploadJobs[jobId].targetCompany = targetCompany;
     saveJobs();
     res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, error: "Job not found" });
+  }
+});
+
+app.post("/api/jobs/:id/notes", (req, res) => {
+  const jobId = req.params.id;
+  const { notes } = req.body;
+  if (uploadJobs[jobId]) {
+    uploadJobs[jobId].notes = typeof notes === "string" ? notes.trim() : "";
+    saveJobs();
+    res.json({ success: true, notes: uploadJobs[jobId].notes });
   } else {
     res.status(404).json({ success: false, error: "Job not found" });
   }
