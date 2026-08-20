@@ -399,18 +399,72 @@ body {
   box-shadow: 0 2px 4px rgba(13, 110, 253, 0.25);
 }
 
-/* Startseite Category Bubbles */
+/* Startseite Filter Dropdowns */
+.start-filter-dropdown {
+  min-height: 44px !important;
+  height: 44px !important;
+  font-size: 13.5px !important;
+  line-height: 1.5 !important;
+  padding: 8px 14px !important;
+  background-color: #ffffff !important;
+  color: #1e293b !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.start-filter-dropdown:focus {
+  border-color: #0d6efd !important;
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15) !important;
+  outline: none;
+}
+
+/* Startseite Category Bubbles (Dezentes, helles Design) */
 .start-cat-bubble {
-  border-radius: 16px !important;
+  border-radius: 20px !important;
   font-size: 12px !important;
-  padding: 3px 10px !important;
-  transition: all 0.15s ease-in-out;
-  cursor: pointer;
-  user-select: none;
+  padding: 5px 12px !important;
+  transition: all 0.15s ease-in-out !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  font-weight: 500 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  border: 1px solid #e2e8f0 !important;
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03) !important;
 }
 
 .start-cat-bubble:hover {
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+  border-color: #cbd5e1 !important;
   transform: translateY(-1px);
+}
+
+.start-cat-bubble.active {
+  background-color: #0d6efd !important;
+  color: #ffffff !important;
+  border-color: #0d6efd !important;
+  box-shadow: 0 2px 5px rgba(13, 110, 253, 0.25) !important;
+}
+
+.start-cat-bubble .bubble-count {
+  background-color: #e2e8f0;
+  color: #64748b;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 12px;
+  margin-left: 2px;
+  transition: all 0.15s ease;
+}
+
+.start-cat-bubble.active .bubble-count {
+  background-color: rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
 }
 
 /* Drive Sync Item Row */
@@ -434,6 +488,110 @@ body {
   background-color: #0d6efd;
   border-color: #0d6efd;
   color: #fff;
+}
+
+/* Spinner Animation for Search Icon */
+@keyframes spinIcon {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spin-animation {
+  display: inline-block;
+  animation: spinIcon 1s linear infinite;
+}
+
+/* Job Card Action Buttons Bar (Single Row on Mobile & Desktop) */
+.job-action-bar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-wrap: nowrap !important;
+  width: 100% !important;
+  margin-top: 8px !important;
+  margin-bottom: 4px !important;
+}
+
+.job-action-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  padding: 4px 10px !important;
+  border-radius: 8px !important;
+  white-space: nowrap !important;
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  transition: all 0.15s ease !important;
+  text-decoration: none !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+.job-action-btn span.material-symbols-outlined {
+  font-size: 15px !important;
+}
+
+.job-action-btn.btn-details {
+  background-color: #f1f5f9 !important;
+  color: #334155 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+.job-action-btn.btn-details:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+.job-action-btn.btn-clickup-synced {
+  background-color: #e8f5e9 !important;
+  color: #1b5e20 !important;
+  border: 1px solid #a5d6a7 !important;
+}
+.job-action-btn.btn-clickup-synced:hover {
+  background-color: #c8e6c9 !important;
+}
+
+.job-action-btn.btn-clickup-pending {
+  background-color: #f8fafc !important;
+  color: #7b68ee !important;
+  border: 1px solid #7b68ee !important;
+}
+.job-action-btn.btn-clickup-pending:hover {
+  background-color: #ede9fe !important;
+}
+
+.job-action-btn.btn-accounting-synced {
+  background-color: #e8f5e9 !important;
+  color: #1b5e20 !important;
+  border: 1px solid #a5d6a7 !important;
+}
+.job-action-btn.btn-accounting-synced:hover {
+  background-color: #c8e6c9 !important;
+}
+
+.job-action-btn.btn-accounting-pending {
+  background-color: #f8fafc !important;
+  color: #0d6efd !important;
+  border: 1px solid #0d6efd !important;
+}
+.job-action-btn.btn-accounting-pending:hover {
+  background-color: #e0f2fe !important;
+}
+
+@media (max-width: 576px) {
+  .job-action-bar {
+    gap: 4px !important;
+  }
+  .job-action-btn {
+    font-size: 11px !important;
+    padding: 4px 6px !important;
+  }
+  .job-action-btn span.material-symbols-outlined {
+    font-size: 13px !important;
+  }
 }
 
 

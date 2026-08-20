@@ -489,8 +489,43 @@ app.get("/api/drive/folder/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// Local PDF Text Cache for Deep Search
+// Local & Drive PDF Text Cache for Deep Search
 const localPdfTextCache = new Map();
+const drivePdfTextCache = new Map();
+
+function extractExactSnippet(fullText, query, maxContext = 65) {
+  if (!fullText || !query) return "";
+  const lowerText = fullText.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const idx = lowerText.indexOf(lowerQuery);
+  if (idx === -1) return "";
+
+  const start = Math.max(0, idx - maxContext);
+  const end = Math.min(fullText.length, idx + query.length + maxContext);
+
+  let snippet = fullText.substring(start, end).replace(/\s+/g, " ").trim();
+
+  // Try to cleanly trim to word boundaries if possible
+  if (start > 0) {
+    const firstSpace = snippet.indexOf(" ");
+    if (firstSpace > 0 && firstSpace < 15) {
+      snippet = "..." + snippet.substring(firstSpace + 1);
+    } else {
+      snippet = "..." + snippet;
+    }
+  }
+
+  if (end < fullText.length) {
+    const lastSpace = snippet.lastIndexOf(" ");
+    if (lastSpace > snippet.length - 15 && lastSpace > 0) {
+      snippet = snippet.substring(0, lastSpace) + "...";
+    } else {
+      snippet = snippet + "...";
+    }
+  }
+
+  return snippet;
+}
 
 async function getLocalPdfText(filePath) {
   try {
@@ -510,7 +545,27 @@ async function getLocalPdfText(filePath) {
   }
 }
 
-// Deep Document Content Search (OCR & Full-Text)
+async function getDrivePdfText(drive, fileId, modifiedTime) {
+  try {
+    const cached = drivePdfTextCache.get(fileId);
+    if (cached && cached.modifiedTime === modifiedTime) {
+      return cached.text;
+    }
+    const res = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "arraybuffer" });
+    if (res.data) {
+      const buffer = Buffer.from(res.data);
+      const parsed = await pdfParse(buffer);
+      const text = (parsed.text || "").replace(/\r?\n/g, " ");
+      drivePdfTextCache.set(fileId, { modifiedTime, text });
+      return text;
+    }
+  } catch (e) {
+    // If text extraction fails (e.g. non-pdf or stream issue), fallback gracefully
+  }
+  return "";
+}
+
+// Deep Document Content Search (OCR & Full-Text with Database Linking & Deduplication)
 app.get("/api/documents/deep-search", async (req, res) => {
   try {
     const q = (req.query.q || "").trim();
@@ -522,7 +577,28 @@ app.get("/api/documents/deep-search", async (req, res) => {
     const safeQ = q.replace(/'/g, "\\'");
     const qLower = q.toLowerCase();
     const results = [];
+    const seenJobIds = new Set();
+    const seenDriveIds = new Set();
     const seenNames = new Set();
+
+    const normalizeDocName = (str) => (str || "").toLowerCase().replace(/\.pdf$/i, "").trim();
+
+    // Helper: Find matching job in local uploadJobs for a given Drive file
+    const findMatchingJobForDriveFile = (file) => {
+      if (!file) return null;
+      for (const job of Object.values(uploadJobs)) {
+        if (job.isPrivate && !isAdmin) continue;
+        if (job.driveFileId && job.driveFileId === file.id) return job;
+        if (job.rawDriveId && job.rawDriveId === file.id) return job;
+        if (job.result?.webViewLink && job.result.webViewLink.includes(file.id)) return job;
+        const normJobName = normalizeDocName(job.result?.full || job.originalName);
+        const normFileName = normalizeDocName(file.name);
+        if (normJobName && normFileName && normJobName === normFileName) {
+          return job;
+        }
+      }
+      return null;
+    };
 
     // 1. Search Google Drive (Fulltext & OCR Search across sorted and target folders)
     if (fs.existsSync(TOKEN_PATH)) {
@@ -544,33 +620,105 @@ app.get("/api/documents/deep-search", async (req, res) => {
         const driveRes = await drive.files.list({
           q: driveQuery,
           fields: "files(id, name, webViewLink, thumbnailLink, webContentLink, createdTime, size, mimeType)",
-          pageSize: 30,
+          pageSize: 50,
         });
 
         const driveFiles = driveRes.data.files || [];
         for (const file of driveFiles) {
-          seenNames.add(file.name.toLowerCase());
-          results.push({
-            id: file.id,
-            name: file.name,
-            source: "Google Drive (Cloud)",
-            type: "gdrive",
-            date: file.createdTime,
-            size: file.size ? parseInt(file.size, 10) : 0,
-            webViewLink: file.webViewLink,
-            downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
-            thumbnailLink: file.thumbnailLink,
-            snippet: `Treffer im Google Drive Dokumenteninhalt / Dateinamen`,
-          });
+          seenDriveIds.add(file.id);
+          const normName = normalizeDocName(file.name);
+          if (normName) seenNames.add(normName);
+
+          const matchedJob = findMatchingJobForDriveFile(file);
+          let snippet = "";
+
+          if (matchedJob) {
+            seenJobIds.add(matchedJob.id);
+            // 1. Try local PDF text first (fastest)
+            if (matchedJob.filePath && fs.existsSync(matchedJob.filePath)) {
+              try {
+                const fullText = await getLocalPdfText(matchedJob.filePath);
+                snippet = extractExactSnippet(fullText, q);
+              } catch (e) {}
+            }
+            // 2. If not found in local text, try fetching from Drive
+            if (!snippet && drive) {
+              try {
+                const driveText = await getDrivePdfText(drive, file.id, file.createdTime);
+                snippet = extractExactSnippet(driveText, q);
+              } catch (e) {}
+            }
+            // 3. Fallback: metadata snippet
+            if (!snippet) {
+              const resData = matchedJob.result || {};
+              const matchingFields = [];
+              if (resData.company && resData.company.toLowerCase().includes(qLower)) matchingFields.push(`Firma: ${resData.company}`);
+              if (resData.invoiceNumber && resData.invoiceNumber.toLowerCase().includes(qLower)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
+              if (resData.category && resData.category.toLowerCase().includes(qLower)) matchingFields.push(`Kategorie: ${resData.category}`);
+              if (file.name && file.name.toLowerCase().includes(qLower)) matchingFields.push(`Dateiname: ${file.name}`);
+              snippet = matchingFields.length > 0 ? matchingFields.join(" | ") : `Gefunden in Dokumenteninhalt & Google Drive`;
+            }
+
+            results.push({
+              id: matchedJob.id,
+              jobId: matchedJob.id,
+              name: matchedJob.result?.full || matchedJob.originalName || file.name,
+              source: matchedJob.source === "gmail" ? "E-Mail Inbox" : "Google Drive / Datenbank",
+              type: "local",
+              isLocal: true,
+              isLinked: true,
+              driveFileId: file.id,
+              date: matchedJob.uploadDate || file.createdTime,
+              size: file.size ? parseInt(file.size, 10) : (matchedJob.filePath && fs.existsSync(matchedJob.filePath) ? fs.statSync(matchedJob.filePath).size : 0),
+              filePath: matchedJob.filePath,
+              webViewLink: file.webViewLink || matchedJob.result?.webViewLink,
+              thumbnailLink: `/api/thumbnail/${matchedJob.id}`,
+              snippet: snippet,
+            });
+          } else {
+            // Unlinked Google Drive cloud file
+            if (drive) {
+              try {
+                const driveText = await getDrivePdfText(drive, file.id, file.createdTime);
+                snippet = extractExactSnippet(driveText, q);
+              } catch (e) {}
+            }
+            if (!snippet) {
+              if (file.name && file.name.toLowerCase().includes(qLower)) {
+                snippet = `Dateiname: ${file.name}`;
+              } else {
+                snippet = `Gefunden im Google Drive Dokumenteninhalt / OCR`;
+              }
+            }
+
+            results.push({
+              id: file.id,
+              name: file.name,
+              source: "Google Drive (Cloud)",
+              type: "gdrive",
+              isLocal: false,
+              isLinked: false,
+              date: file.createdTime,
+              size: file.size ? parseInt(file.size, 10) : 0,
+              webViewLink: file.webViewLink,
+              downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
+              thumbnailLink: file.thumbnailLink,
+              snippet: snippet,
+            });
+          }
         }
       } catch (driveErr) {
         console.warn("[DEEP SEARCH] Google Drive Suche Warnung:", driveErr.message);
       }
     }
 
-    // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing)
+    // 2. Search Local Upload / Processed Jobs (PDF Full-Text Parsing & Metadata)
     const localJobs = Object.values(uploadJobs).filter((job) => !job.isPrivate || isAdmin);
     for (const job of localJobs) {
+      if (seenJobIds.has(job.id)) continue; // Already linked and processed from Drive
+      const normJobName = normalizeDocName(job.result?.full || job.originalName);
+      if (normJobName && seenNames.has(normJobName)) continue; // Avoid duplicate by name
+
       if (!job.filePath || !fs.existsSync(job.filePath)) continue;
 
       const fullText = await getLocalPdfText(job.filePath);
@@ -584,32 +732,35 @@ app.get("/api/documents/deep-search", async (req, res) => {
       const matchInMeta = lowerMeta.includes(qLower);
 
       if (matchInPdf || matchInMeta) {
-        // Snippet mit Kontext um den Treffer generieren
         let snippet = "";
         if (matchInPdf) {
-          const idx = lowerFull.indexOf(qLower);
-          const start = Math.max(0, idx - 50);
-          const end = Math.min(fullText.length, idx + q.length + 50);
-          snippet = (start > 0 ? "..." : "") + fullText.substring(start, end).trim() + (end < fullText.length ? "..." : "");
+          snippet = extractExactSnippet(fullText, q);
         } else {
-          snippet = `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`;
+          const matchingFields = [];
+          if (resData.company && resData.company.toLowerCase().includes(qLower)) matchingFields.push(`Firma: ${resData.company}`);
+          if (resData.invoiceNumber && resData.invoiceNumber.toLowerCase().includes(qLower)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
+          if (resData.category && resData.category.toLowerCase().includes(qLower)) matchingFields.push(`Kategorie: ${resData.category}`);
+          if ((job.result?.full || job.originalName || "").toLowerCase().includes(qLower)) matchingFields.push(`Dateiname: ${job.result?.full || job.originalName}`);
+          snippet = matchingFields.length > 0 ? matchingFields.join(" | ") : `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`.trim();
         }
 
-        if (!seenNames.has((job.originalName || "").toLowerCase())) {
-          results.push({
-            id: job.id,
-            jobId: job.id,
-            name: job.result?.full || job.originalName || "Dokument",
-            source: job.source === "gmail" ? "E-Mail Inbox" : "Lokaler Upload / Scanner",
-            type: "local",
-            date: job.uploadDate,
-            size: fs.statSync(job.filePath).size,
-            filePath: job.filePath,
-            thumbnailLink: `/api/thumbnail/${job.id}`,
-            snippet: snippet,
-            isLocal: true,
-          });
-        }
+        seenJobIds.add(job.id);
+        if (normJobName) seenNames.add(normJobName);
+
+        results.push({
+          id: job.id,
+          jobId: job.id,
+          name: job.result?.full || job.originalName || "Dokument",
+          source: job.source === "gmail" ? "E-Mail Inbox" : "Lokaler Upload / Scanner",
+          type: "local",
+          isLocal: true,
+          isLinked: false,
+          date: job.uploadDate,
+          size: fs.statSync(job.filePath).size,
+          filePath: job.filePath,
+          thumbnailLink: `/api/thumbnail/${job.id}`,
+          snippet: snippet,
+        });
       }
     }
 
@@ -735,12 +886,18 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
 async function getOrGenerateThumbnailPath(identifier) {
   if (!identifier) return null;
 
+  const cleanId = String(identifier).replace(/^gdrive_/, "");
+
   // 1. Direct match on disk (downloads/ or store/thumbs/)
   const candidatePaths = [
     path.join(localDownloadFolder, `thumb_${identifier}.jpg`),
     path.join(localDownloadFolder, `thumb_${identifier}.png`),
+    path.join(localDownloadFolder, `thumb_${cleanId}.jpg`),
+    path.join(localDownloadFolder, `thumb_${cleanId}.png`),
     path.join(thumbsFolder, `${identifier}.jpg`),
+    path.join(thumbsFolder, `${cleanId}.jpg`),
     path.join(thumbsFolder, `thumb_${identifier}.jpg`),
+    path.join(thumbsFolder, `thumb_${cleanId}.jpg`),
   ];
 
   for (const p of candidatePaths) {
@@ -748,7 +905,7 @@ async function getOrGenerateThumbnailPath(identifier) {
   }
 
   // 2. Check if identifier corresponds to a job in uploadJobs
-  const job = uploadJobs[identifier];
+  const job = uploadJobs[identifier] || uploadJobs[cleanId];
   const targetThumbPath = path.join(localDownloadFolder, `thumb_${identifier}.jpg`);
 
   // 2a. If local PDF file exists on disk, render directly
@@ -759,8 +916,8 @@ async function getOrGenerateThumbnailPath(identifier) {
 
   // 3. Fallback: Google Drive Download
   let driveFileId = job?.rawDriveId || (job?.result?.webViewLink ? job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1] : null);
-  if (!driveFileId && typeof identifier === "string" && !identifier.includes("-") && identifier.length >= 10) {
-    driveFileId = identifier;
+  if (!driveFileId && cleanId.length >= 8) {
+    driveFileId = cleanId;
   }
 
   if (driveFileId && fs.existsSync(TOKEN_PATH)) {
@@ -771,7 +928,7 @@ async function getOrGenerateThumbnailPath(identifier) {
       try {
         const fileInfo = await drive.files.get({ fileId: driveFileId, fields: "thumbnailLink" });
         if (fileInfo.data && fileInfo.data.thumbnailLink) {
-          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s300");
+          const link = fileInfo.data.thumbnailLink.replace(/=s\d+$/, "=s400");
           const imgRes = await fetch(link);
           if (imgRes.ok) {
             const buf = Buffer.from(await imgRes.arrayBuffer());
@@ -784,7 +941,7 @@ async function getOrGenerateThumbnailPath(identifier) {
       } catch (e) {}
 
       // 3b. Download first page/file and render
-      const pdfTemp = path.join(localDownloadFolder, `temp_thumb_${identifier}.pdf`);
+      const pdfTemp = path.join(localDownloadFolder, `temp_thumb_${cleanId}.pdf`);
       try {
         const dest = fs.createWriteStream(pdfTemp);
         const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
@@ -2668,6 +2825,123 @@ function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFile
   return { found: matches.length > 0, matches };
 }
 
+async function checkSingleAccountingCompany(job, compKey) {
+  const isButler = compKey === "thewire";
+  const provider = isButler ? "buchhaltungsbutler" : "lexoffice";
+  const providerName = isButler ? "BuchhaltungsButler" : "Lexoffice";
+  const companyDisplayName = compKey === "thewire" ? "The Wire UG" : (compKey === "wirewire" ? "wirewire GmbH" : "Polyxo Studios GmbH");
+
+  let apiValid = false;
+  let apiError = null;
+  let organizationName = null;
+  let liveSearch = { performed: false, found: false, matches: [] };
+
+  const invNum = job.result?.invoiceNumber || job.invoiceNumber || "";
+  const docDate = job.result?.documentDate || "";
+  const invAmt = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : (job.invoiceAmmount || 0);
+  const compName = job.result?.company || "";
+  const fileName = job.result?.full || job.originalName || "";
+
+  if (isButler) {
+    const client = (appSettings.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+    const secret = (appSettings.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+    const key = (appSettings.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+
+    if (client && secret && key) {
+      try {
+        const verifyRes = await butlerApi.verifyConnection({ client, secret, key });
+        apiValid = verifyRes.valid;
+        apiError = verifyRes.error || null;
+        organizationName = verifyRes.organizationName || "The Wire UG";
+
+        if (apiValid) {
+          const searchRes = await butlerApi.searchReceipts({
+            client,
+            secret,
+            key,
+            invoiceNumber: invNum,
+            fileName,
+            amountInCents: invAmt,
+            documentDate: docDate,
+            company: compName,
+          });
+          liveSearch = {
+            performed: true,
+            found: searchRes.found,
+            matches: searchRes.matches || [],
+            error: searchRes.error,
+          };
+        }
+      } catch (err) {
+        apiValid = false;
+        apiError = `Fehler bei BuchhaltungsButler-Prüfung: ${err.message}`;
+      }
+    } else {
+      apiValid = false;
+      apiError = "BuchhaltungsButler Zugangsdaten für The Wire fehlen in den Einstellungen.";
+    }
+  } else {
+    // Lexoffice (wirewire or polyxo)
+    const apiKeySettingName = `LEXOFFICE_KEY_${compKey.toUpperCase()}`;
+    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+
+    if (apiKey) {
+      try {
+        const apiRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/profile", {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (apiRes.ok) {
+          apiValid = true;
+          const profData = await apiRes.json().catch(() => ({}));
+          organizationName = profData.companyName || profData.name || null;
+
+          const searchRes = await searchLexofficeVouchers(apiKey, {
+            invoiceNumber: invNum,
+            fileName,
+            amountInCents: invAmt,
+            documentDate: docDate,
+            company: compName,
+          });
+          liveSearch = {
+            performed: true,
+            found: searchRes.found,
+            matches: searchRes.matches || [],
+            error: searchRes.error,
+          };
+        } else {
+          apiValid = false;
+          apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
+        }
+      } catch (err) {
+        apiValid = false;
+        apiError = `Verbindungsfehler zu Lexoffice: ${err.message}`;
+      }
+    } else {
+      apiValid = false;
+      apiError = `Kein API-Key für Lexoffice (${compKey}) in den Einstellungen hinterlegt.`;
+    }
+  }
+
+  const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[compKey]);
+  const transferredInfo = alreadyTransferred ? job.lexofficeTransfers[compKey] : null;
+  const hasLiveMatch = !!(liveSearch.found && Array.isArray(liveSearch.matches) && liveSearch.matches.length > 0);
+
+  return {
+    companyKey: compKey,
+    companyDisplayName,
+    provider,
+    providerName,
+    apiValid,
+    apiError,
+    organizationName,
+    alreadyTransferred,
+    transferredInfo,
+    liveSearch,
+    hasMatch: alreadyTransferred || hasLiveMatch,
+    topMatch: hasLiveMatch ? liveSearch.matches[0] : null,
+  };
+}
+
 // Accounting Endpoints (Lexoffice & BuchhaltungsButler) - Admin only
 app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async (req, res) => {
   const { jobId, companyKey } = req.body;
@@ -2702,116 +2976,33 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
 
   const targetComp = companyKey && validCompanies.includes(companyKey) ? companyKey : suggestedCompany;
 
-  let provider = "lexoffice";
-  let providerName = "Lexoffice";
-  let apiValid = false;
-  let apiError = null;
-  let organizationName = null;
-  let liveSearch = { performed: false, found: false, matches: [] };
+  // Perform parallel checks across ALL connected companies
+  const allCompanyChecksArray = await Promise.all(
+    validCompanies.map((c) => checkSingleAccountingCompany(job, c))
+  );
 
-  const invNum = job.result?.invoiceNumber || job.invoiceNumber || "";
-  const docDate = job.result?.documentDate || "";
-  const invAmt = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : (job.invoiceAmmount || 0);
-  const compName = job.result?.company || "";
-  const fileName = job.result?.full || job.originalName || "";
+  const allCompanyChecks = {};
+  allCompanyChecksArray.forEach((cRes) => {
+    allCompanyChecks[cRes.companyKey] = cRes;
+  });
 
-  if (targetComp === "thewire") {
-    provider = "buchhaltungsbutler";
-    providerName = "BuchhaltungsButler";
-    const client = (appSettings.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
-    const secret = (appSettings.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
-    const key = (appSettings.BUTTLER_KEY_THEWIRE_KEY || "").trim();
-
-    if (client && secret && key) {
-      const verifyRes = await butlerApi.verifyConnection({ client, secret, key });
-      apiValid = verifyRes.valid;
-      apiError = verifyRes.error || null;
-      organizationName = verifyRes.organizationName || "The Wire UG";
-
-      if (apiValid) {
-        // Live search for matching vouchers in BuchhaltungsButler
-        const searchRes = await butlerApi.searchReceipts({
-          client,
-          secret,
-          key,
-          invoiceNumber: invNum,
-          fileName,
-          amountInCents: invAmt,
-          documentDate: docDate,
-          company: compName,
-        });
-        liveSearch = {
-          performed: true,
-          found: searchRes.found,
-          matches: searchRes.matches || [],
-          error: searchRes.error,
-        };
-      }
-    } else {
-      apiValid = false;
-      apiError = "BuchhaltungsButler Zugangsdaten (Client, Secret, Key) für The Wire fehlen in den Einstellungen.";
-    }
-  } else {
-    // wirewire or polyxo -> Lexoffice
-    provider = "lexoffice";
-    providerName = "Lexoffice";
-    const apiKeySettingName = `LEXOFFICE_KEY_${targetComp.toUpperCase()}`;
-    const apiKey = (appSettings[apiKeySettingName] || "").trim();
-
-    if (apiKey) {
-      try {
-        const apiRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/profile", {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        });
-        if (apiRes.ok) {
-          apiValid = true;
-          const profData = await apiRes.json().catch(() => ({}));
-          organizationName = profData.companyName || profData.name || null;
-
-          // Live search for matching vouchers in Lexoffice
-          const searchRes = await searchLexofficeVouchers(apiKey, {
-            invoiceNumber: invNum,
-            fileName,
-            amountInCents: invAmt,
-            documentDate: docDate,
-            company: compName,
-          });
-          liveSearch = {
-            performed: true,
-            found: searchRes.found,
-            matches: searchRes.matches || [],
-            error: searchRes.error,
-          };
-        } else {
-          apiValid = false;
-          apiError = `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder keine Berechtigung.`;
-        }
-      } catch (err) {
-        apiValid = false;
-        apiError = `Verbindungsfehler zu Lexoffice: ${err.message}`;
-      }
-    } else {
-      apiError = `Kein API-Key für Lexoffice (${targetComp}) in den Einstellungen hinterlegt.`;
-    }
-  }
-
-  const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[targetComp]);
-  const transferredInfo = alreadyTransferred ? job.lexofficeTransfers[targetComp] : null;
+  const selectedData = allCompanyChecks[targetComp] || allCompanyChecks["wirewire"];
 
   res.json({
     success: true,
     jobId: job.id,
-    provider,
-    providerName,
+    provider: selectedData.provider,
+    providerName: selectedData.providerName,
     selectedCompany: targetComp,
     suggestedCompany,
     configuredCompanies,
-    apiValid,
-    apiError,
-    organizationName,
-    alreadyTransferred,
-    transferredInfo,
-    liveSearch,
+    apiValid: selectedData.apiValid,
+    apiError: selectedData.apiError,
+    organizationName: selectedData.organizationName,
+    alreadyTransferred: selectedData.alreadyTransferred,
+    transferredInfo: selectedData.transferredInfo,
+    liveSearch: selectedData.liveSearch,
+    allCompanyChecks,
     allTransfers: job.lexofficeTransfers || {},
     documentDetails: {
       title: job.result?.full || job.originalName,
