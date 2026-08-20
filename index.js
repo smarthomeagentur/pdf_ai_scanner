@@ -580,30 +580,57 @@ function findMatchingJobForDriveFile(file, isAdmin = true) {
   const fKey = normalizeDocKey(file.name);
   const fId = file.id;
 
-  for (const job of Object.values(uploadJobs)) {
+  const jobs = Object.values(uploadJobs);
+
+  // 1. Direct ID & Link matches
+  for (const job of jobs) {
     if (job.isPrivate && !isAdmin) continue;
     if (job.driveFileId && job.driveFileId === fId) return job;
     if (job.rawDriveId && (job.rawDriveId === fId || job.rawDriveId === fId.replace("gdrive_", ""))) return job;
     if (job.id && (job.id === fId || job.id === `gdrive_${fId}`)) return job;
-    if (job.result && job.result.webViewLink && job.result.webViewLink.includes(fId)) return job;
+    if (job.result?.webViewLink && job.result.webViewLink.includes(fId)) return job;
     if (file.webViewLink && job.result?.webViewLink && job.result.webViewLink === file.webViewLink) return job;
+  }
 
+  // 2. Exact & Normalized Name matches
+  for (const job of jobs) {
+    if (job.isPrivate && !isAdmin) continue;
     const normFull = normalizeDocName(job.result?.full);
     const normOrig = normalizeDocName(job.originalName);
-    if (fName && (fName === normFull || fName === normOrig)) return job;
+    if (fName && (fName === normFull || fName === normOrig)) {
+      if (!job.driveFileId && fId) job.driveFileId = fId;
+      return job;
+    }
 
     const keyFull = normalizeDocKey(job.result?.full);
     const keyOrig = normalizeDocKey(job.originalName);
-    if (fKey && (fKey === keyFull || fKey === keyOrig)) return job;
+    if (fKey && (fKey === keyFull || fKey === keyOrig)) {
+      if (!job.driveFileId && fId) job.driveFileId = fId;
+      return job;
+    }
   }
 
-  // Fallback: match by invoice number
-  for (const job of Object.values(uploadJobs)) {
+  // 3. Match by Invoice Number
+  for (const job of jobs) {
     if (job.isPrivate && !isAdmin) continue;
     const invNum = job.result?.invoiceNumber;
     if (invNum && invNum !== "none" && invNum !== "-" && invNum.length >= 4) {
       const invClean = invNum.toLowerCase().replace(/[^a-z0-9]/g, "");
       if (invClean.length >= 4 && fKey.includes(invClean)) {
+        if (!job.driveFileId && fId) job.driveFileId = fId;
+        return job;
+      }
+    }
+  }
+
+  // 4. Match by Date + Company Prefix tokens in filename
+  for (const job of jobs) {
+    if (job.isPrivate && !isAdmin) continue;
+    const comp = job.result?.company ? normalizeDocKey(job.result.company) : "";
+    const dateStr = job.result?.documentDate ? normalizeDocKey(job.result.documentDate) : "";
+    if (comp && dateStr && comp.length >= 3 && dateStr.length >= 4) {
+      if (fKey.includes(comp) && fKey.includes(dateStr)) {
+        if (!job.driveFileId && fId) job.driveFileId = fId;
         return job;
       }
     }
@@ -630,7 +657,7 @@ app.get("/api/documents/deep-search", async (req, res) => {
 
     const normalizeDocName = (str) => (str || "").toLowerCase().replace(/\.pdf$/i, "").trim();
 
-    // 1. Search Google Drive (Fulltext & OCR Search across sorted and target folders)
+    // 1. Search Google Drive (Fulltext & OCR Search strictly within the sorted folder)
     if (fs.existsSync(TOKEN_PATH)) {
       try {
         const drive = await driveApi.getClient();
@@ -659,7 +686,7 @@ app.get("/api/documents/deep-search", async (req, res) => {
           const normName = normalizeDocName(file.name);
           if (normName) seenNames.add(normName);
 
-          const matchedJob = findMatchingJobForDriveFile(file);
+          const matchedJob = findMatchingJobForDriveFile(file, isAdmin);
           let snippet = "";
 
           if (matchedJob) {
@@ -711,51 +738,6 @@ app.get("/api/documents/deep-search", async (req, res) => {
               filePath: matchedJob.filePath,
               webViewLink: file.webViewLink || matchedJob.result?.webViewLink,
               thumbnailLink: `/api/thumbnail/${matchedJob.id}`,
-              snippet: snippet,
-            });
-          } else {
-            // Unlinked Google Drive cloud file: Check if it matches any hidden or duplicate local job
-            const fNorm = normalizeDocName(file.name);
-            const fKey = normalizeDocKey(file.name);
-            const isHiddenOrDup = Object.values(uploadJobs).some((j) => {
-              const isDup = !!(j.suspectedDuplicate || j.isDuplicate || j.duplicateOf || j.status === "duplicate");
-              const isHid = !!j.isHidden;
-              if (!isDup && !isHid) return false;
-              if (j.id === file.id || j.driveFileId === file.id) return true;
-              const jNorm = normalizeDocName(j.result?.full || j.originalName);
-              const jKey = normalizeDocKey(j.result?.full || j.originalName);
-              return (jNorm && fNorm && jNorm === fNorm) || (jKey && fKey && jKey === fKey);
-            });
-            if (isHiddenOrDup) {
-              continue; // Exclude from search
-            }
-
-            if (drive) {
-              try {
-                const driveText = await getDrivePdfText(drive, file.id, file.createdTime);
-                snippet = extractExactSnippet(driveText, q);
-              } catch (e) {}
-            }
-            if (!snippet) {
-              if (file.name && file.name.toLowerCase().includes(qLower)) {
-                snippet = `Dateiname: ${file.name}`;
-              } else {
-                snippet = `Gefunden im Google Drive Dokumenteninhalt / OCR`;
-              }
-            }
-
-            results.push({
-              id: file.id,
-              name: file.name,
-              source: "Google Drive (Cloud)",
-              type: "gdrive",
-              isLocal: false,
-              isLinked: false,
-              date: file.createdTime,
-              size: file.size ? parseInt(file.size, 10) : 0,
-              webViewLink: file.webViewLink,
-              downloadLink: file.webContentLink || `/api/drive/file/${file.id}/download`,
-              thumbnailLink: file.thumbnailLink,
               snippet: snippet,
             });
           }

@@ -1216,43 +1216,6 @@ function filterActiveJobs(jobs) {
     return true;
   });
 
-  // If search query is active and there are unlinked Drive-only results, append them seamlessly
-  if (startSearchQuery && typeof driveOnlySearchResults !== "undefined" && driveOnlySearchResults.length > 0 && startCompanyFilter === "alle" && startDateFilter === "alle" && startSelectedCategories.size === 0) {
-    const driveItems = driveOnlySearchResults
-      .filter((df) => {
-        // Exclude Drive results that match any hidden or duplicate local job
-        const dfNormName = (df.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        const isHiddenOrDup = activeJobs.some((j) => {
-          const isDup = !!(j.suspectedDuplicate || j.isDuplicate || j.duplicateOf || j.status === "duplicate");
-          const isHid = !!j.isHidden;
-          if (!isDup && !isHid) return false;
-          if (j.id === df.id || j.id === `gdrive_${df.id}` || j.driveFileId === df.id) return true;
-          const jNorm = (j.result?.full || j.originalName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-          return jNorm && dfNormName && jNorm === dfNormName;
-        });
-        return !isHiddenOrDup;
-      })
-      .map((df) => ({
-        id: "gdrive_" + df.id,
-        isDriveOnly: true,
-        originalName: df.name,
-        uploadDate: df.date,
-        status: "completed",
-        source: "gdrive",
-        webViewLink: df.webViewLink,
-        downloadLink: df.downloadLink,
-        thumbnailLink: df.thumbnailLink,
-        snippet: df.snippet,
-        result: {
-          full: df.name,
-          company: "Google Drive (Cloud)",
-          category: "Cloud Beleg",
-          webViewLink: df.webViewLink,
-        },
-      }));
-    return [...matchedJobs, ...driveItems];
-  }
-
   return matchedJobs;
 }
 
@@ -1934,7 +1897,6 @@ function setSearchIconSpinning(isSpinning) {
 async function runDeepSearch(query) {
   if (!query || query.length < 2) {
     deepSearchSnippetsMap.clear();
-    driveOnlySearchResults = [];
     currentDeepSearchQuery = "";
     setSearchIconSpinning(false);
     renderJobs();
@@ -1954,14 +1916,12 @@ async function runDeepSearch(query) {
     }
 
     deepSearchSnippetsMap.clear();
-    driveOnlySearchResults = [];
 
     if (data.success && Array.isArray(data.results)) {
       data.results.forEach((item) => {
-        if (item.jobId) {
-          deepSearchSnippetsMap.set(item.jobId, item.snippet);
-        } else if (item.type === "gdrive" && !item.isLinked) {
-          driveOnlySearchResults.push(item);
+        const targetId = item.jobId || item.id;
+        if (targetId && item.snippet) {
+          deepSearchSnippetsMap.set(targetId, item.snippet);
         }
       });
     }
