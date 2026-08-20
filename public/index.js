@@ -2496,14 +2496,21 @@ function renderRechnungenList() {
     const res = job.result;
     if (!res) return false;
 
-    // 0. Live Text Search filter
+    // Exclude hidden documents
+    if (job.isHidden) return false;
+
+    // 0. Live Text Search filter (excludes duplicates when searching)
     if (searchQuery) {
+      const isDuplicate = !!(job.suspectedDuplicate || job.isDuplicate || job.duplicateOf || job.status === "duplicate");
+      if (isDuplicate) return false;
+
       const title = (res.full || job.originalName || "").toLowerCase();
       const comp = (res.company || "").toLowerCase();
       const targetComp = (job.targetCompany || "").toLowerCase();
       const invNum = (res.invoiceNumber || job.invoiceNumber || "").toLowerCase();
       const cat = (res.category || "").toLowerCase();
       const tags = (res.tags && Array.isArray(res.tags) ? res.tags.join(" ") : "").toLowerCase();
+      const notes = (job.notes || "").toLowerCase();
       const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
 
       const matches =
@@ -2513,6 +2520,7 @@ function renderRechnungenList() {
         invNum.includes(searchQuery) ||
         cat.includes(searchQuery) ||
         tags.includes(searchQuery) ||
+        notes.includes(searchQuery) ||
         amtStr.includes(searchQuery);
 
       if (!matches) return false;
