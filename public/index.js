@@ -1219,9 +1219,9 @@ function renderJobs() {
               <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
                 <div class="d-flex align-items-center gap-1 text-primary small fw-bold mb-1">
                   <span class="material-symbols-outlined" style="font-size: 15px;">manage_search</span>
-                  <span>Fundstelle im Google Drive Textinhalt / OCR:</span>
+                  <span>Textausschnitt / OCR-Fundstelle:</span>
                 </div>
-                <div class="font-monospace text-dark" style="font-size: 12px;">${highlightedSnippet}</div>
+                <div class="font-monospace text-dark bg-white p-2 rounded border" style="font-size: 12px; line-height: 1.5; word-break: break-word;">${highlightedSnippet}</div>
               </div>
             ` : ""
           }
@@ -1480,9 +1480,9 @@ ${lexofficeDetailsHtml}
         <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12.5px; line-height: 1.4; border-left: 3px solid #0d6efd !important; max-width: 100%;">
           <div class="d-flex align-items-center gap-1 text-primary small fw-bold mb-1">
             <span class="material-symbols-outlined" style="font-size: 15px;">manage_search</span>
-            <span>Fundstelle im Dateiinhalt / OCR:</span>
+            <span>Textausschnitt / OCR-Fundstelle:</span>
           </div>
-          <div class="font-monospace text-dark" style="font-size: 12px;">${highlightedSnippet}</div>
+          <div class="font-monospace text-dark bg-white p-2 rounded border" style="font-size: 12px; line-height: 1.5; word-break: break-word;">${highlightedSnippet}</div>
         </div>
       `;
     }

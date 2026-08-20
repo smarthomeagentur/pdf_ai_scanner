@@ -489,8 +489,43 @@ app.get("/api/drive/folder/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// Local PDF Text Cache for Deep Search
+// Local & Drive PDF Text Cache for Deep Search
 const localPdfTextCache = new Map();
+const drivePdfTextCache = new Map();
+
+function extractExactSnippet(fullText, query, maxContext = 65) {
+  if (!fullText || !query) return "";
+  const lowerText = fullText.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const idx = lowerText.indexOf(lowerQuery);
+  if (idx === -1) return "";
+
+  const start = Math.max(0, idx - maxContext);
+  const end = Math.min(fullText.length, idx + query.length + maxContext);
+
+  let snippet = fullText.substring(start, end).replace(/\s+/g, " ").trim();
+
+  // Try to cleanly trim to word boundaries if possible
+  if (start > 0) {
+    const firstSpace = snippet.indexOf(" ");
+    if (firstSpace > 0 && firstSpace < 15) {
+      snippet = "..." + snippet.substring(firstSpace + 1);
+    } else {
+      snippet = "..." + snippet;
+    }
+  }
+
+  if (end < fullText.length) {
+    const lastSpace = snippet.lastIndexOf(" ");
+    if (lastSpace > snippet.length - 15 && lastSpace > 0) {
+      snippet = snippet.substring(0, lastSpace) + "...";
+    } else {
+      snippet = snippet + "...";
+    }
+  }
+
+  return snippet;
+}
 
 async function getLocalPdfText(filePath) {
   try {
@@ -508,6 +543,26 @@ async function getLocalPdfText(filePath) {
   } catch (e) {
     return "";
   }
+}
+
+async function getDrivePdfText(drive, fileId, modifiedTime) {
+  try {
+    const cached = drivePdfTextCache.get(fileId);
+    if (cached && cached.modifiedTime === modifiedTime) {
+      return cached.text;
+    }
+    const res = await drive.files.get({ fileId: fileId, alt: "media" }, { responseType: "arraybuffer" });
+    if (res.data) {
+      const buffer = Buffer.from(res.data);
+      const parsed = await pdfParse(buffer);
+      const text = (parsed.text || "").replace(/\r?\n/g, " ");
+      drivePdfTextCache.set(fileId, { modifiedTime, text });
+      return text;
+    }
+  } catch (e) {
+    // If text extraction fails (e.g. non-pdf or stream issue), fallback gracefully
+  }
+  return "";
 }
 
 // Deep Document Content Search (OCR & Full-Text with Database Linking & Deduplication)
@@ -575,22 +630,33 @@ app.get("/api/documents/deep-search", async (req, res) => {
           if (normName) seenNames.add(normName);
 
           const matchedJob = findMatchingJobForDriveFile(file);
-          let snippet = `Treffer im Google Drive Dokumenteninhalt / Dateinamen`;
+          let snippet = "";
 
           if (matchedJob) {
             seenJobIds.add(matchedJob.id);
-            // If local PDF exists, get high-precision context snippet
+            // 1. Try local PDF text first (fastest)
             if (matchedJob.filePath && fs.existsSync(matchedJob.filePath)) {
               try {
                 const fullText = await getLocalPdfText(matchedJob.filePath);
-                const lowerFull = fullText.toLowerCase();
-                if (lowerFull.includes(qLower)) {
-                  const idx = lowerFull.indexOf(qLower);
-                  const start = Math.max(0, idx - 50);
-                  const end = Math.min(fullText.length, idx + q.length + 50);
-                  snippet = (start > 0 ? "..." : "") + fullText.substring(start, end).trim() + (end < fullText.length ? "..." : "");
-                }
+                snippet = extractExactSnippet(fullText, q);
               } catch (e) {}
+            }
+            // 2. If not found in local text, try fetching from Drive
+            if (!snippet && drive) {
+              try {
+                const driveText = await getDrivePdfText(drive, file.id, file.createdTime);
+                snippet = extractExactSnippet(driveText, q);
+              } catch (e) {}
+            }
+            // 3. Fallback: metadata snippet
+            if (!snippet) {
+              const resData = matchedJob.result || {};
+              const matchingFields = [];
+              if (resData.company && resData.company.toLowerCase().includes(qLower)) matchingFields.push(`Firma: ${resData.company}`);
+              if (resData.invoiceNumber && resData.invoiceNumber.toLowerCase().includes(qLower)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
+              if (resData.category && resData.category.toLowerCase().includes(qLower)) matchingFields.push(`Kategorie: ${resData.category}`);
+              if (file.name && file.name.toLowerCase().includes(qLower)) matchingFields.push(`Dateiname: ${file.name}`);
+              snippet = matchingFields.length > 0 ? matchingFields.join(" | ") : `Gefunden in Dokumenteninhalt & Google Drive`;
             }
 
             results.push({
@@ -611,6 +677,20 @@ app.get("/api/documents/deep-search", async (req, res) => {
             });
           } else {
             // Unlinked Google Drive cloud file
+            if (drive) {
+              try {
+                const driveText = await getDrivePdfText(drive, file.id, file.createdTime);
+                snippet = extractExactSnippet(driveText, q);
+              } catch (e) {}
+            }
+            if (!snippet) {
+              if (file.name && file.name.toLowerCase().includes(qLower)) {
+                snippet = `Dateiname: ${file.name}`;
+              } else {
+                snippet = `Gefunden im Google Drive Dokumenteninhalt / OCR`;
+              }
+            }
+
             results.push({
               id: file.id,
               name: file.name,
@@ -654,12 +734,14 @@ app.get("/api/documents/deep-search", async (req, res) => {
       if (matchInPdf || matchInMeta) {
         let snippet = "";
         if (matchInPdf) {
-          const idx = lowerFull.indexOf(qLower);
-          const start = Math.max(0, idx - 50);
-          const end = Math.min(fullText.length, idx + q.length + 50);
-          snippet = (start > 0 ? "..." : "") + fullText.substring(start, end).trim() + (end < fullText.length ? "..." : "");
+          snippet = extractExactSnippet(fullText, q);
         } else {
-          snippet = `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`;
+          const matchingFields = [];
+          if (resData.company && resData.company.toLowerCase().includes(qLower)) matchingFields.push(`Firma: ${resData.company}`);
+          if (resData.invoiceNumber && resData.invoiceNumber.toLowerCase().includes(qLower)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
+          if (resData.category && resData.category.toLowerCase().includes(qLower)) matchingFields.push(`Kategorie: ${resData.category}`);
+          if ((job.result?.full || job.originalName || "").toLowerCase().includes(qLower)) matchingFields.push(`Dateiname: ${job.result?.full || job.originalName}`);
+          snippet = matchingFields.length > 0 ? matchingFields.join(" | ") : `Gefunden in Metadaten: ${resData.company || ""} ${resData.category || ""}`.trim();
         }
 
         seenJobIds.add(job.id);
