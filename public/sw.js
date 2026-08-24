@@ -1,4 +1,4 @@
-const CACHE_NAME = "scanner-cache-v8";
+const CACHE_NAME = "scanner-cache-v10";
 const ONNX_ASSETS = [
   "/models/doc_corner_net.onnx",
   "/vendor/onnx/ort.min.js",
@@ -30,7 +30,7 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Fetch event: Cache-First für ONNX/WASM (bleibt dauerhaft lokal gespeichert)
+// Fetch event: Cache-First NUR für ONNX/WASM (bleibt dauerhaft lokal gespeichert)
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
@@ -49,17 +49,4 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
-
-  // Fallback für alle anderen Requests
-  event.respondWith(
-    fetch(event.request).catch(() => {
-      return caches.match(event.request).then((cached) => {
-        if (cached) return cached;
-        return new Response("Offline (Netzwerkfehler)", {
-          status: 503,
-          statusText: "Service Unavailable",
-        });
-      });
-    })
-  );
 });

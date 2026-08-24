@@ -440,18 +440,18 @@
           </div>
 
           <!-- Permission / Auth Banner -->
-          <div id="inbox-permission-card" class="card p-4 mb-3 border shadow-sm text-center" style="display: none; background: #fff8e1; border-color: #ffe082 !important; border-radius: 14px;">
+          <div id="inbox-permission-card" class="card p-4 mb-3 border shadow-sm text-center" style="display: none; background: #f0fdf4; border-color: #bbf7d0 !important; border-radius: 14px;">
             <div class="d-flex flex-column align-items-center gap-2">
-              <div style="width: 52px; height: 52px; border-radius: 50%; background: #ffe082; display: flex; align-items: center; justify-content: center; color: #b78103;">
-                <span class="material-symbols-outlined" style="font-size: 30px;">lock_open</span>
+              <div style="width: 52px; height: 52px; border-radius: 50%; background: #dcfce7; display: flex; align-items: center; justify-content: center; color: #166534;">
+                <span class="material-symbols-outlined" style="font-size: 30px;">shield_lock</span>
               </div>
-              <h5 class="fw-bold m-0 text-dark" style="font-size: 16px;">Gmail-Berechtigung erforderlich</h5>
-              <p class="text-muted small m-0" style="max-width: 500px; font-size: 13px;">
-                Dein Google-Konto ist aktuell noch nicht für Gmail freigegeben (oder die Berechtigung muss erneuert werden). Klicke auf den Button, um den Zugriff zu autorisieren.
+              <h5 class="fw-bold m-0 text-dark" style="font-size: 16px;">Google Mail verbinden (Client-Side & Datenschutz-sicher)</h5>
+              <p class="text-muted small m-0" style="max-width: 520px; font-size: 13px; line-height: 1.5;">
+                Deine Gmail-Zugangsdaten und Tokens werden <strong>ausschließlich lokal in deinem Browser (LocalStorage)</strong> gespeichert. Der Server erhält zu keinem Zeitpunkt Zugriff auf dein Postfach oder deine E-Mails.
               </p>
               <button id="inbox-grant-permission-btn" type="button" class="btn btn-primary d-inline-flex align-items-center gap-2 mt-2 px-4 py-2" style="border-radius: 20px; font-weight: 600;">
-                <span class="material-symbols-outlined" style="font-size: 20px;">key</span>
-                <span>Gmail-Berechtigung jetzt erteilen</span>
+                <span class="material-symbols-outlined" style="font-size: 20px;">mail</span>
+                <span>Mit Google Mail verbinden</span>
               </button>
             </div>
           </div>
@@ -631,15 +631,12 @@
           </div>
 
           <div class="setting-group" id="gmail-settings-container" style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
-            <label><strong>Google Mail (Workmail) Inbox Scanner:</strong></label>
+            <label><strong>Google Mail (Workmail) Client Scanner:</strong></label>
+            <div class="text-muted small mb-2" style="font-size: 12px;">Tokens und E-Mails verbleiben sicher in deinem lokalen Browser-Speicher (LocalStorage). Der Server hat keinen Zugriff auf dein Postfach.</div>
             <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
               <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" id="gmail-auto-archive-checkbox" checked style="width: 18px; height: 18px;" />
                 E-Mails nach der Verarbeitung standardmäßig archivieren
-              </label>
-              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="checkbox" id="monitor-gmail-checkbox" style="width: 18px; height: 18px;" />
-                Posteingang automatisch im Hintergrund überwachen (alle 60 Sek)
               </label>
             </div>
             <div style="margin-top: 10px;">
@@ -654,7 +651,7 @@
 
             <!-- Connected Accounts List in Settings -->
             <div style="margin-top: 12px;">
-              <label style="font-size: 0.85em; color: #555; font-weight: 600;">Verbundene Posteingänge:</label>
+              <label style="font-size: 0.85em; color: #555; font-weight: 600;">Verbundene Posteingänge (im Browser gespeichert):</label>
               <div id="gmail-accounts-container" class="d-flex flex-column gap-2 mt-1">
                 <!-- Dynamically filled -->
               </div>
@@ -662,7 +659,7 @@
 
             <button id="settings-add-gmail-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 mt-3" style="border-radius: 8px; padding: 8px 12px; font-weight: 500;">
               <span class="material-symbols-outlined" style="font-size: 18px;">add</span>
-              <span>Weiteres Gmail-Konto hinzufügen</span>
+              <span>Weiteres Gmail-Konto verbinden</span>
             </button>
           </div>
 
@@ -703,6 +700,7 @@
               <input
                 type="password"
                 id="lexoffice-key-wirewire"
+                autocomplete="off"
                 style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
                 placeholder="Lexoffice API Key..."
               />
@@ -714,6 +712,7 @@
                 <input
                   type="text"
                   id="butler-key-thewire-client"
+                  autocomplete="off"
                   style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
                   placeholder="the_wire_ug"
                 />
@@ -723,6 +722,7 @@
                 <input
                   type="password"
                   id="butler-key-thewire-secret"
+                  autocomplete="off"
                   style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
                   placeholder="BuchhaltungsButler Secret..."
                 />
@@ -732,6 +732,7 @@
                 <input
                   type="password"
                   id="butler-key-thewire-key"
+                  autocomplete="off"
                   style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
                   placeholder="BuchhaltungsButler Key..."
                 />
@@ -742,6 +743,7 @@
               <input
                 type="password"
                 id="lexoffice-key-polyxo"
+                autocomplete="off"
                 style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
                 placeholder="Lexoffice API Key..."
               />
@@ -759,6 +761,7 @@
               <input
                 type="password"
                 id="clickup-api-key"
+                autocomplete="off"
                 style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
                 placeholder="pk_..."
               />
@@ -1331,7 +1334,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260824_details_only_v3"></script>
+      <script src="/index.js?v=20260824_gmail_fix_v8"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

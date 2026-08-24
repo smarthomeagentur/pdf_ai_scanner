@@ -1,3 +1,25 @@
+// ==========================================
+// --- Security & HTML Sanitization Helpers ---
+// ==========================================
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function highlightQueryText(text, query) {
+  if (!text) return "";
+  const escapedText = escapeHtml(text);
+  if (!query || !query.trim()) return escapedText;
+  const qEscaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${qEscaped})`, "gi");
+  return escapedText.replace(regex, '<mark style="background-color: #fef08a; color: #854d0e; padding: 0 2px; border-radius: 2px;">$1</mark>');
+}
+
 const settingsModal = document.getElementById("settings-modal");
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
@@ -63,59 +85,26 @@ openSettingsBtn.addEventListener("click", async () => {
       document.getElementById("auth-status").innerText = "Bereit zur Authentifizierung";
       document.getElementById("auth-btn").style.display = "inline-block";
 
-      // Initialize Google Auth client for Primary Account (Google Drive + Gmail)
+      // Initialize Google Auth client for Server-Side Google Drive ONLY
       authClientCode = window.google.accounts.oauth2.initCodeClient({
         client_id: googleClientId,
-        scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify",
+        scope: "https://www.googleapis.com/auth/drive",
         prompt: "consent",
         ux_mode: "popup",
         callback: async (response) => {
           if (response.code) {
-            document.getElementById("auth-status").innerText = "Speichere Code am Server...";
+            document.getElementById("auth-status").innerText = "Speichere Drive-Token am Server...";
             const authRes = await fetch("/api/auth/code", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ code: response.code, isSecondary: false }),
             });
             if (authRes.ok) {
-              document.getElementById("auth-status").innerText = "Erfolgreich verbunden!";
+              document.getElementById("auth-status").innerText = "Google Drive erfolgreich verbunden!";
               document.getElementById("auth-btn").style.display = "none";
               loadFolders();
-              if (typeof loadInboxData === "function") {
-                loadInboxData(false);
-              }
             } else {
-              document.getElementById("auth-status").innerText = "Fehler bei der Verbindung.";
-            }
-          }
-        },
-      });
-
-      // Initialize Google Auth client for Secondary Gmail Accounts (ONLY Gmail scope, NO Drive!)
-      secondaryGmailAuthClient = window.google.accounts.oauth2.initCodeClient({
-        client_id: googleClientId,
-        scope: "https://www.googleapis.com/auth/gmail.modify",
-        prompt: "select_account consent",
-        ux_mode: "popup",
-        callback: async (response) => {
-          if (response.code) {
-            try {
-              const authRes = await fetch("/api/auth/code", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: response.code, isSecondary: true }),
-              });
-              const data = await authRes.json();
-              if (data.success) {
-                if (typeof showToast === "function") {
-                  showToast(`Posteingang ${data.account?.email || ""} erfolgreich hinzugefügt!`, "success");
-                }
-                loadInboxData(false);
-              } else {
-                alert("Fehler beim Hinzufügen des Posteingangs: " + (data.error || "Unbekannter Fehler"));
-              }
-            } catch (err) {
-              alert("Fehler bei der Autorisierung: " + err.message);
+              document.getElementById("auth-status").innerText = "Fehler bei der Drive-Verbindung.";
             }
           }
         },
@@ -593,11 +582,11 @@ function showDuplicateDialog(filename, simJob) {
       let tagsHtml = "";
       let previewHtml = "";
       if (simJob.result) {
-        if (simJob.result.company) companyHtml = `<br>Unternehmen: ${simJob.result.company}`;
-        if (simJob.result.category) categoryHtml = `<br>Kategorie: ${simJob.result.category}`;
-        if (simJob.result.tags && Array.isArray(simJob.result.tags)) tagsHtml = `<br>Tags: ${simJob.result.tags.slice(0, 3).join(", ")}`;
+        if (simJob.result.company) companyHtml = `<br>Unternehmen: ${escapeHtml(simJob.result.company)}`;
+        if (simJob.result.category) categoryHtml = `<br>Kategorie: ${escapeHtml(simJob.result.category)}`;
+        if (simJob.result.tags && Array.isArray(simJob.result.tags)) tagsHtml = `<br>Tags: ${escapeHtml(simJob.result.tags.slice(0, 3).join(", "))}`;
         
-        const imgSrc = `/api/jobs/${simJob.id}/thumbnail`;
+        const imgSrc = `/api/jobs/${encodeURIComponent(simJob.id)}/thumbnail`;
         previewHtml = `
           <div style="margin-top: 10px; text-align: center;">
             <img src="${imgSrc}" loading="lazy" style="height: 250px; aspect-ratio: 1 / 1.414; object-fit: cover; border-radius: 4px; border: 1px solid #ccc; background: #fff;" title="Vorschau" alt="Vorschau" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
@@ -608,15 +597,15 @@ function showDuplicateDialog(filename, simJob) {
       detailsHtml = `
         <div style="text-align: left; background: #f8f9fa; padding: 10px; border-radius: 5px; margin-top: 15px; font-size: 13px; border: 1px solid #ddd; line-height: 1.5; overflow: hidden;">
           <strong style="color: #333;">Ähnliches Dokument gefunden:</strong><br>
-          Original Name: ${simJob.originalName}<br>
-          Datum: ${displayDate}<br>
-          Status: ${statusText}${companyHtml}${categoryHtml}${tagsHtml}
+          Original Name: ${escapeHtml(simJob.originalName || "-")}<br>
+          Datum: ${escapeHtml(displayDate)}<br>
+          Status: ${escapeHtml(statusText)}${companyHtml}${categoryHtml}${tagsHtml}
           ${previewHtml}
         </div>
       `;
     }
     
-    text.innerHTML = `Die Datei "<strong>${filename}</strong>" existiert bereits oder eine ähnliche Datei wurde bereits hochgeladen. Möchtest du die Verarbeitung fortsetzen oder abbrechen?${detailsHtml}`;
+    text.innerHTML = `Die Datei "<strong>${escapeHtml(filename)}</strong>" existiert bereits oder eine ähnliche Datei wurde bereits hochgeladen. Möchtest du die Verarbeitung fortsetzen oder abbrechen?${detailsHtml}`;
     modal.style.display = "flex";
     
     const skipBtn = document.getElementById("btn-skip-duplicate");
@@ -1564,13 +1553,21 @@ function renderJobs() {
       const isInvoiceStr = job.result.isInvoice ? "Ja" : "Nein";
       const durationStr = job.result.duration ? `${job.result.duration} Sekunden` : "-";
 
+      const safeFull = escapeHtml(job.result.full || "-");
+      const safeOriginalName = escapeHtml(job.originalName || "-");
+      const safeCompany = escapeHtml(job.result.company || "-");
+      const safeCategory = escapeHtml(job.result.category || "-");
+      const safeTags = escapeHtml(tagsStr);
+      const safeNotes = escapeHtml(job.notes || "");
+      const safeDuration = escapeHtml(durationStr);
+
       let invoiceHtml = "";
       if (job.result.isInvoice || job.isInvoice) {
         const invNum = (job.invoiceNumber || job.result.invoiceNumber) && (job.invoiceNumber || job.result.invoiceNumber) !== "none" ? (job.invoiceNumber || job.result.invoiceNumber) : "-";
         const invAmtRaw = (job.invoiceAmmount !== undefined ? job.invoiceAmmount : job.result.invoiceAmmount) || 0;
         const invAmtFormatted = (invAmtRaw / 100).toFixed(2).replace('.', ',');
         invoiceHtml = `
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsnummer:</strong> ${invNum}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsnummer:</strong> ${escapeHtml(invNum)}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnungsbetrag:</strong> ${invAmtFormatted} €<br>`;
       }
 
@@ -1579,12 +1576,12 @@ function renderJobs() {
           <div>
             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">ClickUp:</strong> 
             ${job.clickup && job.clickup.taskId
-              ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${job.clickup.taskId}`}" target="_blank" style="color: #7b68ee; font-weight: 500; text-decoration: none;">Task #${job.clickup.taskId} (${job.clickup.status || 'offen'})</a>`
+              ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${encodeURIComponent(job.clickup.taskId)}`}" target="_blank" style="color: #7b68ee; font-weight: 500; text-decoration: none;">Task #${escapeHtml(job.clickup.taskId)} (${escapeHtml(job.clickup.status || 'offen')})</a>`
               : `<span style="color: #888;">Nicht übertragen</span>`
             }
           </div>
           ${window.isAdmin ? `
-            <button class="btn btn-sm btn-outline-primary btn-manual-clickup-transfer" data-job-id="${job.id}" style="border-radius: 12px; font-size: 12px; padding: 2px 10px; border-color: #7b68ee; color: #7b68ee; display: inline-flex; align-items: center; gap: 4px;">
+            <button class="btn btn-sm btn-outline-primary btn-manual-clickup-transfer" data-job-id="${encodeURIComponent(job.id)}" style="border-radius: 12px; font-size: 12px; padding: 2px 10px; border-color: #7b68ee; color: #7b68ee; display: inline-flex; align-items: center; gap: 4px;">
               <span class="material-symbols-outlined" style="font-size: 14px;">cloud_upload</span>
               <span>${job.clickup && job.clickup.taskId ? 'Aktualisieren' : 'Zu ClickUp'}</span>
             </button>
@@ -1599,11 +1596,11 @@ function renderJobs() {
             <div>
               <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Buchhaltung:</strong> 
               ${isLexTransferred
-                ? `<span style="color: #2e7d32; font-weight: 500;">✓ In ${providerLabel} (${activeCompany})</span>`
+                ? `<span style="color: #2e7d32; font-weight: 500;">✓ In ${escapeHtml(providerLabel)} (${escapeHtml(activeCompany)})</span>`
                 : `<span style="color: #888;">Nicht übertragen</span>`
               }
             </div>
-            <button class="btn btn-sm ${isLexTransferred ? 'btn-outline-success' : 'btn-outline-primary'} btn-manual-lexoffice-sync" data-job-id="${job.id}" style="border-radius: 12px; font-size: 12px; padding: 2px 10px; display: inline-flex; align-items: center; gap: 4px;">
+            <button class="btn btn-sm ${isLexTransferred ? 'btn-outline-success' : 'btn-outline-primary'} btn-manual-lexoffice-sync" data-job-id="${encodeURIComponent(job.id)}" style="border-radius: 12px; font-size: 12px; padding: 2px 10px; display: inline-flex; align-items: center; gap: 4px;">
               <span class="material-symbols-outlined" style="font-size: 14px;">${isLexTransferred ? 'check_circle' : 'sync'}</span>
               <span>${isLexTransferred ? '✓ Synchronisiert' : 'Buchhaltung Sync'}</span>
             </button>
@@ -1621,16 +1618,16 @@ function renderJobs() {
 
       if (window.isAdmin) {
         clickupButtonHtml = `
-          <button type="button" class="job-action-btn btn-manual-clickup-transfer ${isClickupSynced ? 'btn-clickup-synced' : 'btn-clickup-pending'}" data-job-id="${job.id}" 
-            title="${isClickupSynced ? `ClickUp Task #${clickupTaskId} (${clickupStatus}) - Klicken zum Aktualisieren` : 'Zu ClickUp übertragen'}">
+          <button type="button" class="job-action-btn btn-manual-clickup-transfer ${isClickupSynced ? 'btn-clickup-synced' : 'btn-clickup-pending'}" data-job-id="${encodeURIComponent(job.id)}" 
+            title="${isClickupSynced ? `ClickUp Task #${escapeHtml(clickupTaskId)} (${escapeHtml(clickupStatus)}) - Klicken zum Aktualisieren` : 'Zu ClickUp übertragen'}">
             <span class="material-symbols-outlined">${isClickupSynced ? 'check_circle' : 'cloud_upload'}</span>
             <span>ClickUp</span>
           </button>
         `;
 
         buchhaltungButtonHtml = `
-          <button type="button" class="job-action-btn btn-manual-lexoffice-sync ${isLexTransferred ? 'btn-accounting-synced' : 'btn-accounting-pending'}" data-job-id="${job.id}" 
-            title="${isLexTransferred ? `Bereits in ${providerLabel} (${activeCompany}) synchronisiert - Klicken für Details / erneuten Abgleich` : `In Buchhaltung (${providerLabel}) übertragen`}">
+          <button type="button" class="job-action-btn btn-manual-lexoffice-sync ${isLexTransferred ? 'btn-accounting-synced' : 'btn-accounting-pending'}" data-job-id="${encodeURIComponent(job.id)}" 
+            title="${isLexTransferred ? `Bereits in ${escapeHtml(providerLabel)} (${escapeHtml(activeCompany)}) synchronisiert - Klicken für Details / erneuten Abgleich` : `In Buchhaltung (${escapeHtml(providerLabel)}) übertragen`}">
             <span class="material-symbols-outlined">${isLexTransferred ? 'check_circle' : 'sync'}</span>
             <span>Buchhalt.</span>
           </button>
@@ -1639,7 +1636,7 @@ function renderJobs() {
 
       // Re-run AI analysis button
       const reprocessButtonHtml = `
-        <button type="button" class="job-action-btn btn-reprocess-ai" data-job-id="${job.id}"
+        <button type="button" class="job-action-btn btn-reprocess-ai" data-job-id="${encodeURIComponent(job.id)}"
           title="KI-Erkennung wiederholen (Dokument erneut analysieren, umbenennen & Tags aktualisieren)">
           <span class="material-symbols-outlined" style="font-size: 16px;">psychology</span>
           <span>KI wiederholen</span>
@@ -1649,7 +1646,7 @@ function renderJobs() {
       // Hide / unhide button (available in Details and Action Bar)
       const isHidden = job.isHidden === true;
       const hideButtonHtml = `
-        <button type="button" class="job-action-btn btn-hide-job ${isHidden ? 'btn-hidden-active' : ''}" data-job-id="${job.id}" data-is-hidden="${isHidden}"
+        <button type="button" class="job-action-btn btn-hide-job ${isHidden ? 'btn-hidden-active' : ''}" data-job-id="${encodeURIComponent(job.id)}" data-is-hidden="${isHidden}"
           style="${isHidden ? 'background: #fff3e0; color: #e65100; border-color: #ffcc80;' : ''}"
           title="${isHidden ? 'Datei wieder einblenden' : 'Datei ausblenden (wird bei Drive-Sync nicht erneut importiert und nicht auf Drive gelöscht)'}">
           <span class="material-symbols-outlined" style="font-size: 16px; color: ${isHidden ? '#e65100' : 'inherit'};">${isHidden ? 'visibility' : 'visibility_off'}</span>
@@ -1660,14 +1657,14 @@ function renderJobs() {
       resultHtml = `
                     <div style="margin-top: 6px; width: 100%;">
                       <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
-                        <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}" title="Details anzeigen / ausblenden">
+                        <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${encodeURIComponent(job.id)}" title="Details anzeigen / ausblenden">
                           <span class="material-symbols-outlined">info</span>
                           <span>Details</span>
                         </button>
                         ${clickupButtonHtml}
                         ${buchhaltungButtonHtml}
                       </div>
-                      <details class="job-result" data-job-id="${job.id}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
+                      <details class="job-result" data-job-id="${encodeURIComponent(job.id)}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
                         <summary style="display: none;"></summary>
                         <div style="position: relative; margin-top: 6px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
                             <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom flex-wrap gap-2">
@@ -1677,33 +1674,29 @@ function renderJobs() {
                                 ${hideButtonHtml}
                               </div>
                             </div>
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Generierter Dateiname:</strong> ${
-                                job.result.full || "-"
-                            }<br>
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Originaler Dateiname:</strong> ${
-                                job.originalName || "-"
-                            }<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Generierter Dateiname:</strong> ${safeFull}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Originaler Dateiname:</strong> ${safeOriginalName}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dokumentendatum:</strong> ${
                                 docDateInfo.isInvalidFuture
-                                  ? `<span style="color: #d32f2f; font-weight: 500;">${docDateInfo.display}</span> <span class="text-muted small" title="Erfasstes Datum war: ${docDateInfo.rawDocDate}">(Erfasst: ${docDateInfo.rawDocDate})</span>`
-                                  : docDateInfo.display
+                                  ? `<span style="color: #d32f2f; font-weight: 500;">${escapeHtml(docDateInfo.display)}</span> <span class="text-muted small" title="Erfasstes Datum war: ${escapeHtml(docDateInfo.rawDocDate)}">(Erfasst: ${escapeHtml(docDateInfo.rawDocDate)})</span>`
+                                  : escapeHtml(docDateInfo.display)
                             }<br>
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Hochgeladen am:</strong> ${displayDate}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Hochgeladen am:</strong> ${escapeHtml(displayDate)}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> 
                             <div style="position: relative; display: inline-block;">
-                                <span class="company-editable" data-job-id="${job.id}" data-current-comp="${job.result.company || '-'}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: #e0f2fe; color: #0369a1; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
-                                    ${job.result.company || "-"} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                                <span class="company-editable" data-job-id="${encodeURIComponent(job.id)}" data-current-comp="${safeCompany}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: #e0f2fe; color: #0369a1; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+                                    ${safeCompany} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
                                 </span>
                             </div><br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Kategorie:</strong> 
                             <div style="position: relative; display: inline-block;">
-                                <span class="category-editable" data-job-id="${job.id}" data-current-cat="${job.result.category || '-'}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: var(--md-sys-color-primary-container, #eaddff); color: var(--md-sys-color-on-primary-container, #21005d); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
-                                    ${job.result.category || "-"} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                                <span class="category-editable" data-job-id="${encodeURIComponent(job.id)}" data-current-cat="${safeCategory}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: var(--md-sys-color-primary-container, #eaddff); color: var(--md-sys-color-on-primary-container, #21005d); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px; transition: filter 0.2s; margin-left: 4px; margin-bottom: 4px;" title="Klicken zum Ändern" onmouseover="this.style.filter='brightness(0.95)'" onmouseout="this.style.filter='none'">
+                                    ${safeCategory} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
                                 </span>
                             </div><br>
-                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${tagsStr}<br>
+                            <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Tags:</strong> ${safeTags}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Rechnung:</strong> ${isInvoiceStr}<br>
-${invoiceHtml}                            <strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${durationStr}
+${invoiceHtml}                            <strong style="color: var(--md-sys-color-primary, #1A1A1A);">Verarbeitungszeit:</strong> ${safeDuration}
                             <div class="job-notes-section mt-2 pt-2 border-top" style="border-color: var(--md-sys-color-outline-variant, #CAC4D0) !important;">
                                 <div class="d-flex align-items-center justify-content-between mb-1">
                                     <strong style="color: var(--md-sys-color-on-surface-variant, #49454F); font-size: 13px; display: inline-flex; align-items: center; gap: 4px;">
@@ -1711,7 +1704,7 @@ ${invoiceHtml}                            <strong style="color: var(--md-sys-col
                                     </strong>
                                     <span class="notes-save-indicator text-success small" style="font-size: 11px; display: none;">✓ Gespeichert</span>
                                 </div>
-                                <textarea class="form-control job-notes-input" data-job-id="${job.id}" placeholder="Notiz oder Stichworte zu diesem Beleg hinterlegen (durchsuchbar)..." rows="2" style="font-size: 13px; border-radius: 8px; resize: vertical; background: #fafafa; border-color: #cbd5e1; line-height: 1.4;">${job.notes || ""}</textarea>
+                                <textarea class="form-control job-notes-input" data-job-id="${encodeURIComponent(job.id)}" placeholder="Notiz oder Stichworte zu diesem Beleg hinterlegen (durchsuchbar)..." rows="2" style="font-size: 13px; border-radius: 8px; resize: vertical; background: #fafafa; border-color: #cbd5e1; line-height: 1.4;">${safeNotes}</textarea>
                             </div>
 ${clickupDetailsHtml}
 ${lexofficeDetailsHtml}
@@ -1722,8 +1715,8 @@ ${lexofficeDetailsHtml}
     } else if (job.status === "error") {
       resultHtml = `
         <div class="job-result error d-flex align-items-center justify-content-between gap-2" style="flex-wrap: wrap;">
-          <span style="word-break: break-word;">${job.error || "Unbekannter Fehler"}</span>
-          <button class="btn btn-sm btn-outline-danger retry-job-btn py-0 px-2 d-flex align-items-center gap-1" data-job-id="${job.id}" style="font-size: 11px; height: 26px; border-radius: 6px; white-space: nowrap; flex-shrink: 0;" title="Verarbeitung erneut starten">
+          <span style="word-break: break-word;">${escapeHtml(job.error || "Unbekannter Fehler")}</span>
+          <button class="btn btn-sm btn-outline-danger retry-job-btn py-0 px-2 d-flex align-items-center gap-1" data-job-id="${encodeURIComponent(job.id)}" style="font-size: 11px; height: 26px; border-radius: 6px; white-space: nowrap; flex-shrink: 0;" title="Verarbeitung erneut starten">
             <span class="material-symbols-outlined" style="font-size: 14px;">replay</span> Wiederholen
           </button>
         </div>`;
@@ -2680,7 +2673,14 @@ function createRechnungCard(job) {
     `;
   }
 
-  card.innerHTML = `
+    const safeCompany = escapeHtml(res.company || "Unbekannt");
+    const safeCategory = res.category ? escapeHtml(res.category) : "";
+    const safeDocTitle = escapeHtml(res.full || job.originalName || "Dokument");
+    const safeDocDate = escapeHtml(getValidatedJobDocumentDate(job).display);
+    const safeInvNum = res.invoiceNumber && res.invoiceNumber !== "none" ? escapeHtml(res.invoiceNumber) : "";
+    const safeAmt = amountFormatted ? escapeHtml(amountFormatted) : "";
+
+    card.innerHTML = `
     <div class="card-body p-3">
       <div class="d-flex gap-3 align-items-start">
         <div class="flex-shrink-0">
@@ -2689,14 +2689,14 @@ function createRechnungCard(job) {
         <div class="flex-grow-1" style="min-width: 0;">
           <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
             ${isInvoiceBadge}
-            <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${res.company || "Unbekannt"}</span>
-            ${res.category ? `<span class="badge bg-light text-dark border">${res.category}</span>` : ""}
-            <span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${getValidatedJobDocumentDate(job).display}</span>
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${safeCompany}</span>
+            ${safeCategory ? `<span class="badge bg-light text-dark border">${safeCategory}</span>` : ""}
+            <span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${safeDocDate}</span>
           </div>
-          <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 14px;" title="${res.full || job.originalName}">${res.full || job.originalName}</h6>
+          <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 14px;" title="${safeDocTitle}">${safeDocTitle}</h6>
           <div class="small text-muted d-flex gap-3 flex-wrap">
-            ${res.invoiceNumber && res.invoiceNumber !== "none" ? `<span>Rechnungs-Nr: <strong>${res.invoiceNumber}</strong></span>` : ""}
-            ${amountFormatted ? `<span class="text-success font-monospace">Betrag: <strong>${amountFormatted}</strong></span>` : ""}
+            ${safeInvNum ? `<span>Rechnungs-Nr: <strong>${safeInvNum}</strong></span>` : ""}
+            ${safeAmt ? `<span class="text-success font-monospace">Betrag: <strong>${safeAmt}</strong></span>` : ""}
           </div>
           ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>` : ""}
         </div>
@@ -2706,11 +2706,11 @@ function createRechnungCard(job) {
         <div class="d-flex align-items-center gap-2">
           <span class="text-muted small" style="font-size: 12px; font-weight: 500;">ClickUp:</span>
           ${job.clickup && job.clickup.taskId
-            ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${job.clickup.taskId}`}" target="_blank" class="badge text-decoration-none" style="background: #7b68ee; color: white;">#${job.clickup.taskId} (${job.clickup.status || 'offen'})</a>`
+            ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${encodeURIComponent(job.clickup.taskId)}`}" target="_blank" class="badge text-decoration-none" style="background: #7b68ee; color: white;">#${escapeHtml(job.clickup.taskId)} (${escapeHtml(job.clickup.status || 'offen')})</a>`
             : `<span class="badge bg-light text-secondary border">Nicht übertragen</span>`
           }
         </div>
-        <button class="btn btn-sm btn-outline-secondary rechnung-clickup-btn d-flex align-items-center gap-1" data-job-id="${job.id}" style="border-radius: 20px; padding: 4px 12px; font-size: 12px; border-color: #7b68ee; color: #7b68ee;">
+        <button class="btn btn-sm btn-outline-secondary rechnung-clickup-btn d-flex align-items-center gap-1" data-job-id="${encodeURIComponent(job.id)}" style="border-radius: 20px; padding: 4px 12px; font-size: 12px; border-color: #7b68ee; color: #7b68ee;">
           <span class="material-symbols-outlined" style="font-size: 15px;">cloud_upload</span>
           <span>${job.clickup && job.clickup.taskId ? "ClickUp aktualisieren" : "Zu ClickUp"}</span>
         </button>
@@ -4099,18 +4099,29 @@ function renderSyncPreviewItems() {
     let badgeHtml = "";
     let actionInfoHtml = "";
 
+    const safeFileName = escapeHtml(item.fileName || "-");
+    const safeCompany = escapeHtml(item.company || "Unbekannt");
+    const safeCategory = escapeHtml(item.category || "-");
+    const safeAmount = item.amount ? escapeHtml(item.amount) : "";
+    const safeTaskName = escapeHtml(item.suggestedTaskName || item.fileName || "-");
+    const safeExistingTaskId = escapeHtml(item.existingTaskId || "");
+    const safeExistingTaskName = escapeHtml(item.existingTaskName || "");
+    const safeExistingTaskUrl = item.existingTaskUrl ? encodeURI(item.existingTaskUrl) : "#";
+    const safeStatus = escapeHtml(item.existingTaskStatus || "offen");
+    const safeReason = escapeHtml(item.reason || "Privat");
+
     if (item.type === "create") {
       badgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">+ Neu anlegen</span>`;
-      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Vorgeschlagener Task: <strong>${item.suggestedTaskName || item.fileName}</strong></span>`;
+      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Vorgeschlagener Task: <strong>${safeTaskName}</strong></span>`;
     } else if (item.type === "update") {
       badgeHtml = `<span style="background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">↻ Aktualisieren</span>`;
-      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Aktualisiert Task: <a href="${item.existingTaskUrl}" target="_blank" style="color: #1976d2; font-weight: 500;">#${item.existingTaskId} (${item.existingTaskName})</a></span>`;
+      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Aktualisiert Task: <a href="${safeExistingTaskUrl}" target="_blank" style="color: #1976d2; font-weight: 500;">#${safeExistingTaskId} (${safeExistingTaskName})</a></span>`;
     } else if (item.type === "uptodate") {
       badgeHtml = `<span style="background: #f3e5f5; color: #7b1fa2; border: 1px solid #e1bee7; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">✓ Bereits aktuell</span>`;
-      actionInfoHtml = `<span style="color: #7b1fa2; font-size: 12px;">Task ist synchron: <a href="${item.existingTaskUrl}" target="_blank" style="color: #7b1fa2; font-weight: 500;">#${item.existingTaskId} (${item.existingTaskName})</a> <span style="color: #888;">[Status: ${item.existingTaskStatus || 'offen'}]</span></span>`;
+      actionInfoHtml = `<span style="color: #7b1fa2; font-size: 12px;">Task ist synchron: <a href="${safeExistingTaskUrl}" target="_blank" style="color: #7b1fa2; font-weight: 500;">#${safeExistingTaskId} (${safeExistingTaskName})</a> <span style="color: #888;">[Status: ${safeStatus}]</span></span>`;
     } else if (item.type === "skip") {
       badgeHtml = `<span style="background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⊘ Überspringen</span>`;
-      actionInfoHtml = `<span style="color: #e65100; font-size: 12px;">${item.reason || "Privat"}</span>`;
+      actionInfoHtml = `<span style="color: #e65100; font-size: 12px;">${safeReason}</span>`;
     }
 
     html += `
@@ -4118,12 +4129,12 @@ function renderSyncPreviewItems() {
         <div style="flex: 1; min-width: 0;">
           <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
             ${badgeHtml}
-            <span style="font-weight: 600; font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item.fileName}">${item.fileName}</span>
+            <span style="font-weight: 600; font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${safeFileName}">${safeFileName}</span>
           </div>
           <div style="display: flex; gap: 12px; font-size: 12px; color: #777; flex-wrap: wrap; margin-top: 2px;">
-            <span>🏢 ${item.company || 'Unbekannt'}</span>
-            <span>📁 ${item.category || '-'}</span>
-            ${item.amount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${item.amount}</span>` : ''}
+            <span>🏢 ${safeCompany}</span>
+            <span>📁 ${safeCategory}</span>
+            ${safeAmount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${safeAmount}</span>` : ''}
           </div>
           <div style="margin-top: 4px;">
             ${actionInfoHtml}
@@ -4564,18 +4575,24 @@ function renderDriveSyncModal() {
     const dateStr = item.createdTime ? new Date(item.createdTime).toLocaleDateString("de-DE") : "-";
     const sizeStr = item.size ? `${(parseInt(item.size, 10) / 1024).toFixed(0)} KB` : "";
 
+    const safeId = encodeURIComponent(item.id);
+    const safeName = escapeHtml(item.name || "-");
+    const safeCompany = item.currentCompany ? escapeHtml(item.currentCompany) : "";
+    const safeCategory = item.currentCategory ? escapeHtml(item.currentCategory) : "";
+    const safeReason = item.reason ? escapeHtml(item.reason) : "";
+
     html += `
-      <div class="d-flex align-items-center justify-content-between p-2 mb-1 bg-white rounded border gap-2 drive-sync-item-row" data-id="${item.id}" style="font-size: 13px; cursor: pointer;">
+      <div class="d-flex align-items-center justify-content-between p-2 mb-1 bg-white rounded border gap-2 drive-sync-item-row" data-id="${safeId}" style="font-size: 13px; cursor: pointer;">
         <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
-          <input type="checkbox" class="form-check-input drive-item-checkbox m-0" data-id="${item.id}" ${isChecked ? 'checked' : ''} ${item.categoryType === 'skipped' ? 'disabled' : ''} />
+          <input type="checkbox" class="form-check-input drive-item-checkbox m-0" data-id="${safeId}" ${isChecked ? 'checked' : ''} ${item.categoryType === 'skipped' ? 'disabled' : ''} />
           <div class="text-truncate" style="max-width: 450px;">
-            <div class="fw-bold text-dark text-truncate" title="${item.name}">${item.name}</div>
+            <div class="fw-bold text-dark text-truncate" title="${safeName}">${safeName}</div>
             <div class="text-muted small d-flex gap-2 flex-wrap">
-              <span>📅 ${dateStr}</span>
-              ${sizeStr ? `<span>💾 ${sizeStr}</span>` : ''}
-              ${item.currentCompany ? `<span>🏢 ${item.currentCompany}</span>` : ''}
-              ${item.currentCategory ? `<span>📁 ${item.currentCategory}</span>` : ''}
-              ${item.reason ? `<span class="text-secondary fst-italic">(${item.reason})</span>` : ''}
+              <span>📅 ${escapeHtml(dateStr)}</span>
+              ${sizeStr ? `<span>💾 ${escapeHtml(sizeStr)}</span>` : ''}
+              ${safeCompany ? `<span>🏢 ${safeCompany}</span>` : ''}
+              ${safeCategory ? `<span>📁 ${safeCategory}</span>` : ''}
+              ${safeReason ? `<span class="text-secondary fst-italic">(${safeReason})</span>` : ''}
             </div>
           </div>
         </div>
@@ -4876,10 +4893,296 @@ const inboxPdfPreviewClose = document.getElementById("inbox-pdf-preview-close");
 const inboxPdfPreviewIframe = document.getElementById("inbox-pdf-preview-iframe");
 const inboxPdfLoading = document.getElementById("inbox-pdf-loading");
 
+// ==========================================
+// --- Client-Side Gmail Scanner (LocalStorage Token Storage) ---
+// ==========================================
+
+const GMAIL_CLIENT_ACCOUNTS_KEY = "scanner_client_gmail_accounts";
+const GMAIL_CLIENT_SKIPPED_KEY = "scanner_client_gmail_skipped";
+const GMAIL_CLIENT_SETTINGS_KEY = "scanner_client_gmail_settings";
+
 let currentPreviewMailIndex = -1;
 let currentPreviewAttIndex = 0;
+let currentBlobPreviewUrl = null;
 
-function openInboxPdfPreview(mailOrId, attIndex = 0) {
+function getClientGmailAccounts() {
+  try {
+    const raw = localStorage.getItem(GMAIL_CLIENT_ACCOUNTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveClientGmailAccounts(accounts) {
+  try {
+    localStorage.setItem(GMAIL_CLIENT_ACCOUNTS_KEY, JSON.stringify(accounts || []));
+  } catch (e) {}
+}
+
+function getClientGmailSkipped() {
+  try {
+    const raw = localStorage.getItem(GMAIL_CLIENT_SKIPPED_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveClientGmailSkipped(skipped) {
+  try {
+    localStorage.setItem(GMAIL_CLIENT_SKIPPED_KEY, JSON.stringify(skipped || {}));
+  } catch (e) {}
+}
+
+function getClientGmailSettings() {
+  try {
+    const raw = localStorage.getItem(GMAIL_CLIENT_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : { autoArchive: true, scanQuery: "in:inbox filename:pdf" };
+  } catch (e) {
+    return { autoArchive: true, scanQuery: "in:inbox filename:pdf" };
+  }
+}
+
+function saveClientGmailSettings(settings) {
+  try {
+    localStorage.setItem(GMAIL_CLIENT_SETTINGS_KEY, JSON.stringify(settings || {}));
+  } catch (e) {}
+}
+
+function base64UrlToUint8Array(base64Url) {
+  let base64 = String(base64Url).replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function extractPdfPartsFromPayload(parts, found = []) {
+  if (!parts || !Array.isArray(parts)) return found;
+  for (const part of parts) {
+    const filename = part.filename || "";
+    const mimeType = (part.mimeType || "").toLowerCase();
+    const isPdf = mimeType === "application/pdf" || mimeType === "application/x-pdf" || filename.toLowerCase().endsWith(".pdf");
+    if (isPdf && part.body) {
+      found.push({
+        filename: filename || "Anhang.pdf",
+        mimeType: mimeType || "application/pdf",
+        size: part.body.size || 0,
+        attachmentId: part.body.attachmentId || null,
+        data: part.body.data || null,
+      });
+    }
+    if (part.parts && Array.isArray(part.parts)) {
+      extractPdfPartsFromPayload(part.parts, found);
+    }
+  }
+  return found;
+}
+
+async function requestGmailAccountAuth(accountHint = null) {
+  try {
+    const res = await fetch("/api/auth/client-id");
+    const data = await res.json();
+    if (!data.success || !data.clientId) {
+      alert("Fehler: Google Client-ID konnte nicht geladen werden (gdrive_secret.json prüfen).");
+      return;
+    }
+
+    if (!window.google || !google.accounts || !google.accounts.oauth2) {
+      alert("Google Identity Services lädt noch... Bitte kurz warten und erneut versuchen.");
+      return;
+    }
+
+    const tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: data.clientId,
+      scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
+      include_granted_scopes: false,
+      hint: accountHint || undefined,
+      callback: async (tokenResponse) => {
+        if (tokenResponse.error) {
+          console.error("[GMAIL GIS] Fehler beim Login:", tokenResponse);
+          if (tokenResponse.error !== "popup_closed_by_user") {
+            alert("Google-Anmeldung fehlgeschlagen: " + (tokenResponse.error_description || tokenResponse.error));
+          }
+          return;
+        }
+
+        const accessToken = tokenResponse.access_token;
+        const expiresIn = parseInt(tokenResponse.expires_in, 10) || 3599;
+        const expiresAt = Date.now() + (expiresIn - 60) * 1000;
+
+        try {
+          // Profil direkt von Google im Browser abrufen
+          const profRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const prof = await profRes.json();
+          if (!prof || !prof.emailAddress) {
+            throw new Error("Konnte E-Mail-Adresse nicht ermitteln.");
+          }
+
+          const accounts = getClientGmailAccounts();
+          const existingIdx = accounts.findIndex((a) => a.email.toLowerCase() === prof.emailAddress.toLowerCase());
+          const accObj = {
+            id: prof.emailAddress,
+            email: prof.emailAddress,
+            name: prof.emailAddress,
+            accessToken: accessToken,
+            expiresAt: expiresAt,
+            connectedAt: new Date().toISOString(),
+          };
+
+          if (existingIdx >= 0) {
+            accounts[existingIdx] = accObj;
+          } else {
+            accounts.push(accObj);
+          }
+
+          saveClientGmailAccounts(accounts);
+          updateAccountsDropdown(accounts);
+
+          if (typeof showToast === "function") {
+            showToast(`Gmail-Konto ${prof.emailAddress} sicher im Browser verbunden!`, "success");
+          }
+
+          await loadInboxData(false);
+        } catch (profErr) {
+          console.error("[GMAIL] Profil-Fehler:", profErr);
+          alert("Fehler beim Abrufen des Gmail-Profils: " + profErr.message);
+        }
+      },
+    });
+
+    tokenClient.requestAccessToken({ prompt: accountHint ? "" : "select_account" });
+  } catch (err) {
+    console.error("[GMAIL AUTH] Fehler:", err);
+    alert("Fehler bei der Gmail-Authentifizierung: " + err.message);
+  }
+}
+
+async function fetchAccountEmailsDirect(account, query) {
+  if (Date.now() > (account.expiresAt || 0)) {
+    return { expired: true, account, emails: [] };
+  }
+
+  const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=30`;
+  const res = await fetch(searchUrl, {
+    headers: { Authorization: `Bearer ${account.accessToken}` },
+  });
+
+  if (res.status === 401) {
+    return { expired: true, account, emails: [] };
+  }
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gmail API Fehler (${res.status}): ${errText}`);
+  }
+
+  const listData = await res.json();
+  const messages = listData.messages || [];
+  if (messages.length === 0) return { expired: false, account, emails: [] };
+
+  const detailPromises = messages.map(async (item) => {
+    try {
+      const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${item.id}?format=full`, {
+        headers: { Authorization: `Bearer ${account.accessToken}` },
+      });
+      if (!msgRes.ok) return null;
+      const msg = await msgRes.json();
+
+      const headers = msg.payload?.headers || [];
+      const getHeader = (name) => {
+        const h = headers.find((x) => x.name.toLowerCase() === name.toLowerCase());
+        return h ? h.value : "";
+      };
+
+      const subject = getHeader("Subject") || "(Kein Betreff)";
+      const fromRaw = getHeader("From") || "Unbekannt";
+      let fromName = fromRaw;
+      let fromEmail = fromRaw;
+      const emailMatch = fromRaw.match(/^(.*?)\s*<(.+?)>$/);
+      if (emailMatch) {
+        fromName = emailMatch[1].replace(/^["']|["']$/g, "").trim() || emailMatch[2];
+        fromEmail = emailMatch[2];
+      }
+
+      const dateHeader = getHeader("Date");
+      let dateIso = new Date().toISOString();
+      if (dateHeader) {
+        const parsedDate = new Date(dateHeader);
+        if (!isNaN(parsedDate.getTime())) dateIso = parsedDate.toISOString();
+      } else if (msg.internalDate) {
+        dateIso = new Date(parseInt(msg.internalDate, 10)).toISOString();
+      }
+
+      const allFoundPdfs = [];
+      extractPdfPartsFromPayload(msg.payload?.parts || [], allFoundPdfs);
+
+      if (allFoundPdfs.length === 0) return null;
+
+      const checkText = `${subject} ${fromName} ${fromEmail} ${msg.snippet || ""} ${allFoundPdfs.map((a) => a.filename).join(" ")}`.toLowerCase();
+      const detectedKeywords = [
+        "rechnung", "invoice", "beleg", "abrechnung", "gutschrift",
+        "quittung", "honorarrechnung", "payment", "zahlungsbeleg", "auftragsbestätigung"
+      ];
+      const isDetected = detectedKeywords.some((kw) => checkText.includes(kw));
+
+      return {
+        id: msg.id,
+        accountId: account.id,
+        accountEmail: account.email,
+        subject,
+        fromRaw,
+        fromName,
+        fromEmail,
+        date: dateIso,
+        snippet: msg.snippet || "",
+        attachments: allFoundPdfs,
+        isDetected,
+      };
+    } catch (e) {
+      console.warn(`[GMAIL] Fehler bei Nachricht ${item.id}:`, e.message);
+      return null;
+    }
+  });
+
+  const resolved = await Promise.all(detailPromises);
+  return {
+    expired: false,
+    account,
+    emails: resolved.filter(Boolean),
+  };
+}
+
+async function getGmailAttachmentBlob(account, messageId, attachment) {
+  if (attachment.data) {
+    const bytes = base64UrlToUint8Array(attachment.data);
+    return new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
+  }
+
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachment.attachmentId}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${account.accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Fehler beim Herunterladen des Anhangs (${res.status})`);
+  }
+
+  const data = await res.json();
+  const bytes = base64UrlToUint8Array(data.data);
+  return new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
+}
+
+async function openInboxPdfPreview(mailOrId, attIndex = 0) {
   if (!inboxPdfPreviewModal || !inboxPdfPreviewIframe) return;
 
   const visibleEmails = getVisibleInboxEmails();
@@ -4904,9 +5207,6 @@ function openInboxPdfPreview(mailOrId, attIndex = 0) {
   currentPreviewAttIndex = Math.max(0, Math.min(attIndex, attachments.length - 1));
   const currentAtt = attachments[currentPreviewAttIndex];
   const totalCount = visibleEmails.length;
-
-  const previewUrl = `/api/gmail/attachment/preview?messageId=${encodeURIComponent(mail.id)}&attachmentId=${encodeURIComponent(currentAtt.attachmentId)}&accountId=${encodeURIComponent(mail.accountId || "")}&filename=${encodeURIComponent(currentAtt.filename || "Anhang.pdf")}`;
-  const downloadUrl = `${previewUrl}&download=true`;
 
   if (inboxPdfPreviewTitle) {
     inboxPdfPreviewTitle.innerText = currentAtt.filename || "Dokumentenvorschau";
@@ -4933,16 +5233,35 @@ function openInboxPdfPreview(mailOrId, attIndex = 0) {
     inboxPdfNextBtn.disabled = currentPreviewMailIndex < 0 || currentPreviewMailIndex >= totalCount - 1;
   }
 
-  if (inboxPdfDownloadBtn) inboxPdfDownloadBtn.href = downloadUrl;
-  if (inboxPdfExternalBtn) inboxPdfExternalBtn.href = previewUrl;
-
   if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "block", "important");
-  inboxPdfPreviewIframe.onload = () => {
-    if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "none", "important");
-  };
-
-  inboxPdfPreviewIframe.src = previewUrl;
   inboxPdfPreviewModal.style.setProperty("display", "flex", "important");
+
+  try {
+    const accounts = getClientGmailAccounts();
+    const account = accounts.find((a) => a.id === mail.accountId || a.email === mail.accountEmail) || accounts[0];
+    if (!account) throw new Error("Kein verknüpftes Google-Konto im Browser gefunden.");
+
+    const blob = await getGmailAttachmentBlob(account, mail.id, currentAtt);
+    if (currentBlobPreviewUrl) URL.revokeObjectURL(currentBlobPreviewUrl);
+    currentBlobPreviewUrl = URL.createObjectURL(blob);
+
+    if (inboxPdfDownloadBtn) {
+      inboxPdfDownloadBtn.href = currentBlobPreviewUrl;
+      inboxPdfDownloadBtn.setAttribute("download", currentAtt.filename || "Dokument.pdf");
+    }
+    if (inboxPdfExternalBtn) {
+      inboxPdfExternalBtn.href = currentBlobPreviewUrl;
+    }
+
+    inboxPdfPreviewIframe.onload = () => {
+      if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "none", "important");
+    };
+    inboxPdfPreviewIframe.src = currentBlobPreviewUrl;
+  } catch (err) {
+    console.error("[PREVIEW] Fehler:", err);
+    if (inboxPdfLoading) inboxPdfLoading.style.setProperty("display", "none", "important");
+    alert("Fehler beim Laden des PDF-Anhangs: " + err.message);
+  }
 }
 
 function navigateInboxPdfPreview(direction) {
@@ -4959,6 +5278,10 @@ function closeInboxPdfPreview() {
   if (!inboxPdfPreviewModal) return;
   inboxPdfPreviewModal.style.setProperty("display", "none", "important");
   if (inboxPdfPreviewIframe) inboxPdfPreviewIframe.src = "";
+  if (currentBlobPreviewUrl) {
+    URL.revokeObjectURL(currentBlobPreviewUrl);
+    currentBlobPreviewUrl = null;
+  }
   currentPreviewMailIndex = -1;
 }
 
@@ -4974,81 +5297,13 @@ if (inboxPdfQuickProcessBtn) {
     const visibleEmails = getVisibleInboxEmails();
     if (currentPreviewMailIndex < 0 || currentPreviewMailIndex >= visibleEmails.length) return;
     const mail = visibleEmails[currentPreviewMailIndex];
-
-    const originalHtml = inboxPdfQuickProcessBtn.innerHTML;
-    inboxPdfQuickProcessBtn.disabled = true;
-    inboxPdfQuickProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite...</span>`;
-
-    try {
-      const selectedIndices = selectedInboxAttachments[mail.id]
-        ? Array.from(selectedInboxAttachments[mail.id])
-        : (mail.attachments || []).map((_, idx) => idx);
-      const selectedAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
-      const selectedAttIds = selectedAttachments.map((a) => a.attachmentId);
-
-      if (selectedAttachments.length === 0) {
-        alert("Bitte wählen Sie mindestens einen PDF-Anhang zum Verarbeiten aus.");
-        inboxPdfQuickProcessBtn.disabled = false;
-        inboxPdfQuickProcessBtn.innerHTML = originalHtml;
-        return;
-      }
-
-      const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
-      const res = await fetch("/api/gmail/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messageId: mail.id,
-          accountId: mail.accountId,
-          subject: mail.subject,
-          fromName: mail.fromName,
-          fromEmail: mail.fromEmail,
-          date: mail.date,
-          attachmentIds: selectedAttIds,
-          attachments: selectedAttachments,
-          archive: shouldArchive,
-        }),
-      });
-
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Fehler beim Verarbeiten.");
-
-      // Aus lokaler Liste entfernen
-      inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
-      inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
-      selectedInboxMessageIds.delete(mail.id);
-
-      const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
-      if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
-      if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
-      if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
-      if (navInboxBadge) {
-        const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
-        navInboxBadge.innerText = bCount;
-        navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
-      }
-
-      updateInboxBatchButton();
-      renderInboxList();
-      fetchStatus();
-
-      if (typeof showToast === "function") {
-        showToast(data.message || "Beleg erfolgreich verarbeitet!", "success");
-      }
-
-      // Zum nächsten Beleg wechseln oder schließen
-      const updatedVisible = getVisibleInboxEmails();
-      if (updatedVisible.length > 0) {
-        const nextIdx = Math.min(currentPreviewMailIndex, updatedVisible.length - 1);
-        openInboxPdfPreview(nextIdx, 0);
-      } else {
-        closeInboxPdfPreview();
-      }
-    } catch (err) {
-      alert("Fehler beim Verarbeiten: " + err.message);
-    } finally {
-      inboxPdfQuickProcessBtn.disabled = false;
-      inboxPdfQuickProcessBtn.innerHTML = originalHtml;
+    await processSingleInboxEmail(mail, inboxPdfQuickProcessBtn);
+    const updatedVisible = getVisibleInboxEmails();
+    if (updatedVisible.length > 0) {
+      const nextIdx = Math.min(currentPreviewMailIndex, updatedVisible.length - 1);
+      openInboxPdfPreview(nextIdx, 0);
+    } else {
+      closeInboxPdfPreview();
     }
   });
 }
@@ -5145,40 +5400,17 @@ if (inboxAccountSelect) {
 }
 
 if (inboxAddAccountBtn) {
-  inboxAddAccountBtn.addEventListener("click", () => {
-    if (secondaryGmailAuthClient) {
-      secondaryGmailAuthClient.requestCode();
-    } else if (authClientCode) {
-      authClientCode.requestCode();
-    } else {
-      alert("Google Authentifizierung wird initialisiert. Bitte kurz warten oder Einstellungen öffnen.");
-    }
-  });
+  inboxAddAccountBtn.addEventListener("click", () => requestGmailAccountAuth());
 }
 
 const inboxGrantPermissionBtn = document.getElementById("inbox-grant-permission-btn");
 if (inboxGrantPermissionBtn) {
-  inboxGrantPermissionBtn.addEventListener("click", () => {
-    if (authClientCode) {
-      authClientCode.requestCode();
-    } else {
-      const settingsModalEl = document.getElementById("settings-modal");
-      if (settingsModalEl) settingsModalEl.style.display = "flex";
-    }
-  });
+  inboxGrantPermissionBtn.addEventListener("click", () => requestGmailAccountAuth());
 }
 
 const settingsAddGmailAccountBtn = document.getElementById("settings-add-gmail-account-btn");
 if (settingsAddGmailAccountBtn) {
-  settingsAddGmailAccountBtn.addEventListener("click", () => {
-    if (secondaryGmailAuthClient) {
-      secondaryGmailAuthClient.requestCode();
-    } else if (authClientCode) {
-      authClientCode.requestCode();
-    } else {
-      alert("Google Authentifizierung wird initialisiert. Bitte kurz warten.");
-    }
-  });
+  settingsAddGmailAccountBtn.addEventListener("click", () => requestGmailAccountAuth());
 }
 
 if (inboxRefreshBtn) {
@@ -5207,41 +5439,38 @@ if (inboxBatchProcessBtn) {
 }
 
 function updateInboxBatchButton() {
+  if (!inboxBatchProcessBtn) return;
   const count = selectedInboxMessageIds.size;
   if (inboxSelectedCount) inboxSelectedCount.innerText = count;
-  if (inboxBatchProcessBtn) {
-    inboxBatchProcessBtn.disabled = count === 0 || isProcessingInboxBatch;
-  }
-  if (inboxSelectAllCb) {
-    const visibleActive = getVisibleInboxEmails();
-    inboxSelectAllCb.checked = visibleActive.length > 0 && visibleActive.every((m) => selectedInboxMessageIds.has(m.id));
-  }
+  inboxBatchProcessBtn.disabled = count === 0 || isProcessingInboxBatch;
 }
 
 function matchDateFilter(dateStr, filterVal) {
-  if (!filterVal || filterVal === "alle") return true;
-  if (!dateStr) return false;
+  if (!dateStr || filterVal === "alle") return true;
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return true;
+
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const itemDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
   if (filterVal === "today") {
-    return d >= today;
+    return itemDay.getTime() === today.getTime();
   }
   if (filterVal === "yesterday_today") {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
-    return d >= yesterday;
+    return itemDay.getTime() >= yesterday.getTime();
   }
   if (filterVal === "7days") {
-    const past7 = new Date(today);
-    past7.setDate(past7.getDate() - 7);
-    return d >= past7;
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    return itemDay.getTime() >= sevenDaysAgo.getTime();
   }
   if (filterVal === "30days") {
-    const past30 = new Date(today);
-    past30.setDate(past30.getDate() - 30);
-    return d >= past30;
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    return itemDay.getTime() >= thirtyDaysAgo.getTime();
   }
   if (filterVal === "month") {
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
@@ -5284,7 +5513,7 @@ function getVisibleInboxEmails() {
       const fromEmail = (m.fromEmail || "").toLowerCase();
       const snippet = (m.snippet || "").toLowerCase();
       const attNames = (m.attachments || []).map((a) => (a.filename || "").toLowerCase()).join(" ");
-      const acc = (m.accountEmail || m.accountName || "").toLowerCase();
+      const acc = (m.accountEmail || m.accountId || "").toLowerCase();
       if (
         !subject.includes(q) &&
         !fromName.includes(q) &&
@@ -5305,12 +5534,12 @@ function updateAccountsDropdown(accounts) {
   if (!inboxAccountSelect) return;
 
   const currentVal = inboxAccountSelect.value || "all";
-  inboxAccountSelect.innerHTML = `<option value="all">📥 Alle Posteingänge (${inboxAccounts.length || 1})</option>`;
+  inboxAccountSelect.innerHTML = `<option value="all">📥 Alle Posteingänge (${inboxAccounts.length || 0})</option>`;
 
   inboxAccounts.forEach((acc) => {
     const opt = document.createElement("option");
     opt.value = acc.id || acc.email;
-    opt.innerText = `✉️ ${acc.email}${acc.isPrimary ? " (Hauptkonto)" : ""}`;
+    opt.innerText = `✉️ ${acc.email}`;
     inboxAccountSelect.appendChild(opt);
   });
 
@@ -5323,7 +5552,7 @@ function updateAccountsDropdown(accounts) {
   if (accountsContainer) {
     accountsContainer.innerHTML = "";
     if (inboxAccounts.length === 0) {
-      accountsContainer.innerHTML = `<div class="text-muted small">Noch keine separaten Konten registriert (Standard-Konto aktiv).</div>`;
+      accountsContainer.innerHTML = `<div class="text-muted small">Noch keine Gmail-Konten im Browser verknüpft.</div>`;
     } else {
       inboxAccounts.forEach((acc) => {
         const item = document.createElement("div");
@@ -5332,32 +5561,18 @@ function updateAccountsDropdown(accounts) {
           <div class="d-flex align-items-center gap-2 text-truncate">
             <span class="material-symbols-outlined text-primary" style="font-size: 18px;">mail</span>
             <strong class="text-truncate">${acc.email}</strong>
-            ${acc.isPrimary ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 10px;">Hauptkonto</span>` : ""}
+            <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 10px;">LocalStorage</span>
           </div>
-          ${
-            !acc.isPrimary
-              ? `<button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>`
-              : ""
-          }
+          <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>
         `;
         const removeBtn = item.querySelector(".remove-gmail-acc-btn");
         if (removeBtn) {
-          removeBtn.addEventListener("click", async () => {
-            if (confirm(`Möchtest du das Google-Konto "${acc.email}" wirklich trennen?`)) {
-              try {
-                const res = await fetch("/api/gmail/accounts/delete", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ accountId: acc.id }),
-                });
-                const d = await res.json();
-                if (d.success) {
-                  updateAccountsDropdown(d.accounts);
-                  loadInboxData(false);
-                }
-              } catch (e) {
-                alert("Fehler beim Entfernen: " + e.message);
-              }
+          removeBtn.addEventListener("click", () => {
+            if (confirm(`Möchtest du das Google-Konto "${acc.email}" aus dem lokalen Browser-Speicher trennen?`)) {
+              let updated = getClientGmailAccounts().filter((a) => a.id !== acc.id && a.email !== acc.email);
+              saveClientGmailAccounts(updated);
+              updateAccountsDropdown(updated);
+              loadInboxData(false);
             }
           });
         }
@@ -5371,34 +5586,72 @@ async function loadInboxData(silent = false) {
   if (!window.isAdmin) return;
   const inboxPermissionCard = document.getElementById("inbox-permission-card");
 
+  const accounts = getClientGmailAccounts();
+  const skippedMap = getClientGmailSkipped();
+  inboxSkippedEmails = Object.values(skippedMap).sort(
+    (a, b) => new Date(b.skippedAt || b.date) - new Date(a.skippedAt || a.date)
+  );
+
+  updateAccountsDropdown(accounts);
+
   if (!silent) {
-    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "block", "important");
+    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
     if (inboxEmailList) inboxEmailList.style.setProperty("display", "none", "important");
     if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
     if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
     if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "none", "important");
   }
 
+  if (accounts.length === 0) {
+    if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "block", "important");
+    if (inboxCountDetected) inboxCountDetected.innerText = "0";
+    if (inboxCountActive) inboxCountActive.innerText = "0";
+    if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+    if (navInboxBadge) navInboxBadge.style.display = "none";
+    return;
+  }
+
+  if (!silent && inboxLoadingContainer) {
+    inboxLoadingContainer.style.setProperty("display", "block", "important");
+  }
+
   try {
     const selectedAccountId = inboxAccountSelect ? inboxAccountSelect.value : "all";
-    const [inboxRes, skippedRes] = await Promise.all([
-      fetch(`/api/gmail/inbox?accountId=${encodeURIComponent(selectedAccountId)}`),
-      fetch("/api/gmail/skipped"),
-    ]);
+    const accountsToQuery = selectedAccountId === "all"
+      ? accounts
+      : accounts.filter((a) => a.id === selectedAccountId || a.email === selectedAccountId);
 
-    const inboxData = await inboxRes.json();
-    const skippedData = await skippedRes.json();
+    const gmailSettings = getClientGmailSettings();
+    const query = (inboxScanQueryInput && inboxScanQueryInput.value.trim()) || gmailSettings.scanQuery || "in:inbox filename:pdf";
 
-    if (!inboxData.success) {
-      throw new Error(inboxData.error || "Fehler beim Laden des Posteingangs.");
+    let allFetchedEmails = [];
+    let hasExpiredAccount = false;
+    let expiredAccountEmail = "";
+
+    for (const acc of accountsToQuery) {
+      const res = await fetchAccountEmailsDirect(acc, query);
+      if (res.expired) {
+        hasExpiredAccount = true;
+        expiredAccountEmail = acc.email;
+      } else {
+        allFetchedEmails = allFetchedEmails.concat(res.emails);
+      }
     }
 
-    inboxActiveEmails = inboxData.emails || [];
-    inboxSkippedEmails = skippedData.skippedEmails || [];
-
-    if (inboxData.accounts) {
-      updateAccountsDropdown(inboxData.accounts);
+    if (hasExpiredAccount && inboxPermissionCard) {
+      inboxPermissionCard.style.setProperty("display", "block", "important");
+      const permText = inboxPermissionCard.querySelector("p");
+      if (permText) {
+        permText.innerHTML = `Die Sitzung für <strong>${expiredAccountEmail}</strong> ist abgelaufen. Klicke auf den Button, um den Zugriff im Browser zu erneuern (Tokens verbleiben ausschließlich im LocalStorage).`;
+      }
     }
+
+    // Filtere bereits verarbeitete Mails heraus
+    const processedGmailMessageIds = new Set(
+      (activeJobs || []).filter((j) => j.source === "gmail" && j.gmailMessageId).map((j) => j.gmailMessageId)
+    );
+
+    inboxActiveEmails = allFetchedEmails.filter((m) => !skippedMap[m.id] && !processedGmailMessageIds.has(m.id));
 
     // Badges & Counters aktualisieren
     const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
@@ -5430,27 +5683,16 @@ async function loadInboxData(silent = false) {
     updateInboxBatchButton();
 
     if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
-    if (inboxPermissionCard) inboxPermissionCard.style.setProperty("display", "none", "important");
     renderInboxList();
   } catch (err) {
     console.error("[GMAIL] Fehler bei loadInboxData:", err);
-    if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
-
-    const errStr = (err.message || "").toLowerCase();
-    const isPermissionError =
-      errStr.includes("insufficient permission") ||
-      errStr.includes("insufficientpermissions") ||
-      errStr.includes("nicht authentifiziert") ||
-      errStr.includes("403");
-
-    if (isPermissionError && inboxPermissionCard) {
-      inboxPermissionCard.style.setProperty("display", "block", "important");
-      if (inboxEmailList) inboxEmailList.style.setProperty("display", "none", "important");
-      if (inboxEmptyContainer) inboxEmptyContainer.style.setProperty("display", "none", "important");
-      if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
-    } else if (inboxErrorAlert) {
-      inboxErrorAlert.style.setProperty("display", "block", "important");
-      if (inboxErrorText) inboxErrorText.innerText = err.message || "Fehler beim Laden der E-Mails.";
+    if (!silent) {
+      if (inboxLoadingContainer) inboxLoadingContainer.style.setProperty("display", "none", "important");
+      if (inboxErrorAlert) {
+        inboxErrorAlert.style.setProperty("display", "block", "important");
+        const errText = document.getElementById("inbox-error-text");
+        if (errText) errText.innerText = err.message || "Fehler beim Laden der E-Mails.";
+      }
     }
   }
 }
@@ -5529,33 +5771,26 @@ function renderInboxList() {
     const attachmentsHtml = attachments
       .map((att, idx) => {
         const isAttChecked = currentSelectedAtts.has(idx);
+        const safeFilename = escapeHtml(att.filename || "Anhang.pdf");
         return `
         <div class="inbox-attachment-item d-inline-flex align-items-center gap-1 border rounded p-1 px-2 small" 
           style="background-color: ${isAttChecked ? '#f0f7ff' : '#f8f9fa'}; border-color: ${isAttChecked ? '#b6d4fe' : '#dee2e6'} !important; transition: all 0.15s ease;">
           <input type="checkbox" class="form-check-input m-0 inbox-att-cb" 
-            data-message-id="${mail.id}"
+            data-message-id="${encodeURIComponent(mail.id)}"
             data-att-idx="${idx}"
             ${isAttChecked ? "checked" : ""}
             style="cursor: pointer; width: 15px; height: 15px;" 
             title="Diesen Anhang für die Verarbeitung auswählen/abwählen" />
           <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
           <span class="text-truncate fw-medium inbox-pdf-pill" 
-            data-message-id="${mail.id}"
-            data-account-id="${mail.accountId || ''}"
+            data-message-id="${encodeURIComponent(mail.id)}"
             data-att-idx="${idx}"
-            data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
-            data-size="${att.size || 0}"
-            data-subject="${encodeURIComponent(mail.subject || '')}"
             style="max-width: 200px; cursor: pointer;" 
-            title="Klicken für PDF-Vorschau: ${att.filename}">${att.filename || "Anhang.pdf"}</span>
+            title="Klicken für PDF-Vorschau: ${safeFilename}">${safeFilename}</span>
           <span class="text-muted" style="font-size: 11px;">(${formatFileSize(att.size)})</span>
           <button type="button" class="btn btn-sm p-0 border-0 text-primary inbox-pdf-pill d-inline-flex align-items-center" 
-            data-message-id="${mail.id}"
-            data-account-id="${mail.accountId || ''}"
+            data-message-id="${encodeURIComponent(mail.id)}"
             data-att-idx="${idx}"
-            data-filename="${encodeURIComponent(att.filename || 'Anhang.pdf')}"
-            data-size="${att.size || 0}"
-            data-subject="${encodeURIComponent(mail.subject || '')}"
             title="Vorschau öffnen">
             <span class="material-symbols-outlined" style="font-size: 14px;">visibility</span>
           </button>
@@ -5565,6 +5800,11 @@ function renderInboxList() {
       .join("");
 
     const isSkippedTab = currentInboxSubtab === "skipped";
+    const safeSenderName = escapeHtml(mail.fromName || mail.fromEmail || "Unbekannter Absender");
+    const safeSenderEmail = escapeHtml(mail.fromEmail || "");
+    const safeAccountEmail = escapeHtml(mail.accountEmail || "");
+    const safeSubject = escapeHtml(mail.subject || "(Kein Betreff)");
+    const safeSnippet = escapeHtml(mail.snippet || "");
 
     card.innerHTML = `
       <div class="d-flex gap-3 align-items-start">
@@ -5572,7 +5812,7 @@ function renderInboxList() {
           !isSkippedTab
             ? `
           <div class="pt-1">
-            <input type="checkbox" class="form-check-input inbox-item-cb" data-id="${mail.id}" ${
+            <input type="checkbox" class="form-check-input inbox-item-cb" data-id="${encodeURIComponent(mail.id)}" ${
                 isSelected ? "checked" : ""
               } style="cursor: pointer; width: 18px; height: 18px;" />
           </div>
@@ -5584,10 +5824,10 @@ function renderInboxList() {
           <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-1">
             <div class="d-flex align-items-center gap-2 text-truncate flex-wrap">
               <span class="material-symbols-outlined text-secondary" style="font-size: 20px;">account_circle</span>
-              <strong class="text-dark" style="font-size: 14px;">${mail.fromName || mail.fromEmail || "Unbekannter Absender"}</strong>
+              <strong class="text-dark" style="font-size: 14px;">${safeSenderName}</strong>
               ${
                 mail.fromName && mail.fromEmail && mail.fromEmail !== mail.fromName
-                  ? `<span class="text-muted small text-truncate" style="font-size: 12px;">&lt;${mail.fromEmail}&gt;</span>`
+                  ? `<span class="text-muted small text-truncate" style="font-size: 12px;">&lt;${safeSenderEmail}&gt;</span>`
                   : ""
               }
               ${
@@ -5602,27 +5842,27 @@ function renderInboxList() {
                 mail.accountEmail && inboxAccounts.length > 1
                   ? `<span class="badge bg-light text-secondary border" style="font-size: 11px; padding: 3px 8px; border-radius: 6px;">
                       <span class="material-symbols-outlined" style="font-size: 12px; vertical-align: middle;">mail</span>
-                      ${mail.accountEmail}
+                      ${safeAccountEmail}
                     </span>`
                   : ""
               }
             </div>
             <div class="text-muted small flex-shrink-0" style="font-size: 12px;">
-              ${formatDateDisplay(mail.date)}
+              ${escapeHtml(formatDateDisplay(mail.date))}
             </div>
           </div>
 
           <!-- Subject Line -->
           <div class="fw-bold text-dark mb-1" style="font-size: 15px;">
-            ${mail.subject || "(Kein Betreff)"}
+            ${safeSubject}
           </div>
 
           <!-- Snippet / Email Preview -->
           ${
-            mail.snippet
+            safeSnippet
               ? `
             <div class="text-muted small mb-2" style="font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
-              ${mail.snippet}
+              ${safeSnippet}
             </div>
           `
               : ""
@@ -5639,28 +5879,28 @@ function renderInboxList() {
               ${attachments.length} ${attachments.length === 1 ? "PDF-Anhang" : "PDF-Anhänge"}
             </div>
             <div class="d-flex gap-2">
-              <button type="button" class="btn btn-sm btn-outline-dark d-flex align-items-center gap-1 inbox-preview-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;" title="PDF-Vorschau öffnen">
+              <button type="button" class="btn btn-sm btn-outline-dark d-flex align-items-center gap-1 inbox-preview-btn" data-id="${encodeURIComponent(mail.id)}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;" title="PDF-Vorschau öffnen">
                 <span class="material-symbols-outlined" style="font-size: 16px;">visibility</span>
                 <span>Vorschau</span>
               </button>
               ${
                 !isSkippedTab
                   ? `
-                <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1 inbox-skip-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
+                <button type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1 inbox-skip-btn" data-id="${encodeURIComponent(mail.id)}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
                   <span class="material-symbols-outlined" style="font-size: 16px;">playlist_remove</span>
                   <span>Überspringen</span>
                 </button>
-                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" ${initialActiveCount === 0 ? "disabled" : ""} style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${encodeURIComponent(mail.id)}" ${initialActiveCount === 0 ? "disabled" : ""} style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
                   <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
                   <span>Verarbeiten${initialBtnSuffix}</span>
                 </button>
               `
                   : `
-                <button type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1 inbox-unskip-btn" data-id="${mail.id}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
+                <button type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1 inbox-unskip-btn" data-id="${encodeURIComponent(mail.id)}" style="border-radius: 20px; font-size: 12px; padding: 4px 12px;">
                   <span class="material-symbols-outlined" style="font-size: 16px;">undo</span>
                   <span>Wiederherstellen</span>
                 </button>
-                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${mail.id}" ${initialActiveCount === 0 ? "disabled" : ""} style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
+                <button type="button" class="btn btn-sm btn-primary d-flex align-items-center gap-1 inbox-process-btn" data-id="${encodeURIComponent(mail.id)}" ${initialActiveCount === 0 ? "disabled" : ""} style="border-radius: 20px; font-size: 12px; padding: 4px 14px;">
                   <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
                   <span>Trotzdem Verarbeiten${initialBtnSuffix}</span>
                 </button>
@@ -5678,9 +5918,10 @@ function renderInboxList() {
       previewBtn.addEventListener("click", () => openInboxPdfPreview(mail, 0));
     }
 
-    card.querySelectorAll(".inbox-pdf-pill").forEach((pill, idx) => {
+    card.querySelectorAll(".inbox-pdf-pill").forEach((pill) => {
       pill.addEventListener("click", (e) => {
         e.stopPropagation();
+        const idx = parseInt(pill.getAttribute("data-att-idx"), 10) || 0;
         openInboxPdfPreview(mail, idx);
       });
     });
@@ -5771,7 +6012,6 @@ async function processSingleInboxEmail(mail, btnEl) {
       ? Array.from(selectedInboxAttachments[mail.id])
       : (mail.attachments || []).map((_, i) => i);
     const selectedAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
-    const selectedAttIds = selectedAttachments.map((a) => a.attachmentId);
 
     if (selectedAttachments.length === 0) {
       alert("Bitte wählen Sie mindestens einen PDF-Anhang zum Verarbeiten aus.");
@@ -5780,28 +6020,47 @@ async function processSingleInboxEmail(mail, btnEl) {
       return;
     }
 
-    const res = await fetch("/api/gmail/process", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messageId: mail.id,
-        accountId: mail.accountId,
-        subject: mail.subject,
-        fromName: mail.fromName,
-        fromEmail: mail.fromEmail,
-        date: mail.date,
-        attachmentIds: selectedAttIds,
-        attachments: selectedAttachments,
-        archive: shouldArchive,
-      }),
-    });
+    const accounts = getClientGmailAccounts();
+    const account = accounts.find((a) => a.id === mail.accountId || a.email === mail.accountEmail) || accounts[0];
+    if (!account) throw new Error("Kein verknüpftes Google-Konto im Browser gefunden.");
 
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error(data.error || "Fehler bei der E-Mail-Verarbeitung.");
+    // Upload each selected attachment to server via POST /api/upload
+    for (const att of selectedAttachments) {
+      const blob = await getGmailAttachmentBlob(account, mail.id, att);
+      const file = new File([blob], att.filename || "Anhang.pdf", { type: "application/pdf" });
+      const formData = new FormData();
+      formData.append("files", file);
+      formData.append("source", "gmail");
+      formData.append("gmailMessageId", mail.id);
+      formData.append("isPrivate", "false");
+
+      const upRes = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!upRes.ok) {
+        const errText = await upRes.text();
+        throw new Error("Upload-Fehler: " + errText);
+      }
     }
 
-    // Aus aktiver Liste entfernen
+    // Archive on Gmail directly if enabled
+    if (shouldArchive && account.accessToken) {
+      try {
+        await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${mail.id}/modify`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${account.accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ removeLabelIds: ["INBOX"] }),
+        });
+      } catch (archErr) {
+        console.warn("[GMAIL ARCHIVE] Warnung:", archErr);
+      }
+    }
+
+    // Aus lokaler Ansicht entfernen
     inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
     inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
     selectedInboxMessageIds.delete(mail.id);
@@ -5820,11 +6079,10 @@ async function processSingleInboxEmail(mail, btnEl) {
 
     updateInboxBatchButton();
     renderInboxList();
-
     fetchStatus();
 
     if (typeof showToast === "function") {
-      showToast(data.message || "Belege erfolgreich zur KI-Pipeline hinzugefügt!", "success");
+      showToast(`Belege aus „${mail.subject || mail.fromName}“ erfolgreich zur KI-Pipeline hinzugefügt!`, "success");
     }
   } catch (err) {
     console.error("[GMAIL] Fehler beim Verarbeiten der E-Mail:", err);
@@ -5843,15 +6101,7 @@ async function processBatchSelectedEmails() {
     return;
   }
 
-  if (
-    !confirm(
-      `${selectedEmails.length} ausgewählte E-Mail(s) jetzt verarbeiten${
-        inboxArchiveToggle?.checked ? " und im Posteingang archivieren" : ""
-      }?`
-    )
-  ) {
-    return;
-  }
+  if (!confirm(`${selectedEmails.length} ausgewählte E-Mail(s) jetzt verarbeiten?`)) return;
 
   isProcessingInboxBatch = true;
   if (inboxBatchProcessBtn) {
@@ -5859,49 +6109,62 @@ async function processBatchSelectedEmails() {
     inboxBatchProcessBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Verarbeite Stapel...</span>`;
   }
 
+  let totalUploaded = 0;
+  let archivedCount = 0;
+  const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
+  const accounts = getClientGmailAccounts();
+
   try {
-    const shouldArchive = inboxArchiveToggle ? inboxArchiveToggle.checked : true;
-    const payloadItems = selectedEmails.map((m) => {
-      const selectedIndices = selectedInboxAttachments[m.id]
-        ? Array.from(selectedInboxAttachments[m.id])
-        : (m.attachments || []).map((_, i) => i);
-      const selectedAtts = (m.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
-      const selectedAttIds = selectedAtts.map((a) => a.attachmentId);
-      return {
-        id: m.id,
-        messageId: m.id,
-        accountId: m.accountId,
-        subject: m.subject,
-        fromName: m.fromName,
-        fromEmail: m.fromEmail,
-        date: m.date,
-        attachmentIds: selectedAttIds,
-        attachments: selectedAtts.length > 0 ? selectedAtts : m.attachments,
-      };
-    });
+    for (const mail of selectedEmails) {
+      const account = accounts.find((a) => a.id === mail.accountId || a.email === mail.accountEmail) || accounts[0];
+      if (!account) continue;
 
-    const res = await fetch("/api/gmail/process-batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        items: payloadItems,
-        archive: shouldArchive,
-      }),
-    });
+      const selectedIndices = selectedInboxAttachments[mail.id]
+        ? Array.from(selectedInboxAttachments[mail.id])
+        : (mail.attachments || []).map((_, i) => i);
+      const selectedAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.includes(idx));
 
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error(data.error || "Fehler bei der Stapelverarbeitung.");
+      for (const att of selectedAttachments) {
+        const blob = await getGmailAttachmentBlob(account, mail.id, att);
+        const file = new File([blob], att.filename || "Anhang.pdf", { type: "application/pdf" });
+        const formData = new FormData();
+        formData.append("files", file);
+        formData.append("source", "gmail");
+        formData.append("gmailMessageId", mail.id);
+        formData.append("isPrivate", "false");
+
+        await fetch("/api/upload", { method: "POST", body: formData });
+        totalUploaded++;
+      }
+
+      if (shouldArchive && account.accessToken) {
+        try {
+          await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${mail.id}/modify`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${account.accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ removeLabelIds: ["INBOX"] }),
+          });
+          archivedCount++;
+        } catch (e) {}
+      }
+
+      inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+      inboxSkippedEmails = inboxSkippedEmails.filter((m) => m.id !== mail.id);
+      selectedInboxMessageIds.delete(mail.id);
+      delete selectedInboxAttachments[mail.id];
     }
 
-    selectedInboxMessageIds.clear();
-    await loadInboxData(false);
+    updateInboxBatchButton();
+    renderInboxList();
     fetchStatus();
 
     alert(
       `Stapelverarbeitung abgeschlossen!\n` +
-        `• Verarbeitet: ${data.processedCount} E-Mails (${data.totalJobs} PDF-Dokumente)\n` +
-        `• Archiviert: ${data.archivedCount} E-Mails`
+        `• Verarbeitet: ${selectedEmails.length} E-Mails (${totalUploaded} PDF-Dokumente)\n` +
+        `• Archiviert: ${archivedCount} E-Mails`
     );
   } catch (err) {
     console.error("[GMAIL BATCH] Fehler:", err);
@@ -5918,67 +6181,41 @@ async function processBatchSelectedEmails() {
   }
 }
 
-async function skipInboxEmail(mail) {
-  try {
-    const res = await fetch("/api/gmail/skip", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messageId: mail.id,
-        accountId: mail.accountId,
-        accountEmail: mail.accountEmail,
-        subject: mail.subject,
-        from: mail.fromRaw || mail.fromName || mail.fromEmail,
-        fromName: mail.fromName,
-        fromEmail: mail.fromEmail,
-        date: mail.date,
-        snippet: mail.snippet,
-        attachments: mail.attachments,
-        isDetected: !!mail.isDetected,
-      }),
-    });
+function skipInboxEmail(mail) {
+  const skipped = getClientGmailSkipped();
+  skipped[mail.id] = {
+    ...mail,
+    skippedAt: new Date().toISOString(),
+  };
+  saveClientGmailSkipped(skipped);
 
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Fehler beim Überspringen.");
+  inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
+  inboxSkippedEmails = Object.values(skipped).sort(
+    (a, b) => new Date(b.skippedAt || b.date) - new Date(a.skippedAt || a.date)
+  );
+  selectedInboxMessageIds.delete(mail.id);
 
-    inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
-    inboxSkippedEmails.unshift(mail);
-    selectedInboxMessageIds.delete(mail.id);
-
-    const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
-    if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
-    if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
-    if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
-    if (navInboxBadge) {
-      const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
-      navInboxBadge.innerText = bCount;
-      navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
-    }
-
-    updateInboxBatchButton();
-    renderInboxList();
-  } catch (err) {
-    console.error("[GMAIL] Fehler beim Überspringen:", err);
-    alert("Fehler beim Überspringen: " + err.message);
+  const detectedEmails = inboxActiveEmails.filter((m) => m.isDetected);
+  if (inboxCountDetected) inboxCountDetected.innerText = detectedEmails.length;
+  if (inboxCountActive) inboxCountActive.innerText = inboxActiveEmails.length;
+  if (inboxCountSkipped) inboxCountSkipped.innerText = inboxSkippedEmails.length;
+  if (navInboxBadge) {
+    const bCount = detectedEmails.length > 0 ? detectedEmails.length : inboxActiveEmails.length;
+    navInboxBadge.innerText = bCount;
+    navInboxBadge.style.display = inboxActiveEmails.length > 0 ? "inline-block" : "none";
   }
+
+  updateInboxBatchButton();
+  renderInboxList();
 }
 
-async function unskipInboxEmail(messageId) {
-  try {
-    const res = await fetch("/api/gmail/unskip", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messageId }),
-    });
-
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Fehler beim Wiederherstellen.");
-
-    await loadInboxData(false);
-  } catch (err) {
-    console.error("[GMAIL] Fehler beim Wiederherstellen:", err);
-    alert("Fehler beim Wiederherstellen: " + err.message);
+function unskipInboxEmail(messageId) {
+  const skipped = getClientGmailSkipped();
+  if (skipped[messageId]) {
+    delete skipped[messageId];
+    saveClientGmailSkipped(skipped);
   }
+  loadInboxData(false);
 }
 
 // Initialer Abruf der offenen E-Mails im Hintergrund (für den Badge-Zähler)

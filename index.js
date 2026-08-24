@@ -10,6 +10,7 @@ console.log = (...args) => {
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { pipeline } = require("stream/promises");
 const dotenv = require("dotenv");
 const express = require("express");
@@ -41,10 +42,58 @@ let debug = false;
 let testrun = false;
 let firststart = true;
 
-const AUTH_ENABLED = process.env.AUTH_ENABLED === "true" || "true";
-const APP_PASSWORD = process.env.APP_PASSWORD || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "superadmin";
-const JWT_SECRET = process.env.JWT_SECRET || "default_super_secret_key_123";
+// Store paths
+const storeFolder = path.join(process.cwd(), "store");
+if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
+
+function getOrGenerateSecret(envVal, filename, generateFn, logMsg) {
+  if (envVal && String(envVal).trim().length > 0) {
+    return String(envVal).trim();
+  }
+  const filePath = path.join(storeFolder, filename);
+  if (fs.existsSync(filePath)) {
+    try {
+      const saved = fs.readFileSync(filePath, "utf8").trim();
+      if (saved.length > 0) return saved;
+    } catch (e) {}
+  }
+  const generated = generateFn();
+  try {
+    fs.writeFileSync(filePath, generated, { encoding: "utf8", mode: 0o600 });
+    if (logMsg) console.log(logMsg(generated));
+  } catch (e) {}
+  return generated;
+}
+
+const AUTH_ENABLED = process.env.AUTH_ENABLED !== "false";
+
+const JWT_SECRET = getOrGenerateSecret(
+  process.env.JWT_SECRET,
+  ".jwt_secret",
+  () => crypto.randomBytes(64).toString("hex")
+);
+
+const ADMIN_PASSWORD = getOrGenerateSecret(
+  process.env.ADMIN_PASSWORD,
+  ".admin_password",
+  () => crypto.randomBytes(16).toString("hex"),
+  (pwd) => `[SECURITY] Kein ADMIN_PASSWORD in .env gesetzt. Ein sicheres Zufallspasswort wurde generiert und in store/.admin_password gespeichert: ${pwd}`
+);
+
+const APP_PASSWORD = getOrGenerateSecret(
+  process.env.APP_PASSWORD,
+  ".app_password",
+  () => crypto.randomBytes(16).toString("hex"),
+  (pwd) => `[SECURITY] Kein APP_PASSWORD in .env gesetzt. Ein sicheres Zufallspasswort wurde generiert und in store/.app_password gespeichert: ${pwd}`
+);
+
+function isSafeSubpath(baseDir, targetPath) {
+  if (!targetPath || typeof targetPath !== "string") return false;
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedBase, resolvedTarget);
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
 
 function getPythonPath() {
   const venvWin = path.join(__dirname, "venv", "Scripts", "python.exe");
@@ -53,10 +102,6 @@ function getPythonPath() {
   if (fs.existsSync(venvUnix)) return venvUnix;
   return "python";
 }
-
-// Store paths
-const storeFolder = path.join(process.cwd(), "store");
-if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
 
 // Move old dynamic files to store/ if they exist in root
 ["settings.json", "jobs.json", "token.json"].forEach((f) => {
@@ -406,8 +451,18 @@ app.post("/api/settings", requireAdmin, async (req, res) => {
     // Starte Überwachung asynchron sofort nach dem Speichern
     checkDriveForNewFiles().catch(console.error);
   }
-  if (appSettings.MONITOR_GMAIL) {
-    checkGmailForNewFiles().catch(console.error);
+});
+
+app.get("/api/auth/client-id", async (req, res) => {
+  try {
+    if (!fs.existsSync(CREDENTIALS_PATH)) {
+      return res.status(404).json({ success: false, error: "Credentials nicht gefunden." });
+    }
+    const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH, "utf8"));
+    const key = keys.installed || keys.web;
+    res.json({ success: true, clientId: key.client_id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -1692,7 +1747,9 @@ app.post("/api/upload", upload.array("files"), async (req, res) => {
       id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
       originalName: file.originalname,
       status: "pending",
-      source: "upload",
+      source: req.body.source || "upload",
+      gmailMessageId: req.body.gmailMessageId || null,
+      isPrivate: req.body.isPrivate === "true" || req.body.isPrivate === true,
       inAiPipeline: true,
       aiPipelineStartedAt: new Date().toISOString(),
       result: null,
@@ -3922,8 +3979,6 @@ async function init() {
 
     setInterval(checkDriveForNewFiles, 15 * 1000); // 15 Sekunden Intervall für schnellen Upload-Sync
     setTimeout(checkDriveForNewFiles, 10000);
-    setInterval(checkGmailForNewFiles, 60 * 1000); // 60 Sekunden Intervall für vorbereiteten Gmail-Monitor
-    setTimeout(checkGmailForNewFiles, 15000);
   }
   if (testrun) {
     await aiAgent.getPdfName("./samples-scanner/1.pdf", appSettings);
