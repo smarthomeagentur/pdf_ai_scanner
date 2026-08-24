@@ -694,7 +694,10 @@
             id="lexoffice-settings-container"
             style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
           >
-            <label><strong>Buchhaltung API-Zugänge (nur Admin):</strong></label>
+            <label class="d-flex align-items-center justify-content-between">
+              <strong>Buchhaltung API-Zugänge (nur Admin):</strong>
+              <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
+            </label>
             <div style="margin-top: 10px">
               <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für wirewire GmbH:</label>
               <input
@@ -755,7 +758,10 @@
             id="clickup-settings-container"
             style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
           >
-            <label><strong>ClickUp Integration (nur Admin):</strong></label>
+            <label class="d-flex align-items-center justify-content-between">
+              <strong>ClickUp Integration (nur Admin):</strong>
+              <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
+            </label>
             <div style="margin-top: 10px">
               <label style="font-size: 0.9em; color: #555">ClickUp API Key (Personal Token):</label>
               <input
@@ -1334,7 +1340,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260824_gmail_fix_v8"></script>
+      <script src="/index.js?v=20260825_auth_fix_v12"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

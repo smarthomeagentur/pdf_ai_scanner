@@ -3,7 +3,7 @@ const { google } = require("googleapis");
 const fs = require("fs");
 const path = require("path");
 
-const SCOPES = ["https://www.googleapis.com/auth/drive"];
+const SCOPES = ["https://www.googleapis.com/auth/drive.file"];
 
 class DriveAPI {
   constructor(tokenPath, credentialsPath) {

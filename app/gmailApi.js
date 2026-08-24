@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 const SCOPES = [
-  "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/drive.file",
   "https://www.googleapis.com/auth/gmail.modify",
 ];
 

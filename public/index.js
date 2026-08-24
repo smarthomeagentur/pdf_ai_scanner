@@ -20,6 +20,42 @@ function highlightQueryText(text, query) {
   return escapedText.replace(regex, '<mark style="background-color: #fef08a; color: #854d0e; padding: 0 2px; border-radius: 2px;">$1</mark>');
 }
 
+// ==========================================
+// --- Zero-Server-Storage API Key Helpers ---
+// ==========================================
+const ACCOUNTING_CLIENT_KEYS_KEY = "scanner_client_accounting_keys";
+const CLICKUP_CLIENT_CONFIG_KEY = "scanner_client_clickup_config";
+
+function getClientAccountingKeys() {
+  try {
+    const raw = localStorage.getItem(ACCOUNTING_CLIENT_KEYS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveClientAccountingKeys(keys) {
+  try {
+    localStorage.setItem(ACCOUNTING_CLIENT_KEYS_KEY, JSON.stringify(keys || {}));
+  } catch (e) {}
+}
+
+function getClientClickUpConfig() {
+  try {
+    const raw = localStorage.getItem(CLICKUP_CLIENT_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveClientClickUpConfig(cfg) {
+  try {
+    localStorage.setItem(CLICKUP_CLIENT_CONFIG_KEY, JSON.stringify(cfg || {}));
+  } catch (e) {}
+}
+
 const settingsModal = document.getElementById("settings-modal");
 const openSettingsBtn = document.getElementById("openSettingsBtn");
 const closeSettingsBtn = document.getElementById("closeSettingsBtn");
@@ -66,15 +102,25 @@ openSettingsBtn.addEventListener("click", async () => {
 
   settingsModal.style.display = "flex";
 
+  // Always make all admin setting sections visible immediately
+  document.getElementById("lexoffice-settings-container").style.display = "block";
+  document.getElementById("clickup-settings-container").style.display = "block";
+  document.getElementById("ai-prompt-settings-container").style.display = "block";
+  document.getElementById("admin-backup-container").style.display = "block";
+  document.getElementById("saveSettingsBtn").style.display = "block";
+  const gmailSettingsContainer = document.getElementById("gmail-settings-container");
+  if (gmailSettingsContainer) gmailSettingsContainer.style.display = "block";
+
   // Fetch current settings from backend
   try {
     const setRes = await fetch("/api/settings");
     const setJson = await setRes.json();
     if (setJson.success) {
-      // Populate if we already have it
       window.currentSettings = setJson.settings;
     }
   } catch (e) {}
+
+  populateSettingsForm();
 
   // Fetch client ID configuration
   try {
@@ -85,10 +131,10 @@ openSettingsBtn.addEventListener("click", async () => {
       document.getElementById("auth-status").innerText = "Bereit zur Authentifizierung";
       document.getElementById("auth-btn").style.display = "inline-block";
 
-      // Initialize Google Auth client for Server-Side Google Drive ONLY
+      // Initialize Google Auth client for Server-Side Google Drive ONLY (Restricted to drive.file)
       authClientCode = window.google.accounts.oauth2.initCodeClient({
         client_id: googleClientId,
-        scope: "https://www.googleapis.com/auth/drive",
+        scope: "https://www.googleapis.com/auth/drive.file",
         prompt: "consent",
         ux_mode: "popup",
         callback: async (response) => {
@@ -118,6 +164,38 @@ openSettingsBtn.addEventListener("click", async () => {
     document.getElementById("auth-status").innerText = "Fehler beim Laden der Konfiguration.";
   }
 });
+
+function populateSettingsForm() {
+  if (window.currentSettings) {
+    document.getElementById("ai-categories-input").value =
+      window.currentSettings.AI_CATEGORIES ||
+      "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
+    document.getElementById("ai-company-input").value =
+      window.currentSettings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
+    document.getElementById("monitor-drive-checkbox").checked = window.currentSettings.MONITOR_DRIVE || false;
+
+    const autoArchCb = document.getElementById("gmail-auto-archive-checkbox");
+    if (autoArchCb) autoArchCb.checked = window.currentSettings.GMAIL_AUTO_ARCHIVE !== false;
+    const monGmailCb = document.getElementById("monitor-gmail-checkbox");
+    if (monGmailCb) monGmailCb.checked = window.currentSettings.MONITOR_GMAIL === true;
+    const queryInput = document.getElementById("gmail-scan-query-input");
+    if (queryInput) queryInput.value = window.currentSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
+  }
+
+  // Always populate client-side stored keys
+  const clientAccKeys = getClientAccountingKeys();
+  document.getElementById("lexoffice-key-wirewire").value = clientAccKeys.lexKeyWirewire || "";
+  document.getElementById("butler-key-thewire-client").value = clientAccKeys.butlerClient || "";
+  document.getElementById("butler-key-thewire-secret").value = clientAccKeys.butlerSecret || "";
+  document.getElementById("butler-key-thewire-key").value = clientAccKeys.butlerKey || "";
+  document.getElementById("lexoffice-key-polyxo").value = clientAccKeys.lexKeyPolyxo || "";
+  
+  const clientClickupCfg = getClientClickUpConfig();
+  document.getElementById("clickup-api-key").value = clientClickupCfg.apiKey || "";
+  document.getElementById("clickup-list-id").value = clientClickupCfg.listId || "";
+  document.getElementById("clickup-auto-task").checked = clientClickupCfg.autoTask !== undefined ? clientClickupCfg.autoTask : (window.currentSettings?.CLICKUP_AUTO_TASK !== false);
+  document.getElementById("clickup-filter-private").checked = clientClickupCfg.filterPrivate !== undefined ? clientClickupCfg.filterPrivate : (window.currentSettings?.CLICKUP_FILTER_PRIVATE !== false);
+}
 
 closeSettingsBtn.addEventListener("click", () => {
   settingsModal.style.display = "none";
@@ -149,74 +227,35 @@ async function loadFolders() {
       rawDisplay.placeholder = "Klicke auf Durchsuchen...";
       aiDisplay.placeholder = "Klicke auf Durchsuchen...";
 
-      // Pre-fill existing settings correctly from backend API
-      if (window.currentSettings) {
-        async function fetchFolderName(id, displayEl, idEl) {
-          try {
-            const nRes = await fetch("/api/drive/folder/" + id);
-            if (nRes.ok) {
-              const nData = await nRes.json();
-              if (nData.success) {
-                displayEl.value = nData.folder.name;
-                idEl.value = nData.folder.id;
-                return;
-              }
+      async function fetchFolderName(id, displayEl, idEl) {
+        try {
+          const nRes = await fetch("/api/drive/folder/" + id);
+          if (nRes.ok) {
+            const nData = await nRes.json();
+            if (nData.success) {
+              displayEl.value = nData.folder.name;
+              idEl.value = nData.folder.id;
+              return;
             }
-          } catch (e) {}
-          displayEl.value = "Ordner via ID: " + id;
-          idEl.value = id;
-        }
-
-        if (window.currentSettings.FOLDER_ID) {
-          fetchFolderName(window.currentSettings.FOLDER_ID, rawDisplay, document.getElementById("raw-folder-id"));
-        }
-        if (window.currentSettings.FOLDER_ID_SORTED) {
-          fetchFolderName(window.currentSettings.FOLDER_ID_SORTED, aiDisplay, document.getElementById("ai-folder-id"));
-        }
-
-        document.getElementById("ai-categories-input").value =
-          window.currentSettings.AI_CATEGORIES ||
-          "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
-        document.getElementById("ai-company-input").value =
-          window.currentSettings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
-        document.getElementById("monitor-drive-checkbox").checked = window.currentSettings.MONITOR_DRIVE || false;
-
-        document.getElementById("lexoffice-settings-container").style.display = "block";
-        document.getElementById("lexoffice-key-wirewire").value = window.currentSettings.LEXOFFICE_KEY_WIREWIRE || "";
-        document.getElementById("butler-key-thewire-client").value = window.currentSettings.BUTTLER_KEY_THEWIRE_CLIENT || "";
-        document.getElementById("butler-key-thewire-secret").value = window.currentSettings.BUTTLER_KEY_THEWIRE_SECRET || "";
-        document.getElementById("butler-key-thewire-key").value = window.currentSettings.BUTTLER_KEY_THEWIRE_KEY || "";
-        document.getElementById("lexoffice-key-polyxo").value = window.currentSettings.LEXOFFICE_KEY_POLYXO || "";
-        
-        document.getElementById("clickup-settings-container").style.display = "block";
-        document.getElementById("clickup-api-key").value = window.currentSettings.CLICKUP_API_KEY || "";
-        document.getElementById("clickup-list-id").value = window.currentSettings.CLICKUP_LIST_ID || "";
-        document.getElementById("clickup-auto-task").checked = window.currentSettings.CLICKUP_AUTO_TASK !== false;
-        document.getElementById("clickup-filter-private").checked = window.currentSettings.CLICKUP_FILTER_PRIVATE !== false;
-
-        document.getElementById("admin-backup-container").style.display = "block";
-        const driveSyncContainer = document.getElementById("drive-sync-settings-container");
-        if (driveSyncContainer) driveSyncContainer.style.display = "block";
-
-        const gmailSettingsContainer = document.getElementById("gmail-settings-container");
-        if (gmailSettingsContainer) {
-          gmailSettingsContainer.style.display = "block";
-          const autoArchCb = document.getElementById("gmail-auto-archive-checkbox");
-          if (autoArchCb) autoArchCb.checked = window.currentSettings.GMAIL_AUTO_ARCHIVE !== false;
-          const monGmailCb = document.getElementById("monitor-gmail-checkbox");
-          if (monGmailCb) monGmailCb.checked = window.currentSettings.MONITOR_GMAIL === true;
-          const queryInput = document.getElementById("gmail-scan-query-input");
-          if (queryInput) queryInput.value = window.currentSettings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
-        }
-
-        const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
-        if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+          }
+        } catch (e) {}
+        displayEl.value = "Ordner via ID: " + id;
+        idEl.value = id;
       }
 
-      document.getElementById("ai-prompt-settings-container").style.display = "block";
-      document.getElementById("saveSettingsBtn").style.display = "block";
+      if (window.currentSettings?.FOLDER_ID) {
+        fetchFolderName(window.currentSettings.FOLDER_ID, rawDisplay, document.getElementById("raw-folder-id"));
+      }
+      if (window.currentSettings?.FOLDER_ID_SORTED) {
+        fetchFolderName(window.currentSettings.FOLDER_ID_SORTED, aiDisplay, document.getElementById("ai-folder-id"));
+      }
+
+      const driveSyncContainer = document.getElementById("drive-sync-settings-container");
+      if (driveSyncContainer) driveSyncContainer.style.display = "block";
+      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
     } else {
-      document.getElementById("auth-status").innerText = "Nicht authentifiziert.";
+      document.getElementById("auth-status").innerText = "Nicht authentifiziert (Google Drive).";
     }
   } catch (e) {
     document.getElementById("auth-status").innerText = "Fehler beim Laden der Ordner.";
@@ -379,10 +418,25 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
   const butlerKeyKey = document.getElementById("butler-key-thewire-key").value.trim();
   const lexKeyPolyxo = document.getElementById("lexoffice-key-polyxo").value.trim();
 
+  saveClientAccountingKeys({
+    lexKeyWirewire,
+    butlerClient: butlerKeyClient,
+    butlerSecret: butlerKeySecret,
+    butlerKey: butlerKeyKey,
+    lexKeyPolyxo,
+  });
+
   const clickupApiKey = document.getElementById("clickup-api-key").value.trim();
   const clickupListId = document.getElementById("clickup-list-id").value.trim();
   const clickupAutoTask = document.getElementById("clickup-auto-task").checked;
   const clickupFilterPrivate = document.getElementById("clickup-filter-private").checked;
+
+  saveClientClickUpConfig({
+    apiKey: clickupApiKey,
+    listId: clickupListId,
+    autoTask: clickupAutoTask,
+    filterPrivate: clickupFilterPrivate,
+  });
 
   const gmailAutoArchive = document.getElementById("gmail-auto-archive-checkbox")?.checked;
   const monitorGmailState = document.getElementById("monitor-gmail-checkbox")?.checked;
@@ -400,20 +454,13 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
       MONITOR_GMAIL: monitorGmailState || false,
       GMAIL_AUTO_ARCHIVE: gmailAutoArchive !== undefined ? gmailAutoArchive : true,
       GMAIL_SCAN_QUERY: gmailScanQuery,
-      LEXOFFICE_KEY_WIREWIRE: lexKeyWirewire,
-      BUTTLER_KEY_THEWIRE_CLIENT: butlerKeyClient,
-      BUTTLER_KEY_THEWIRE_SECRET: butlerKeySecret,
-      BUTTLER_KEY_THEWIRE_KEY: butlerKeyKey,
-      LEXOFFICE_KEY_POLYXO: lexKeyPolyxo,
-      CLICKUP_API_KEY: clickupApiKey,
-      CLICKUP_LIST_ID: clickupListId,
       CLICKUP_AUTO_TASK: clickupAutoTask,
       CLICKUP_FILTER_PRIVATE: clickupFilterPrivate,
     }),
   });
 
   if (res.ok) {
-    alert("Einstellungen erfolgreich gespeichert!");
+    alert("Einstellungen erfolgreich gespeichert! (API-Keys sicher lokal im Browser hinterlegt)");
     settingsModal.style.display = "none";
   } else {
     alert("Fehler beim Speichern der Einstellungen.");
@@ -3132,10 +3179,21 @@ async function checkLexofficeTarget(jobId, companyKey) {
   `;
 
   try {
+    const accountingKeys = getClientAccountingKeys();
     const res = await fetch("/api/accounting/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId, companyKey: currentSelectedLexCompany }),
+      body: JSON.stringify({
+        jobId,
+        companyKey: currentSelectedLexCompany,
+        credentials: {
+          wirewireApiKey: accountingKeys.lexKeyWirewire || "",
+          polyxoApiKey: accountingKeys.lexKeyPolyxo || "",
+          thewireClient: accountingKeys.butlerClient || "",
+          thewireSecret: accountingKeys.butlerSecret || "",
+          thewireKey: accountingKeys.butlerKey || "",
+        },
+      }),
     });
 
     const data = await res.json();
@@ -3183,10 +3241,19 @@ if (lexModalSubmitBtn) {
     `;
 
     try {
+      const accountingKeys = getClientAccountingKeys();
       const res = await fetch("/api/accounting/transfer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, companyKey, force: isForce }),
+        body: JSON.stringify({
+          jobId,
+          companyKey,
+          force: isForce,
+          apiKey: companyKey === "polyxo" ? accountingKeys.lexKeyPolyxo : accountingKeys.lexKeyWirewire,
+          client: accountingKeys.butlerClient,
+          secret: accountingKeys.butlerSecret,
+          key: accountingKeys.butlerKey,
+        }),
       });
 
       const data = await res.json();
@@ -3377,7 +3444,9 @@ function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
           compareRemoteLoading.innerHTML = '<span class="material-symbols-outlined text-warning" style="font-size: 40px;">warning</span><div class="small mt-2 text-white-50">Vorschau konnte aus Lexoffice nicht gerendert werden</div>';
         }
       };
-      compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}&_t=${Date.now()}`;
+      const accountingKeys = getClientAccountingKeys();
+      const apiKey = companyKey === "polyxo" ? (accountingKeys.lexKeyPolyxo || "") : (accountingKeys.lexKeyWirewire || "");
+      compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}&apiKey=${encodeURIComponent(apiKey)}&_t=${Date.now()}`;
     }
   }
 
@@ -3700,10 +3769,16 @@ async function executeClickupTransfer(jobId, force = false, btn = null) {
   }
 
   try {
+    const clickupConfig = getClientClickUpConfig();
     const res = await fetch("/api/clickup/transfer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId, force }),
+      body: JSON.stringify({
+        jobId,
+        force,
+        apiKey: clickupConfig.apiKey || "",
+        listId: clickupConfig.listId || "",
+      }),
     });
 
     const data = await res.json();
@@ -4155,7 +4230,21 @@ if (triggerSyncModalBtn) {
     syncProgressContainer.style.display = "none";
 
     try {
-      const res = await fetch("/api/clickup/sync-preview");
+      const clickupConfig = getClientClickUpConfig();
+      if (!clickupConfig.apiKey) {
+        syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Kein ClickUp API-Key hinterlegt. Bitte hinterlegen Sie Ihren API-Key in den Einstellungen.</div>`;
+        return;
+      }
+
+      const res = await fetch("/api/clickup/sync-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey: clickupConfig.apiKey || "",
+          listId: clickupConfig.listId || "",
+          filterPrivate: clickupConfig.filterPrivate !== undefined ? clickupConfig.filterPrivate : true,
+        }),
+      });
       const data = await res.json();
 
       if (data.success) {
@@ -4216,10 +4305,15 @@ if (confirmSyncModalBtn) {
         }
       }, 500);
 
+      const clickupConfig = getClientClickUpConfig();
       const res = await fetch("/api/clickup/sync-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          apiKey: clickupConfig.apiKey || "",
+          listId: clickupConfig.listId || "",
+          filterPrivate: clickupConfig.filterPrivate !== undefined ? clickupConfig.filterPrivate : true,
+        }),
       });
 
       clearInterval(progressTimer);
@@ -4878,6 +4972,8 @@ const inboxCountDetected = document.getElementById("inbox-count-detected");
 const inboxCountActive = document.getElementById("inbox-count-active");
 const inboxCountSkipped = document.getElementById("inbox-count-skipped");
 const inboxSelectionControls = document.getElementById("inbox-selection-controls");
+const inboxScanQueryInput = document.getElementById("gmail-scan-query-input");
+const inboxPermissionCard = document.getElementById("inbox-permission-card");
 
 // PDF Attachment Preview Modal Elements & State
 const inboxPdfPreviewModal = document.getElementById("inbox-pdf-preview-modal");

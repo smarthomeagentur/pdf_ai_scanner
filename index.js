@@ -158,14 +158,6 @@ const appSettings = {
   AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
   AI_CATEGORIES:
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
-  LEXOFFICE_KEY_WIREWIRE: process.env.LEXOFFICE_KEY_WIREWIRE || "",
-  LEXOFFICE_KEY_THEWIRE: process.env.LEXOFFICE_KEY_THEWIRE || "",
-  LEXOFFICE_KEY_POLYXO: process.env.LEXOFFICE_KEY_POLYXO || "",
-  BUTTLER_KEY_THEWIRE_CLIENT: process.env.BUTTLER_KEY_THEWIRE_CLIENT || "",
-  BUTTLER_KEY_THEWIRE_SECRET: process.env.BUTTLER_KEY_THEWIRE_SECRET || "",
-  BUTTLER_KEY_THEWIRE_KEY: process.env.BUTTLER_KEY_THEWIRE_KEY || "",
-  CLICKUP_API_KEY: process.env.CLICKUP_API_KEY || "",
-  CLICKUP_LIST_ID: process.env.CLICKUP_LIST_ID || "",
   CLICKUP_AUTO_TASK: true,
   CLICKUP_FILTER_PRIVATE: true,
   CLICKUP_CUSTOM_FIELD_COMPANY_ID: process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "",
@@ -175,13 +167,23 @@ const appSettings = {
 
 if (fs.existsSync(SETTINGS_FILE)) {
   try {
-    Object.assign(appSettings, JSON.parse(fs.readFileSync(SETTINGS_FILE)));
+    const loaded = JSON.parse(fs.readFileSync(SETTINGS_FILE));
+    // Strip sensitive third-party keys if present
+    delete loaded.LEXOFFICE_KEY_WIREWIRE;
+    delete loaded.LEXOFFICE_KEY_THEWIRE;
+    delete loaded.LEXOFFICE_KEY_POLYXO;
+    delete loaded.BUTTLER_KEY_THEWIRE_CLIENT;
+    delete loaded.BUTTLER_KEY_THEWIRE_SECRET;
+    delete loaded.BUTTLER_KEY_THEWIRE_KEY;
+    delete loaded.CLICKUP_API_KEY;
+    delete loaded.CLICKUP_LIST_ID;
+    Object.assign(appSettings, loaded);
   } catch (e) { }
 }
 
 const clickupApi = new ClickUpAPI(
-  appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY,
-  appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID,
+  process.env.CLICKUP_API_KEY || "",
+  process.env.CLICKUP_LIST_ID || "",
   appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
   appSettings.CLICKUP_STATUS_INVOICE || process.env.CLICKUP_STATUS_INVOICE,
   appSettings.CLICKUP_STATUS_DEFAULT || process.env.CLICKUP_STATUS_DEFAULT
@@ -392,29 +394,7 @@ app.get("/api/config", async (req, res) => {
 });
 
 app.get("/api/settings", (req, res) => {
-  const isAdmin = checkIsAdmin(req);
-  if (isAdmin) {
-    return res.json({ success: true, settings: appSettings });
-  }
-
-  // Safe masked view for non-admin users
-  const safeSettings = { ...appSettings };
-  const sensitiveKeys = [
-    "ADMIN_PIN",
-    "ADMIN_PASSWORD",
-    "LEXOFFICE_KEY_WIREWIRE",
-    "LEXOFFICE_KEY_POLYXO",
-    "BUTTLER_KEY_THEWIRE_CLIENT",
-    "BUTTLER_KEY_THEWIRE_SECRET",
-    "BUTTLER_KEY_THEWIRE_KEY",
-    "CLICKUP_API_KEY",
-  ];
-  for (const k of sensitiveKeys) {
-    if (safeSettings[k]) {
-      safeSettings[k] = "********";
-    }
-  }
-  res.json({ success: true, settings: safeSettings });
+  res.json({ success: true, settings: appSettings });
 });
 
 app.post("/api/settings", requireAdmin, async (req, res) => {
@@ -427,23 +407,12 @@ app.post("/api/settings", requireAdmin, async (req, res) => {
     "MONITOR_GMAIL",
     "GMAIL_AUTO_ARCHIVE",
     "GMAIL_SCAN_QUERY",
-    "LEXOFFICE_KEY_WIREWIRE",
-    "LEXOFFICE_KEY_THEWIRE",
-    "LEXOFFICE_KEY_POLYXO",
-    "BUTTLER_KEY_THEWIRE_CLIENT",
-    "BUTTLER_KEY_THEWIRE_SECRET",
-    "BUTTLER_KEY_THEWIRE_KEY",
-    "CLICKUP_API_KEY",
-    "CLICKUP_LIST_ID",
     "CLICKUP_AUTO_TASK",
     "CLICKUP_FILTER_PRIVATE",
   ].forEach((key) => {
     if (req.body[key] !== undefined) appSettings[key] = req.body[key];
   });
   await fs.promises.writeFile(SETTINGS_FILE, JSON.stringify(appSettings, null, 2));
-
-  clickupApi.setApiKey(appSettings.CLICKUP_API_KEY);
-  clickupApi.setListId(appSettings.CLICKUP_LIST_ID);
 
   res.json({ success: true });
 
@@ -3029,7 +2998,7 @@ function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFile
   return { found: matches.length > 0, matches };
 }
 
-async function checkSingleAccountingCompany(job, compKey) {
+async function checkSingleAccountingCompany(job, compKey, clientCredentials = {}) {
   const isButler = compKey === "thewire";
   const provider = isButler ? "buchhaltungsbutler" : "lexoffice";
   const providerName = isButler ? "BuchhaltungsButler" : "Lexoffice";
@@ -3047,9 +3016,9 @@ async function checkSingleAccountingCompany(job, compKey) {
   const fileName = job.result?.full || job.originalName || "";
 
   if (isButler) {
-    const client = (appSettings.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
-    const secret = (appSettings.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
-    const key = (appSettings.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+    const client = (clientCredentials.thewireClient || clientCredentials.client || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+    const secret = (clientCredentials.thewireSecret || clientCredentials.secret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+    const key = (clientCredentials.thewireKey || clientCredentials.key || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
 
     if (client && secret && key) {
       try {
@@ -3082,12 +3051,15 @@ async function checkSingleAccountingCompany(job, compKey) {
       }
     } else {
       apiValid = false;
-      apiError = "BuchhaltungsButler Zugangsdaten für The Wire fehlen in den Einstellungen.";
+      apiError = "BuchhaltungsButler Zugangsdaten für The Wire fehlen.";
     }
   } else {
     // Lexoffice (wirewire or polyxo)
     const apiKeySettingName = `LEXOFFICE_KEY_${compKey.toUpperCase()}`;
-    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    const directKey = compKey === "polyxo"
+      ? (clientCredentials.polyxoApiKey || clientCredentials.apiKey)
+      : (clientCredentials.wirewireApiKey || clientCredentials.apiKey);
+    const apiKey = (directKey || appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
 
     if (apiKey) {
       try {
@@ -3122,7 +3094,7 @@ async function checkSingleAccountingCompany(job, compKey) {
       }
     } else {
       apiValid = false;
-      apiError = `Kein API-Key für Lexoffice (${compKey}) in den Einstellungen hinterlegt.`;
+      apiError = `Kein API-Key für Lexoffice (${compKey}) hinterlegt.`;
     }
   }
 
@@ -3148,22 +3120,27 @@ async function checkSingleAccountingCompany(job, compKey) {
 
 // Accounting Endpoints (Lexoffice & BuchhaltungsButler) - Admin only
 app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async (req, res) => {
-  const { jobId, companyKey } = req.body;
+  const { jobId, companyKey, credentials = {} } = req.body;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
 
   const validCompanies = ["wirewire", "thewire", "polyxo"];
   const configuredCompanies = {
-    wirewire: !!(appSettings.LEXOFFICE_KEY_WIREWIRE && appSettings.LEXOFFICE_KEY_WIREWIRE.trim()),
-    thewire: !!(
-      appSettings.BUTTLER_KEY_THEWIRE_CLIENT &&
-      appSettings.BUTTLER_KEY_THEWIRE_SECRET &&
-      appSettings.BUTTLER_KEY_THEWIRE_KEY &&
-      appSettings.BUTTLER_KEY_THEWIRE_CLIENT.trim() &&
-      appSettings.BUTTLER_KEY_THEWIRE_SECRET.trim() &&
-      appSettings.BUTTLER_KEY_THEWIRE_KEY.trim()
+    wirewire: !!(
+      (credentials.wirewireApiKey && credentials.wirewireApiKey.trim()) ||
+      (appSettings.LEXOFFICE_KEY_WIREWIRE && appSettings.LEXOFFICE_KEY_WIREWIRE.trim()) ||
+      process.env.LEXOFFICE_KEY_WIREWIRE
     ),
-    polyxo: !!(appSettings.LEXOFFICE_KEY_POLYXO && appSettings.LEXOFFICE_KEY_POLYXO.trim()),
+    thewire: !!(
+      (credentials.thewireClient && credentials.thewireSecret && credentials.thewireKey) ||
+      (appSettings.BUTTLER_KEY_THEWIRE_CLIENT && appSettings.BUTTLER_KEY_THEWIRE_SECRET && appSettings.BUTTLER_KEY_THEWIRE_KEY) ||
+      (process.env.BUTTLER_KEY_THEWIRE_CLIENT && process.env.BUTTLER_KEY_THEWIRE_SECRET && process.env.BUTTLER_KEY_THEWIRE_KEY)
+    ),
+    polyxo: !!(
+      (credentials.polyxoApiKey && credentials.polyxoApiKey.trim()) ||
+      (appSettings.LEXOFFICE_KEY_POLYXO && appSettings.LEXOFFICE_KEY_POLYXO.trim()) ||
+      process.env.LEXOFFICE_KEY_POLYXO
+    ),
   };
 
   // Determine suggested company
@@ -3180,9 +3157,9 @@ app.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async 
 
   const targetComp = companyKey && validCompanies.includes(companyKey) ? companyKey : suggestedCompany;
 
-  // Perform parallel checks across ALL connected companies
+  // Perform parallel checks across ALL connected companies with ephemeral credentials
   const allCompanyChecksArray = await Promise.all(
-    validCompanies.map((c) => checkSingleAccountingCompany(job, c))
+    validCompanies.map((c) => checkSingleAccountingCompany(job, c, credentials))
   );
 
   const allCompanyChecks = {};
@@ -3242,7 +3219,7 @@ app.post("/api/accounting/mark-synced", requireAdmin, async (req, res) => {
 
 app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
   try {
-    const { companyKey, voucherId, fileId } = req.query;
+    const { companyKey, voucherId, fileId, apiKey: reqApiKey } = req.query;
     if (!companyKey) return res.status(400).send("companyKey erforderlich");
 
     if (companyKey === "thewire") {
@@ -3250,7 +3227,7 @@ app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
     }
 
     const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
-    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    const apiKey = (reqApiKey || req.headers["x-lexoffice-key"] || appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
     if (!apiKey) return res.status(400).send("Kein API-Key für " + companyKey);
 
     let targetFileId = fileId;
@@ -3306,7 +3283,7 @@ app.get("/api/accounting/voucher-file", requireAdmin, async (req, res) => {
 
 app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
   try {
-    const { companyKey, voucherId, fileId } = req.query;
+    const { companyKey, voucherId, fileId, apiKey: reqApiKey } = req.query;
     if (!companyKey) return res.status(400).send("companyKey erforderlich");
 
     if (companyKey === "thewire") {
@@ -3314,7 +3291,7 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
     }
 
     const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
-    const apiKey = (appSettings[apiKeySettingName] || "").trim();
+    const apiKey = (reqApiKey || req.headers["x-lexoffice-key"] || appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
     if (!apiKey) return res.status(400).send("Kein API-Key für " + companyKey);
 
     const safeId = (voucherId || fileId || "doc").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -3404,7 +3381,7 @@ app.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
 });
 
 app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, async (req, res) => {
-  const { jobId, companyKey, force } = req.body;
+  const { jobId, companyKey, force, apiKey: reqApiKey, client: reqClient, secret: reqSecret, key: reqKey, credentials = {} } = req.body;
   const validCompanies = ["wirewire", "thewire", "polyxo"];
   if (!validCompanies.includes(companyKey)) {
     return res.status(400).json({ success: false, error: "Ungültige Zielfirma." });
@@ -3465,14 +3442,14 @@ app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, 
 
     if (companyKey === "thewire") {
       // Transfer to BuchhaltungsButler
-      const client = (appSettings.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
-      const secret = (appSettings.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
-      const key = (appSettings.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+      const client = (reqClient || credentials.thewireClient || credentials.client || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+      const secret = (reqSecret || credentials.thewireSecret || credentials.secret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+      const key = (reqKey || credentials.thewireKey || credentials.key || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
 
       if (!client || !secret || !key) {
         return res.status(400).json({
           success: false,
-          error: "BuchhaltungsButler Zugangsdaten für The Wire fehlen in den Einstellungen.",
+          error: "BuchhaltungsButler Zugangsdaten für The Wire fehlen.",
         });
       }
 
@@ -3516,11 +3493,12 @@ app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, 
     } else {
       // Transfer to Lexoffice (wirewire or polyxo)
       const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
-      const apiKey = appSettings[apiKeySettingName];
-      if (!apiKey || !apiKey.trim()) {
+      const directKey = reqApiKey || (companyKey === "polyxo" ? credentials.polyxoApiKey : credentials.wirewireApiKey) || req.headers["x-lexoffice-key"];
+      const apiKey = (directKey || appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
+      if (!apiKey) {
         return res.status(400).json({
           success: false,
-          error: `Kein API-Key für Lexoffice (${companyKey}) in den Einstellungen hinterlegt.`,
+          error: `Kein API-Key für Lexoffice (${companyKey}) übergeben.`,
         });
       }
 
@@ -3532,7 +3510,7 @@ app.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, 
       const lexResponse = await fetch("https://api.lexoffice.io/v1/files", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey.trim()}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: formData,
       });
@@ -3602,8 +3580,9 @@ async function getJobPdfBuffer(job) {
 // ClickUp Endpoints (Admin only)
 app.post("/api/clickup/verify", requireAdmin, async (req, res) => {
   try {
-    const apiKey = (req.body.apiKey !== undefined ? req.body.apiKey : appSettings.CLICKUP_API_KEY) || process.env.CLICKUP_API_KEY;
-    const listId = (req.body.listId !== undefined ? req.body.listId : appSettings.CLICKUP_LIST_ID) || process.env.CLICKUP_LIST_ID || "";
+    const apiKey = (req.body.apiKey || req.headers["x-clickup-api-key"] || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "").trim();
+    const listId = (req.body.listId || req.headers["x-clickup-list-id"] || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "").trim();
+    if (!apiKey) return res.status(400).json({ success: false, error: "Kein ClickUp API-Key übergeben." });
     const testApi = new ClickUpAPI(apiKey, listId);
     const result = await testApi.verifyConnection(listId);
     res.json(result);
@@ -3613,7 +3592,14 @@ app.post("/api/clickup/verify", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/clickup/transfer", requireAdmin, async (req, res) => {
-  const { jobId, force } = req.body;
+  const { jobId, force, apiKey: reqApiKey, listId: reqListId } = req.body;
+  const apiKey = (reqApiKey || req.headers["x-clickup-api-key"] || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "").trim();
+  const listId = (reqListId || req.headers["x-clickup-list-id"] || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "").trim();
+
+  if (!apiKey) {
+    return res.status(400).json({ success: false, error: "Kein ClickUp API-Key übergeben." });
+  }
+
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
 
@@ -3631,12 +3617,20 @@ app.post("/api/clickup/transfer", requireAdmin, async (req, res) => {
     const fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
     const safeFileName = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
 
-    const clickupRes = await clickupApi.createOrUpdateDocumentTask({
+    const activeClickUpApi = new ClickUpAPI(
+      apiKey,
+      listId,
+      appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+      appSettings.CLICKUP_STATUS_INVOICE || process.env.CLICKUP_STATUS_INVOICE,
+      appSettings.CLICKUP_STATUS_DEFAULT || process.env.CLICKUP_STATUS_DEFAULT
+    );
+
+    const clickupRes = await activeClickUpApi.createOrUpdateDocumentTask({
       fileBuffer: fileBuffer,
       fileName: safeFileName,
       aiResult: job.result || {},
       existingTaskId: force && job.clickup ? job.clickup.taskId : null,
-      listId: appSettings.CLICKUP_LIST_ID,
+      listId: listId || undefined,
       uploadAttachment: !!fileBuffer,
     });
 
@@ -3648,7 +3642,7 @@ app.post("/api/clickup/transfer", requireAdmin, async (req, res) => {
       transferredAt: new Date().toISOString(),
     };
     saveJobs();
-          console.log(`[CLICKUP] Job ${jobId} manuell zu ClickUp übertragen (Task ${clickupRes.taskId})`);
+    console.log(`[CLICKUP] Job ${jobId} manuell zu ClickUp übertragen (Task ${clickupRes.taskId})`);
     res.json({ success: true, clickup: job.clickup, isUpdated: clickupRes.isUpdated });
   } catch (err) {
     console.error("[CLICKUP] Fehler bei manueller Übertragung:", err);
@@ -3656,13 +3650,25 @@ app.post("/api/clickup/transfer", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
+app.all("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
   try {
-    if (!appSettings.CLICKUP_API_KEY) {
-      return res.status(400).json({ success: false, error: "Kein ClickUp API-Key hinterlegt." });
+    const apiKey = (req.body?.apiKey || req.query?.apiKey || req.headers["x-clickup-api-key"] || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "").trim();
+    const listId = (req.body?.listId || req.query?.listId || req.headers["x-clickup-list-id"] || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "").trim();
+    const filterPrivate = req.body?.filterPrivate !== undefined ? !!req.body.filterPrivate : (req.query?.filterPrivate !== undefined ? req.query.filterPrivate === "true" : appSettings.CLICKUP_FILTER_PRIVATE);
+
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: "Kein ClickUp API-Key übergeben." });
     }
 
-    const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+    const activeClickUpApi = new ClickUpAPI(
+      apiKey,
+      listId,
+      appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+      appSettings.CLICKUP_STATUS_INVOICE || process.env.CLICKUP_STATUS_INVOICE,
+      appSettings.CLICKUP_STATUS_DEFAULT || process.env.CLICKUP_STATUS_DEFAULT
+    );
+
+    const clickupTasks = await activeClickUpApi.fetchListTasks(listId);
     const jobsList = Object.values(uploadJobs).filter((j) => j.status === "completed" && j.result);
 
     const toCreate = [];
@@ -3676,7 +3682,7 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
         (job.result.company && job.result.company.toLowerCase().includes("daniel")) ||
         (job.result.category && job.result.category.toLowerCase() === "privat");
 
-      if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivate) {
+      if (filterPrivate && isPrivate) {
         toSkip.push({
           jobId: job.id,
           fileName: job.result.full || job.originalName,
@@ -3687,16 +3693,16 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
         continue;
       }
 
-      const matchingTask = clickupApi.findMatchingTask(job, clickupTasks);
+      const matchingTask = activeClickUpApi.findMatchingTask(job, clickupTasks);
       if (matchingTask) {
-        const isCurrent = clickupApi.isTaskUpToDate(job, matchingTask);
+        const isCurrent = activeClickUpApi.isTaskUpToDate(job, matchingTask);
         const itemInfo = {
           jobId: job.id,
           fileName: job.result.full || job.originalName,
           company: job.result.company || "Unbekannt",
           category: job.result.category || "-",
           isInvoice: !!job.result.isInvoice,
-          amount: job.result.invoiceAmmount ? clickupApi.formatAmount(job.result.invoiceAmmount) : "",
+          amount: job.result.invoiceAmmount ? activeClickUpApi.formatAmount(job.result.invoiceAmmount) : "",
           existingTaskId: matchingTask.id,
           existingTaskName: matchingTask.name,
           existingTaskStatus: matchingTask.status?.status || "offen",
@@ -3715,8 +3721,8 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
           company: job.result.company || "Unbekannt",
           category: job.result.category || "-",
           isInvoice: !!job.result.isInvoice,
-          amount: job.result.invoiceAmmount ? clickupApi.formatAmount(job.result.invoiceAmmount) : "",
-          suggestedTaskName: clickupApi.generateTaskName(job.result),
+          amount: job.result.invoiceAmmount ? activeClickUpApi.formatAmount(job.result.invoiceAmmount) : "",
+          suggestedTaskName: activeClickUpApi.generateTaskName(job.result),
         });
       }
     }
@@ -3738,12 +3744,24 @@ app.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
 
 app.post("/api/clickup/sync-all", requireAdmin, async (req, res) => {
   try {
-    if (!appSettings.CLICKUP_API_KEY) {
-      return res.status(400).json({ success: false, error: "Kein ClickUp API-Key hinterlegt." });
+    const { selectedJobIds, apiKey: reqApiKey, listId: reqListId, filterPrivate: reqFilterPrivate } = req.body;
+    const apiKey = (reqApiKey || req.headers["x-clickup-api-key"] || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "").trim();
+    const listId = (reqListId || req.headers["x-clickup-list-id"] || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "").trim();
+    const filterPrivate = reqFilterPrivate !== undefined ? !!reqFilterPrivate : appSettings.CLICKUP_FILTER_PRIVATE;
+
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: "Kein ClickUp API-Key übergeben." });
     }
 
-    const { selectedJobIds } = req.body;
-    const clickupTasks = await clickupApi.fetchListTasks(appSettings.CLICKUP_LIST_ID);
+    const activeClickUpApi = new ClickUpAPI(
+      apiKey,
+      listId,
+      appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+      appSettings.CLICKUP_STATUS_INVOICE || process.env.CLICKUP_STATUS_INVOICE,
+      appSettings.CLICKUP_STATUS_DEFAULT || process.env.CLICKUP_STATUS_DEFAULT
+    );
+
+    const clickupTasks = await activeClickUpApi.fetchListTasks(listId);
     const jobsList = Object.values(uploadJobs).filter((j) => {
       if (j.status !== "completed" || !j.result) return false;
       if (selectedJobIds && Array.isArray(selectedJobIds)) {
@@ -3763,16 +3781,16 @@ app.post("/api/clickup/sync-all", requireAdmin, async (req, res) => {
         (job.result.company && job.result.company.toLowerCase().includes("daniel")) ||
         (job.result.category && job.result.category.toLowerCase() === "privat");
 
-      if (appSettings.CLICKUP_FILTER_PRIVATE && isPrivate) {
+      if (filterPrivate && isPrivate) {
         skippedCount++;
         continue;
       }
 
       try {
-        const matchingTask = clickupApi.findMatchingTask(job, clickupTasks);
+        const matchingTask = activeClickUpApi.findMatchingTask(job, clickupTasks);
 
         // Wenn keine spezifische Auswahl vorliegt und Task bereits aktuell ist, überspringen
-        if (!selectedJobIds && matchingTask && clickupApi.isTaskUpToDate(job, matchingTask)) {
+        if (!selectedJobIds && matchingTask && activeClickUpApi.isTaskUpToDate(job, matchingTask)) {
           if (!job.clickup || !job.clickup.taskId) {
             job.clickup = {
               taskId: matchingTask.id,
@@ -3790,12 +3808,12 @@ app.post("/api/clickup/sync-all", requireAdmin, async (req, res) => {
         const fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
         const safeFileName = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
 
-        const clickupRes = await clickupApi.createOrUpdateDocumentTask({
+        const clickupRes = await activeClickUpApi.createOrUpdateDocumentTask({
           fileBuffer: fileBuffer,
           fileName: safeFileName,
           aiResult: job.result || {},
           existingTaskId: matchingTask ? matchingTask.id : null,
-          listId: appSettings.CLICKUP_LIST_ID,
+          listId: listId || undefined,
           uploadAttachment: !!fileBuffer && !matchingTask,
         });
 
