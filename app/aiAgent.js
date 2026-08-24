@@ -58,15 +58,10 @@ async function generatePdfName(filename, settings = {}) {
       }
     }
 
-    const pdfContentData = (await getFileDataJSONGemma(pdfData, settings)) || {
-      category: "Unbekannt",
-      company: "Unbekannt",
-      tags: ["Dokument", "Unbekannt"],
-      documentDate: "unknown",
-      isInvoice: false,
-      invoiceNumber: "none",
-      invoiceAmmount: 0,
-    };
+    const pdfContentData = await getFileDataJSONGemma(pdfData, settings);
+    if (!pdfContentData) {
+      throw new Error("KI-Analyse lieferte keine Daten.");
+    }
 
     const firstThreeWords =
       pdfContentData.tags && Array.isArray(pdfContentData.tags) && pdfContentData.tags.length > 0
@@ -88,19 +83,10 @@ async function generatePdfName(filename, settings = {}) {
       invoiceAmmount: pdfContentData.invoiceAmmount || 0,
     };
   } catch (fatalErr) {
-    console.error("[AI] Fataler Fehler bei generatePdfName:", fatalErr);
-    const pdfDate = setFileDate(filename);
+    console.error("[AI] Fehler bei generatePdfName:", fatalErr.message || fatalErr);
     return {
-      success: true,
-      full: `${pdfDate} -Unbekannt- Dokument (Unbekannt)`,
-      date: pdfDate,
-      documentDate: "unknown",
-      category: "Unbekannt",
-      tags: ["Dokument"],
-      company: "Unbekannt",
-      isInvoice: false,
-      invoiceNumber: "none",
-      invoiceAmmount: 0,
+      success: false,
+      error: fatalErr.message || "KI-Erkennung fehlgeschlagen",
     };
   }
 }
@@ -180,8 +166,9 @@ async function getFileDataJSONGemma(pdfText, settings = {}) {
     chatString.documentDate = checkFileDate(chatString.documentDate);
     return chatString;
   } catch (error) {
-    console.error("[AI] Fehler bei Ollama JSON-Analyse:", error.message || error);
-    return false;
+    const errDetail = error.cause ? `${error.message} (${error.cause.code || error.cause.message || error.cause})` : (error.message || error);
+    console.error(`[AI] Verbindungsfehler zu Ollama (${LOCAL_AI_HOST || "default host"}): ${errDetail}`);
+    throw new Error(`Ollama KI-Server (${LOCAL_AI_HOST || "localhost"}) nicht erreichbar (${errDetail})`);
   }
 }
 

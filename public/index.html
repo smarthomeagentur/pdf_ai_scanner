@@ -226,6 +226,12 @@
                   style="font-size: 13px; font-weight: normal; color: #666; margin-left: 8px;"
                 ></span>
               </h3>
+              <div class="d-flex align-items-center gap-2">
+                <button id="toggle-show-hidden-btn" type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 3px 12px;" title="Ausgeblendete Belege in der Liste anzeigen/verbergen">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">visibility_off</span>
+                  <span>Ausgeblendete (<span id="hidden-jobs-count">0</span>)</span>
+                </button>
+              </div>
             </div>
 
             <div id="job-list" style="margin-top: 5px;"></div>
@@ -1325,7 +1331,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260820_db_search_only_v22"></script>
+      <script src="/index.js?v=20260824_details_only_v3"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

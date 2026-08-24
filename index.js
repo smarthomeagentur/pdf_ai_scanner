@@ -1252,6 +1252,41 @@ let driveSyncState = {
   errors: [],
 };
 
+function validateDocumentDate(docDateStr, uploadDateStr) {
+  if (!docDateStr || docDateStr === "unknown" || docDateStr === "none" || docDateStr === "-") {
+    return { validDateStr: "unknown", isInvalidFuture: false };
+  }
+  const uploadDate = uploadDateStr ? new Date(uploadDateStr) : new Date();
+  const maxAllowed = new Date(uploadDate.getFullYear(), uploadDate.getMonth(), uploadDate.getDate(), 23, 59, 59, 999).getTime();
+
+  let parsed = null;
+  const str = String(docDateStr).trim();
+  const deMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  if (deMatch) {
+    parsed = new Date(parseInt(deMatch[3], 10), parseInt(deMatch[2], 10) - 1, parseInt(deMatch[1], 10));
+  } else {
+    const isoMatch = str.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+    if (isoMatch) {
+      parsed = new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
+    }
+  }
+
+  if (parsed && !isNaN(parsed.getTime())) {
+    if (parsed.getTime() > maxAllowed) {
+      const day = String(uploadDate.getDate()).padStart(2, "0");
+      const month = String(uploadDate.getMonth() + 1).padStart(2, "0");
+      const year = uploadDate.getFullYear();
+      const fallbackFormatted = `${day}.${month}.${year}`;
+      return {
+        validDateStr: `${fallbackFormatted} (Dokumentendatum ungültig)`,
+        rawDateStr: docDateStr,
+        isInvalidFuture: true
+      };
+    }
+  }
+  return { validDateStr: docDateStr, isInvalidFuture: false };
+}
+
 function checkJobNeedsEnrichment(job) {
   if (!job || !job.result) return true;
   const res = job.result;
@@ -1294,7 +1329,19 @@ async function processSingleJob(jobId) {
     const sortedName = await aiAgent.getPdfName(job.filePath, appSettings);
     sortedName.duration = ((Date.now() - aiStartTime) / 1000).toFixed(2);
 
-    if (sortedName.success === false) throw new Error("KI Verarbeitung fehlgeschlagen.");
+    if (sortedName.success === false) {
+      throw new Error(sortedName.error || "KI-Verarbeitung fehlgeschlagen (Ollama nicht erreichbar).");
+    }
+
+    // Prüfe immer, dass das erfasste Dokumentendatum nicht neuer als das Upload-Datum ist
+    if (sortedName.documentDate && sortedName.documentDate !== "unknown") {
+      const dateCheck = validateDocumentDate(sortedName.documentDate, job.uploadDate);
+      if (dateCheck.isInvalidFuture) {
+        console.warn(`[KI] Dokumentendatum ${sortedName.documentDate} liegt nach dem Upload-Datum (${job.uploadDate}). Setze auf Upload-Datum (Dokumentendatum ungültig).`);
+        sortedName.documentDate = dateCheck.validDateStr;
+        sortedName.rawDocumentDate = dateCheck.rawDateStr;
+      }
+    }
 
     const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
     if (sortedName.isInvoice) tagsArr.push("Rechnung");
@@ -2673,13 +2720,32 @@ app.post("/api/jobs/rescan-duplicates", requireAdmin, (req, res) => {
   res.json({ success: true, markedCount, scanned: completedJobs.length });
 });
 
-app.post("/api/jobs/:id/retry", (req, res) => {
+app.post("/api/jobs/:id/retry", async (req, res) => {
   const jobId = req.params.id;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
 
+  // Falls die lokale Datei nicht existiert, versuche sie aus Google Drive nachzuladen
   if (!job.filePath || !fs.existsSync(job.filePath)) {
-    return res.status(400).json({ success: false, error: "Quelldatei existiert nicht mehr auf dem Server." });
+    const driveFileId = job.driveFileId || job.rawDriveId || job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+    if (driveFileId) {
+      try {
+        const drive = await driveApi.getClient();
+        const safeName = (job.originalName || job.result?.full || "document").toLowerCase().endsWith(".pdf")
+          ? (job.originalName || job.result?.full || "document.pdf")
+          : `${job.originalName || job.result?.full || "document"}.pdf`;
+        const localPath = path.join(localDownloadFolder, `${Date.now()}-${safeName}`);
+        const dest = fs.createWriteStream(localPath);
+        const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
+        await pipeline(downloadRes.data, dest);
+        job.filePath = localPath;
+      } catch (dlErr) {
+        console.error(`[RETRY] Konnte Datei für Job ${jobId} nicht aus Google Drive laden:`, dlErr);
+        return res.status(400).json({ success: false, error: "Quelldatei existiert nicht lokal und konnte nicht aus Drive geladen werden." });
+      }
+    } else {
+      return res.status(400).json({ success: false, error: "Quelldatei existiert nicht mehr auf dem Server." });
+    }
   }
 
   job.status = "pending";
@@ -2691,8 +2757,8 @@ app.post("/api/jobs/:id/retry", (req, res) => {
   }
   saveJobs();
   processQueue();
-  console.log(`[RETRY] Job ${jobId} (${job.originalName}) manuell erneut in die Queue eingereiht.`);
-  res.json({ success: true, message: "Job wird erneut verarbeitet." });
+  console.log(`[RETRY] Job ${jobId} (${job.originalName || job.result?.full}) manuell erneut in die KI-Pipeline eingereiht.`);
+  res.json({ success: true, message: "KI-Erkennung wird erneut durchgeführt." });
 });
 
 app.post("/api/jobs/:id/cancel", async (req, res) => {
@@ -2747,7 +2813,7 @@ app.delete("/api/jobs/:id", requireAdmin, async (req, res) => {
 });
 
 // Hide / Unhide a job (keeps it in DB, does NOT delete from Drive, not re-synced)
-app.post("/api/jobs/:id/hide", requireAdmin, (req, res) => {
+app.post("/api/jobs/:id/hide", (req, res) => {
   const jobId = req.params.id;
   const job = uploadJobs[jobId];
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
@@ -2764,6 +2830,7 @@ app.post("/api/jobs/:id/hide", requireAdmin, (req, res) => {
   if (isHidden) {
     for (const dId of driveIds) {
       if (!hiddenDriveFiles.includes(dId)) hiddenDriveFiles.push(dId);
+      if (!processedDriveFiles.includes(dId)) processedDriveFiles.push(dId);
     }
   } else {
     hiddenDriveFiles = hiddenDriveFiles.filter((id) => !driveIds.includes(id));

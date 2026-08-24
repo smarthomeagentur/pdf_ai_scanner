@@ -765,7 +765,7 @@ function parseDocumentDate(dateStr) {
   if (!dateStr || dateStr === "unknown" || dateStr === "none" || dateStr === "-") return null;
   const str = String(dateStr).trim();
   // Match DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY
-  const deMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  const deMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
   if (deMatch) {
     return new Date(parseInt(deMatch[3], 10), parseInt(deMatch[2], 10) - 1, parseInt(deMatch[1], 10));
   }
@@ -783,32 +783,75 @@ function parseDocumentDate(dateStr) {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function getJobDocumentDate(job) {
-  if (!job) return null;
+function getValidatedJobDocumentDate(job) {
+  if (!job) return { dateObj: null, display: "-", rawDocDate: "-", isInvalidFuture: false };
+
+  const uploadDateObj = job.uploadDate ? new Date(job.uploadDate) : new Date();
+  const maxAllowedTime = new Date(
+    uploadDateObj.getFullYear(),
+    uploadDateObj.getMonth(),
+    uploadDateObj.getDate(),
+    23, 59, 59, 999
+  ).getTime();
+
   const res = job.result || {};
-  // 1. Direct documentDate field
-  if (res.documentDate && res.documentDate !== "unknown" && res.documentDate !== "none") {
-    const d = parseDocumentDate(res.documentDate);
-    if (d) return d;
+  let rawDocDate = res.documentDate || job.documentDate;
+  let parsed = null;
+
+  if (rawDocDate && rawDocDate !== "unknown" && rawDocDate !== "none" && rawDocDate !== "-") {
+    if (typeof rawDocDate === "string" && rawDocDate.includes("(Dokumentendatum ungültig)")) {
+      return {
+        dateObj: uploadDateObj,
+        display: rawDocDate,
+        rawDocDate: rawDocDate,
+        isInvalidFuture: true
+      };
+    }
+    parsed = parseDocumentDate(rawDocDate);
   }
-  // 2. Direct job.documentDate (if set)
-  if (job.documentDate && job.documentDate !== "unknown" && job.documentDate !== "none") {
-    const d = parseDocumentDate(job.documentDate);
-    if (d) return d;
+  if (!parsed) {
+    const full = res.full || job.originalName || "";
+    const nameDateMatch = full.match(/\b(20\d{2}[.-]\d{2}[.-]\d{2}|\d{6}|\d{2}\.\d{2}\.\d{4})\b/);
+    if (nameDateMatch) {
+      rawDocDate = nameDateMatch[1];
+      parsed = parseDocumentDate(nameDateMatch[1]);
+    }
   }
-  // 3. Check generated filename or original name for date prefix (e.g. 260215 or 2026-02-15 or 15.02.2026)
-  const full = res.full || job.originalName || "";
-  const nameDateMatch = full.match(/\b(20\d{2}[.-]\d{2}[.-]\d{2}|\d{6}|\d{2}\.\d{2}\.\d{4})\b/);
-  if (nameDateMatch) {
-    const d = parseDocumentDate(nameDateMatch[1]);
-    if (d) return d;
+
+  // Prüfe immer, dass das erfasste Dokumentendatum nicht neuer als das Upload-Datum ist
+  if (parsed && !isNaN(parsed.getTime())) {
+    if (parsed.getTime() > maxAllowedTime) {
+      const uploadFormatted = uploadDateObj.toLocaleDateString("de-DE");
+      return {
+        dateObj: uploadDateObj,
+        display: `${uploadFormatted} (Dokumentendatum ungültig)`,
+        rawDocDate: rawDocDate || "-",
+        isInvalidFuture: true
+      };
+    }
+    return {
+      dateObj: parsed,
+      display: rawDocDate && rawDocDate !== "unknown" ? rawDocDate : parsed.toLocaleDateString("de-DE"),
+      rawDocDate: rawDocDate || "-",
+      isInvalidFuture: false
+    };
   }
-  // 4. Fallback: upload date
+
   if (job.uploadDate) {
-    const d = new Date(job.uploadDate);
-    if (!isNaN(d.getTime())) return d;
+    return {
+      dateObj: uploadDateObj,
+      display: uploadDateObj.toLocaleDateString("de-DE"),
+      rawDocDate: "unknown",
+      isInvalidFuture: false
+    };
   }
-  return null;
+
+  return { dateObj: null, display: "-", rawDocDate: "-", isInvalidFuture: false };
+}
+
+function getJobDocumentDate(job) {
+  const validated = getValidatedJobDocumentDate(job);
+  return validated.dateObj;
 }
 
 function sortJobs(jobs, sortOrder) {
@@ -1345,6 +1388,9 @@ function renderJobs() {
     if (activeCount > 0) label += ` (${activeCount} in Arbeit)`;
     countSpan.innerText = label;
   }
+  if (typeof updateHiddenJobsCounter === "function") {
+    updateHiddenJobsCounter();
+  }
 
   // Offene Details-Boxen merken, damit sie beim Polling-Refresh nicht zuklappen
   const openStates = {};
@@ -1503,8 +1549,8 @@ function renderJobs() {
     }
 
     const displayDate = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
-    const docDateObj = getJobDocumentDate(job);
-    const docDateDisplay = job.result?.documentDate && job.result.documentDate !== "unknown" ? job.result.documentDate : (docDateObj ? docDateObj.toLocaleDateString("de-DE") : "Unbekannt");
+    const docDateInfo = getValidatedJobDocumentDate(job);
+    const docDateDisplay = docDateInfo.display;
 
     const webViewLink = job.result?.webViewLink || job.webViewLink || "#";
     const imgSrc = job.id ? `/api/jobs/${job.id}/thumbnail` : `/api/thumbnail/${job.rawDriveId || ''}`;
@@ -1591,26 +1637,29 @@ function renderJobs() {
         `;
       }
 
-      // Hide / unhide icon button (only for admins)
-      let hideButtonHtml = "";
-      if (window.isAdmin) {
-        const isHidden = job.isHidden === true;
-        hideButtonHtml = `
-          <button type="button" class="btn btn-sm btn-hide-job" data-job-id="${job.id}" data-is-hidden="${isHidden}"
-            style="position: absolute; top: 12px; right: 12px; border-radius: 8px; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-weight: 500; cursor: pointer; transition: all 0.2s ease; z-index: 2;
-              ${isHidden
-                ? 'background: #fff3e0; color: #e65100; border: 1px solid #ffcc80;'
-                : 'background: #f8fafc; color: #64748b; border: 1px solid #cbd5e1;'
-              }"
-            title="${isHidden ? 'Datei wieder einblenden' : 'Datei ausblenden (wird bei Drive-Sync nicht erneut importiert)'}">
-            <span class="material-symbols-outlined" style="font-size: 18px;">${isHidden ? 'visibility' : 'visibility_off'}</span>
-          </button>
-        `;
-      }
+      // Re-run AI analysis button
+      const reprocessButtonHtml = `
+        <button type="button" class="job-action-btn btn-reprocess-ai" data-job-id="${job.id}"
+          title="KI-Erkennung wiederholen (Dokument erneut analysieren, umbenennen & Tags aktualisieren)">
+          <span class="material-symbols-outlined" style="font-size: 16px;">psychology</span>
+          <span>KI wiederholen</span>
+        </button>
+      `;
+
+      // Hide / unhide button (available in Details and Action Bar)
+      const isHidden = job.isHidden === true;
+      const hideButtonHtml = `
+        <button type="button" class="job-action-btn btn-hide-job ${isHidden ? 'btn-hidden-active' : ''}" data-job-id="${job.id}" data-is-hidden="${isHidden}"
+          style="${isHidden ? 'background: #fff3e0; color: #e65100; border-color: #ffcc80;' : ''}"
+          title="${isHidden ? 'Datei wieder einblenden' : 'Datei ausblenden (wird bei Drive-Sync nicht erneut importiert und nicht auf Drive gelöscht)'}">
+          <span class="material-symbols-outlined" style="font-size: 16px; color: ${isHidden ? '#e65100' : 'inherit'};">${isHidden ? 'visibility' : 'visibility_off'}</span>
+          <span>${isHidden ? 'Einblenden' : 'Ausblenden'}</span>
+        </button>
+      `;
 
       resultHtml = `
                     <div style="margin-top: 6px; width: 100%;">
-                      <div class="job-action-bar">
+                      <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
                         <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}" title="Details anzeigen / ausblenden">
                           <span class="material-symbols-outlined">info</span>
                           <span>Details</span>
@@ -1620,8 +1669,14 @@ function renderJobs() {
                       </div>
                       <details class="job-result" data-job-id="${job.id}" style="transition: all 0.3s; width: 100%;" ${openStates[job.id] ? "open" : ""}>
                         <summary style="display: none;"></summary>
-                        <div style="position: relative; margin-top: 6px; padding: 14px; padding-right: 48px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
-                            ${hideButtonHtml}
+                        <div style="position: relative; margin-top: 6px; padding: 14px; background: var(--md-sys-color-surface, #fff); border-radius: var(--md-sys-shape-corner-medium, 16px); border: 1px solid var(--md-sys-color-outline-variant, #CAC4D0); margin-right: -65px; font-size: 14px; color: var(--md-sys-color-on-surface, #1C1B1F); line-height: 1.6; box-shadow: var(--md-sys-elevation-1);">
+                            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom flex-wrap gap-2">
+                              <span class="fw-bold text-muted small" style="text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Dokumentendetails</span>
+                              <div class="d-flex align-items-center gap-2">
+                                ${reprocessButtonHtml}
+                                ${hideButtonHtml}
+                              </div>
+                            </div>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Generierter Dateiname:</strong> ${
                                 job.result.full || "-"
                             }<br>
@@ -1629,7 +1684,9 @@ function renderJobs() {
                                 job.originalName || "-"
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Dokumentendatum:</strong> ${
-                                job.result.documentDate || "-"
+                                docDateInfo.isInvalidFuture
+                                  ? `<span style="color: #d32f2f; font-weight: 500;">${docDateInfo.display}</span> <span class="text-muted small" title="Erfasstes Datum war: ${docDateInfo.rawDocDate}">(Erfasst: ${docDateInfo.rawDocDate})</span>`
+                                  : docDateInfo.display
                             }<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Hochgeladen am:</strong> ${displayDate}<br>
                             <strong style="color: var(--md-sys-color-on-surface-variant, #49454F);">Unternehmen:</strong> 
@@ -2004,6 +2061,45 @@ jobList.addEventListener('click', async (e) => {
     return;
   }
 
+  // Handle click on "KI-Erkennung wiederholen" button
+  const reprocessBtn = e.target.closest('.btn-reprocess-ai');
+  if (reprocessBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    const jobId = reprocessBtn.getAttribute('data-job-id');
+    const job = (activeJobs && activeJobs.find(j => j.id === jobId)) || (uploadJobs && uploadJobs[jobId]);
+    if (!job) return;
+
+    const fileName = job.result?.full || job.originalName || "Dokument";
+    const confirmed = confirm(
+      `KI-Erkennung für „${fileName}“ wiederholen?\n\nDas Dokument wird erneut durch die Erkennungspipeline geschickt, analysiert, ggf. umbenannt und die Tags/Metadaten aktualisiert.`
+    );
+    if (!confirmed) return;
+
+    job.status = "pending";
+    job.inAiPipeline = true;
+    job.error = null;
+    renderJobs();
+
+    if (typeof showToast === "function") {
+      showToast(`🤖 KI-Erkennung für „${fileName}“ neu gestartet...`, "info");
+    }
+
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Fehler beim Starten der KI-Erkennung.");
+      }
+      fetchStatus();
+    } catch (err) {
+      console.error("[KI RETRY] Fehler:", err);
+      alert("Fehler: " + err.message);
+      fetchStatus();
+    }
+    return;
+  }
+
   // Handle click on "Ausblenden / Einblenden" hide button
   const hideBtn = e.target.closest('.btn-hide-job');
   if (hideBtn) {
@@ -2373,35 +2469,17 @@ async function loadRechnungenView() {
 }
 
 function getDocumentYearAndQuarter(job) {
-  let dateStr = null;
-  if (job.result && job.result.documentDate && job.result.documentDate !== "unknown") {
-    dateStr = job.result.documentDate; // Format DD.MM.YYYY
-  }
-
-  let year = null;
-  let month = null;
-
-  if (dateStr && dateStr.includes(".")) {
-    const parts = dateStr.split(".");
-    if (parts.length === 3) {
-      month = parseInt(parts[1], 10);
-      year = parts[2].trim();
-      if (year.length === 2) year = "20" + year;
-    }
-  }
-
-  if (!year || !month) {
-    const d = new Date(job.uploadDate || Date.now());
-    year = d.getFullYear().toString();
-    month = d.getMonth() + 1;
-  }
+  const d = getJobDocumentDate(job) || (job.uploadDate ? new Date(job.uploadDate) : new Date());
+  const year = d.getFullYear().toString();
+  const month = d.getMonth() + 1;
 
   let quarter = "Q1";
   if (month >= 1 && month <= 3) quarter = "Q1";
   else if (month >= 4 && month <= 6) quarter = "Q2";
   else if (month >= 7 && month <= 9) quarter = "Q3";
-  else if (month >= 10 && month <= 12) quarter = "Q4";
+  else quarter = "Q4";
 
+  const dateStr = getValidatedJobDocumentDate(job).display;
   return { year, quarter, dateStr };
 }
 
@@ -2613,7 +2691,7 @@ function createRechnungCard(job) {
             ${isInvoiceBadge}
             <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${res.company || "Unbekannt"}</span>
             ${res.category ? `<span class="badge bg-light text-dark border">${res.category}</span>` : ""}
-            ${res.documentDate && res.documentDate !== "unknown" ? `<span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${res.documentDate}</span>` : ""}
+            <span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${getValidatedJobDocumentDate(job).display}</span>
           </div>
           <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 14px;" title="${res.full || job.originalName}">${res.full || job.originalName}</h6>
           <div class="small text-muted d-flex gap-3 flex-wrap">
@@ -2643,13 +2721,13 @@ function createRechnungCard(job) {
           <div class="d-flex align-items-center gap-2">
             <span class="text-muted small" style="font-size: 12px; font-weight: 500;">Buchhaltung:</span>
             ${activeTransfer
-              ? `<span class="badge bg-success-subtle text-success border border-success-subtle">${providerLabel} (${activeCompany})</span>`
-              : `<span class="badge bg-light text-secondary border">Offen</span>`
+              ? `<span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1"><span class="material-symbols-outlined" style="font-size: 13px;">check_circle</span> <span>✓ Übertragen am ${new Date(activeTransfer.transferredAt).toLocaleDateString("de-DE")}</span></span>`
+              : `<span class="badge bg-light text-secondary border">Nicht übertragen</span>`
             }
           </div>
-          <button class="btn btn-sm ${activeTransfer ? 'btn-outline-success' : 'btn-primary'} rechnung-lexoffice-btn d-flex align-items-center gap-1" data-job-id="${job.id}" style="border-radius: 20px; padding: 4px 14px; font-weight: 500; font-size: 12px; white-space: nowrap;">
-            <span class="material-symbols-outlined" style="font-size: 16px;">${activeTransfer ? 'check_circle' : 'sync'}</span>
-            <span>${activeTransfer ? '✓ Synchronisiert' : 'Buchhaltung Sync'}</span>
+          <button class="btn btn-sm ${activeTransfer ? 'btn-outline-success' : 'btn-outline-primary'} rechnung-lex-btn d-flex align-items-center gap-1" data-job-id="${job.id}" style="border-radius: 20px; padding: 4px 12px; font-size: 12px;">
+            <span class="material-symbols-outlined" style="font-size: 15px;">${activeTransfer ? 'check_circle' : 'sync'}</span>
+            <span>${activeTransfer ? '✓ Synchronisiert' : 'In Buchhaltung'}</span>
           </button>
         </div>
       ` : ''}
@@ -2721,7 +2799,7 @@ async function openLexofficeSyncModal(jobId) {
     lexDocTitle.title = res.full || job.originalName || "";
   }
   if (lexDocDate) {
-    lexDocDate.innerText = `📅 ${res.documentDate && res.documentDate !== "unknown" ? res.documentDate : (job.uploadDate ? new Date(job.uploadDate).toLocaleDateString("de-DE") : "-")}`;
+    lexDocDate.innerText = `📅 ${getValidatedJobDocumentDate(job).display}`;
   }
   if (lexDocCompany) {
     lexDocCompany.innerText = `🏢 ${res.company || "Unbekannt"}`;
@@ -3413,7 +3491,7 @@ async function openDuplicateCompareModal(jobId) {
     if (curRes.invoiceAmmount || cur.invoiceAmmount) {
       curAmtStr = (((curRes.invoiceAmmount || cur.invoiceAmmount) / 100).toFixed(2)).replace(".", ",") + " €";
     }
-    const curDate = curRes.documentDate || curRes.date || (cur.uploadDate ? new Date(cur.uploadDate).toLocaleDateString("de-DE") : "-");
+    const curDate = getValidatedJobDocumentDate(cur).display;
     const curComp = curRes.company || cur.targetCompany || "-";
 
     const colClass = dups.length === 1 ? "col-12 col-md-6" : (dups.length === 2 ? "col-12 col-md-4" : "col-12 col-md-4");
@@ -3487,7 +3565,7 @@ async function openDuplicateCompareModal(jobId) {
         if (dupRes.invoiceAmmount || dupJob.invoiceAmmount) {
           dupAmtStr = (((dupRes.invoiceAmmount || dupJob.invoiceAmmount) / 100).toFixed(2)).replace(".", ",") + " €";
         }
-        const dupDate = dupRes.documentDate || dupRes.date || (dupJob.uploadDate ? new Date(dupJob.uploadDate).toLocaleDateString("de-DE") : "-");
+        const dupDate = getValidatedJobDocumentDate(dupJob).display;
         const dupComp = dupRes.company || dupJob.targetCompany || "-";
         const reasonsHtml = (d.matchReasons || []).map(r => `<span class="badge bg-warning-subtle text-dark border border-warning-subtle small me-1 mb-1">✓ ${r}</span>`).join(" ");
 
@@ -4170,6 +4248,39 @@ const startSortSelect = document.getElementById("start-sort-select");
 const startFilterDate = document.getElementById("start-filter-date");
 const startFilterCompany = document.getElementById("start-filter-company");
 const startResetFiltersBtn = document.getElementById("start-reset-filters-btn");
+const toggleShowHiddenBtn = document.getElementById("toggle-show-hidden-btn");
+const hiddenJobsCountEl = document.getElementById("hidden-jobs-count");
+
+function updateHiddenJobsCounter() {
+  const hiddenCount = (activeJobs || []).filter((j) => j.isHidden === true).length;
+  if (hiddenJobsCountEl) hiddenJobsCountEl.innerText = hiddenCount;
+  if (toggleShowHiddenBtn) {
+    if (window.showHiddenJobs) {
+      toggleShowHiddenBtn.classList.add("btn-primary");
+      toggleShowHiddenBtn.classList.remove("btn-outline-secondary");
+      toggleShowHiddenBtn.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size: 15px;">visibility</span>
+        <span>Ausgeblendete (${hiddenCount})</span>
+      `;
+    } else {
+      toggleShowHiddenBtn.classList.remove("btn-primary");
+      toggleShowHiddenBtn.classList.add("btn-outline-secondary");
+      toggleShowHiddenBtn.innerHTML = `
+        <span class="material-symbols-outlined" style="font-size: 15px;">visibility_off</span>
+        <span>Ausgeblendete (${hiddenCount})</span>
+      `;
+    }
+  }
+}
+
+if (toggleShowHiddenBtn) {
+  toggleShowHiddenBtn.addEventListener("click", () => {
+    window.showHiddenJobs = !window.showHiddenJobs;
+    startCurrentPage = 1;
+    updateHiddenJobsCounter();
+    renderJobs();
+  });
+}
 
 if (startSortSelect) {
   startSortSelect.addEventListener("change", (e) => {
