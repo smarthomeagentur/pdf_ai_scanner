@@ -338,10 +338,96 @@ function renderSyncPreviewItems() {
 }
 
 export async function transferJobToClickUp(jobId, force = false, btn = null) {
-  await executeClickupTransfer(jobId, force, btn);
+  if (force) {
+    return await executeClickupTransfer(jobId, true, btn);
+  }
+
+  const targetJob = state.jobs.find((j) => j.id === jobId);
+  if (!targetJob) {
+    showToast("Dokument nicht gefunden.", "error");
+    return;
+  }
+
+  const res = targetJob.result || {};
+  const isAlreadyTransferred = !!(targetJob.clickup && targetJob.clickup.taskId);
+  const taskId = targetJob.clickup?.taskId;
+  const taskUrl = targetJob.clickup?.taskUrl || (taskId ? `https://app.clickup.com/t/${taskId}` : "");
+
+  pendingClickupTransferJobId = jobId;
+  pendingClickupTransferBtn = btn;
+
+  // 1. Set Title & Button text
+  const modalTitle = document.getElementById("confirm-clickup-modal-title");
+  const btnText = document.getElementById("confirm-clickup-btn-text");
+  if (modalTitle) {
+    modalTitle.innerText = isAlreadyTransferred ? "ClickUp Task aktualisieren" : "ClickUp Task erstellen";
+  }
+  if (btnText) {
+    btnText.innerText = isAlreadyTransferred ? "Task aktualisieren" : "Task in ClickUp erstellen";
+  }
+
+  // 2. Thumbnail
+  const thumbEl = document.getElementById("clickup-modal-thumb");
+  if (thumbEl) {
+    const thumbUrl = `/api/thumbnail/${targetJob.id}?v=${targetJob.aiPipelineCompletedAt || targetJob.uploadDate || 1}`;
+    thumbEl.innerHTML = `<img src="${thumbUrl}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.parentElement.innerHTML='<span class=\\'material-symbols-outlined text-muted\\'>description</span>'">`;
+  }
+
+  // 3. Document details
+  const docTitle = document.getElementById("confirm-clickup-doc-title");
+  const docDate = document.getElementById("confirm-clickup-doc-date");
+  const docComp = document.getElementById("confirm-clickup-doc-company");
+  const docCat = document.getElementById("confirm-clickup-doc-category");
+  const docInv = document.getElementById("confirm-clickup-doc-inv");
+  const docAmt = document.getElementById("confirm-clickup-doc-amt");
+
+  if (docTitle) docTitle.innerText = res.full || targetJob.originalName || "Dokument.pdf";
+  if (docDate) docDate.innerText = `📅 ${res.documentDate || "-"}`;
+  if (docComp) docComp.innerText = `🏢 ${res.company || "Unbekannt"}`;
+  if (docCat) docCat.innerText = `📁 ${res.category || "-"}`;
+  if (docInv) docInv.innerText = `Rechnung: ${res.invoiceNumber && res.invoiceNumber !== "none" ? res.invoiceNumber : "-"}`;
+  if (docAmt) {
+    const amtStr = res.invoiceAmmount ? `${(res.invoiceAmmount / 100).toFixed(2).replace(".", ",")} €` : "";
+    docAmt.innerText = amtStr ? `Betrag: ${amtStr}` : "";
+  }
+
+  // 4. Task Name Preview
+  const taskPreview = document.getElementById("confirm-clickup-task-preview");
+  const cat = res.category || "Dokument";
+  const desc = Array.isArray(res.tags) && res.tags.length > 0 && res.tags[0] !== "none"
+    ? res.tags.slice(0, 3).join(" ")
+    : "Dokument";
+  const suggestedTaskName = `(${cat}) ${desc}`;
+  if (taskPreview) taskPreview.innerText = suggestedTaskName;
+
+  // 5. Explanatory text & link
+  const textEl = document.getElementById("confirm-clickup-text");
+  if (textEl) {
+    textEl.innerText = isAlreadyTransferred
+      ? `Dieses Dokument wurde bereits übertragen (Task #${taskId}). Möchtest du die Metadaten in ClickUp aktualisieren?`
+      : `Möchtest du dieses Dokument jetzt als Aufgabe in die konfigurierte ClickUp-Liste übertragen?`;
+  }
+
+  const linkContainer = document.getElementById("confirm-clickup-link-container");
+  const taskLink = document.getElementById("confirm-clickup-task-link");
+  const taskIdBadge = document.getElementById("confirm-clickup-task-id-badge");
+
+  if (linkContainer && taskLink) {
+    if (isAlreadyTransferred && (taskId || taskUrl)) {
+      linkContainer.style.display = "block";
+      taskLink.href = taskUrl || `https://app.clickup.com/t/${taskId}`;
+      if (taskIdBadge) taskIdBadge.innerText = `#${taskId || ""}`;
+    } else {
+      linkContainer.style.display = "none";
+    }
+  }
+
+  // 6. Show Modal
+  const confirmModal = document.getElementById("confirm-clickup-modal");
+  if (confirmModal) confirmModal.style.display = "flex";
 }
 
-async function executeClickupTransfer(jobId, force = false, btn = null) {
+async function executeClickupTransfer(jobId, force = true, btn = null) {
   const originalBtnHtml = btn ? btn.innerHTML : "";
   if (btn) {
     btn.disabled = true;
@@ -354,48 +440,11 @@ async function executeClickupTransfer(jobId, force = false, btn = null) {
       method: "POST",
       body: JSON.stringify({
         jobId,
-        force,
+        force: true,
         apiKey: creds.clickupApiKey || "",
         listId: creds.clickupListId || "",
       }),
     });
-
-    if (data.alreadyTransferred && !force) {
-      pendingClickupTransferJobId = jobId;
-      pendingClickupTransferBtn = btn;
-      const targetJob = state.jobs.find((j) => j.id === jobId);
-      const cu = data.clickup || targetJob?.clickup;
-      const taskId = cu?.taskId;
-      const taskUrl = cu?.taskUrl || (taskId ? `https://app.clickup.com/t/${taskId}` : "");
-
-      const textEl = document.getElementById("confirm-clickup-text");
-      if (textEl) {
-        textEl.innerText = data.error || "Dieses Dokument wurde bereits an ClickUp übertragen. Möchtest du es aktualisieren?";
-      }
-
-      const linkContainer = document.getElementById("confirm-clickup-link-container");
-      const taskLink = document.getElementById("confirm-clickup-task-link");
-      const taskIdBadge = document.getElementById("confirm-clickup-task-id-badge");
-
-      if (linkContainer && taskLink) {
-        if (taskId || taskUrl) {
-          linkContainer.style.display = "block";
-          taskLink.href = taskUrl || `https://app.clickup.com/t/${taskId}`;
-          if (taskIdBadge) taskIdBadge.innerText = `#${taskId || ""}`;
-        } else {
-          linkContainer.style.display = "none";
-        }
-      }
-
-      const confirmModal = document.getElementById("confirm-clickup-modal");
-      if (confirmModal) confirmModal.style.display = "flex";
-
-      if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = originalBtnHtml;
-      }
-      return;
-    }
 
     if (data.success) {
       const targetJob = state.jobs.find((j) => j.id === jobId);

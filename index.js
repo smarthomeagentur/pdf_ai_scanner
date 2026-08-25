@@ -5,7 +5,9 @@ const isFontWarning = (msg) =>
   typeof msg === "string" &&
   (msg.includes("Ran out of space in font private use area") ||
     msg.includes("TT: undefined function:") ||
-    msg.includes("Unknown/unsupported coordinate math opcode"));
+    msg.includes("Unknown/unsupported coordinate math opcode") ||
+    msg.includes("Unknown/unsupported post table version") ||
+    msg.includes("post table version"));
 
 console.warn = function (...args) {
   if (args.length > 0 && isFontWarning(args[0])) return;

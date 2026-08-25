@@ -951,36 +951,61 @@
         </div>
       </div>
 
-      <!-- Confirm ClickUp Single Re-Transfer Modal -->
+      <!-- Confirm ClickUp Single Transfer Modal -->
       <div id="confirm-clickup-modal" class="modal-overlay" style="z-index: 3000;">
-        <div class="modal-content" style="max-width: 450px; width: 95%; text-align: left; padding: 22px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <div class="modal-content" style="max-width: 480px; width: 95%; text-align: left; padding: 22px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <h4 class="m-0 fw-bold d-flex align-items-center gap-2" style="color: #1a1a1a; font-size: 18px;">
-              <span class="material-symbols-outlined" style="color: #7b68ee; font-size: 24px;">cloud_done</span>
-              <span>ClickUp Übertragung</span>
+              <span class="material-symbols-outlined" style="color: #7b68ee; font-size: 24px;">cloud_upload</span>
+              <span id="confirm-clickup-modal-title">ClickUp Übertragung</span>
             </h4>
             <button id="close-clickup-modal-x" class="modal-close d-flex align-items-center justify-content-center" style="background: none; border: none; font-size: 22px; cursor: pointer; color: #888;">
               <span class="material-symbols-outlined">close</span>
             </button>
           </div>
 
-          <div class="p-3 mb-3 border rounded-3" style="background-color: #f8fafc; border-color: #e2e8f0 !important;">
-            <p id="confirm-clickup-text" class="mb-2 text-dark" style="font-size: 13.5px; line-height: 1.5;">
-              Dieses Dokument wurde bereits an ClickUp übertragen.
+          <!-- Document Preview Card -->
+          <div class="card p-3 mb-3 border shadow-sm" style="background-color: #f8fafc; border-radius: 12px; border-color: #e2e8f0 !important;">
+            <div class="d-flex gap-3 align-items-start">
+              <div id="clickup-modal-thumb" class="flex-shrink-0" style="width: 50px; height: 68px; background: #eee; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #ddd;">
+                <span class="material-symbols-outlined text-muted">description</span>
+              </div>
+              <div class="flex-grow-1" style="min-width: 0;">
+                <div id="confirm-clickup-doc-title" class="fw-bold text-truncate mb-1" style="font-size: 13.5px; color: #222;">Dokument.pdf</div>
+                <div class="d-flex flex-wrap gap-2 small text-muted mb-1">
+                  <span id="confirm-clickup-doc-date">📅 -</span>
+                  <span id="confirm-clickup-doc-company">🏢 -</span>
+                  <span id="confirm-clickup-doc-category" class="badge bg-light text-dark border">📁 -</span>
+                </div>
+                <div class="d-flex flex-wrap gap-2 small">
+                  <span id="confirm-clickup-doc-inv" class="text-secondary">Rechnung: -</span>
+                  <span id="confirm-clickup-doc-amt" class="text-success fw-bold font-monospace">Betrag: -</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-3 mb-3 border rounded-3" style="background-color: #ffffff; border-color: #e2e8f0 !important; font-size: 13px;">
+            <div class="text-muted small mb-1">Vorgeschlagener Task-Name:</div>
+            <div id="confirm-clickup-task-preview" class="fw-bold text-dark p-2 rounded bg-light border mb-2 font-monospace" style="font-size: 12.5px;">-</div>
+
+            <p id="confirm-clickup-text" class="mb-0 text-secondary" style="font-size: 12.5px; line-height: 1.4;">
+              Möchtest du dieses Dokument jetzt als Aufgabe in ClickUp anlegen?
             </p>
+
             <div id="confirm-clickup-link-container" style="display: none;" class="mt-2 pt-2 border-top">
-              <a id="confirm-clickup-task-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-sm d-inline-flex align-items-center gap-1 text-decoration-none" style="background-color: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; border-radius: 8px; font-weight: 600; font-size: 13px; padding: 6px 14px;">
-                <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
-                <span>ClickUp Task öffnen <span id="confirm-clickup-task-id-badge" class="badge bg-white text-dark border ms-1" style="font-size: 11px;">#</span></span>
+              <a id="confirm-clickup-task-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-sm d-inline-flex align-items-center gap-1 text-decoration-none" style="background-color: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; border-radius: 8px; font-weight: 600; font-size: 12.5px; padding: 5px 12px;">
+                <span class="material-symbols-outlined" style="font-size: 15px;">open_in_new</span>
+                <span>Bestehenden Task öffnen <span id="confirm-clickup-task-id-badge" class="badge bg-white text-dark border ms-1">#</span></span>
               </a>
             </div>
           </div>
 
           <div class="d-flex gap-2 justify-content-end">
             <button id="cancel-clickup-transfer-btn" class="btn btn-light px-3" style="border: 1px solid #cbd5e1; font-weight: 500; border-radius: 8px; font-size: 13px;">Abbrechen</button>
-            <button id="confirm-clickup-transfer-btn" class="btn px-3 d-inline-flex align-items-center gap-1" style="background-color: #7b68ee; color: white; border: none; font-weight: 500; border-radius: 8px; font-size: 13px;">
-              <span class="material-symbols-outlined" style="font-size: 16px;">sync</span>
-              <span>Erneut übertragen</span>
+            <button id="confirm-clickup-transfer-btn" class="btn px-4 d-inline-flex align-items-center gap-1" style="background-color: #7b68ee; color: white; border: none; font-weight: 500; border-radius: 8px; font-size: 13px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">cloud_upload</span>
+              <span id="confirm-clickup-btn-text">Task erstellen</span>
             </button>
           </div>
         </div>
@@ -1321,7 +1346,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260825_voucher_preview_v42"></script>
+      <script type="module" src="/js/app.js?v=20260825_clickup_modal_v45"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

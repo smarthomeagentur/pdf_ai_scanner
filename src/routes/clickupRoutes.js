@@ -94,11 +94,12 @@ router.post("/api/clickup/transfer", requireAdmin, async (req, res) => {
   }
 });
 
-router.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
+const handleSyncPreview = async (req, res) => {
   try {
-    const apiKey = (req.query.apiKey || req.headers["x-clickup-api-key"] || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "").trim();
-    const listId = (req.query.listId || req.headers["x-clickup-list-id"] || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "").trim();
-    const filterPrivate = req.query.filterPrivate !== undefined ? req.query.filterPrivate === "true" : appSettings.CLICKUP_FILTER_PRIVATE;
+    const body = req.method === "POST" ? (req.body || {}) : (req.query || {});
+    const apiKey = (body.apiKey || req.headers["x-clickup-api-key"] || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "").trim();
+    const listId = (body.listId || req.headers["x-clickup-list-id"] || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "").trim();
+    const filterPrivate = body.filterPrivate !== undefined ? (body.filterPrivate === true || body.filterPrivate === "true") : appSettings.CLICKUP_FILTER_PRIVATE;
 
     if (!apiKey) {
       return res.status(400).json({ success: false, error: "Kein ClickUp API-Key übergeben." });
@@ -173,7 +174,10 @@ router.get("/api/clickup/sync-preview", requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || "Fehler beim Erstellen der Sync-Vorschau." });
   }
-});
+};
+
+router.post("/api/clickup/sync-preview", requireAdmin, handleSyncPreview);
+router.get("/api/clickup/sync-preview", requireAdmin, handleSyncPreview);
 
 router.post("/api/clickup/sync-all", requireAdmin, async (req, res) => {
   try {

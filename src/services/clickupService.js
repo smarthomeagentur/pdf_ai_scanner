@@ -73,14 +73,47 @@ class ClickUpAPI {
       return { success: false, error: "Kein ClickUp API-Key hinterlegt." };
     }
     try {
-      const res = await fetch(`${this.baseUrl}/list/${listId}`, {
+      // 1. Verify User / Teams first
+      const userRes = await fetch(`${this.baseUrl}/user`, {
         method: "GET",
         headers: this.getHeaders(),
       });
-      if (!res.ok) {
-        const errText = await res.text();
-        return { success: false, status: res.status, error: `ClickUp Fehler (${res.status}): ${errText}` };
+
+      if (!userRes.ok) {
+        const errText = await userRes.text();
+        return { success: false, status: userRes.status, error: `ClickUp API-Key ungültig (${userRes.status}): ${errText}` };
       }
+
+      const userData = await userRes.json();
+      const userName = userData.user?.username || userData.user?.email || "ClickUp User";
+
+      if (!listId) {
+        return {
+          success: true,
+          listName: "Keine Liste angegeben (API-Key gültig)",
+          spaceName: userName,
+        };
+      }
+
+      // 2. Verify List ID if provided
+      const cleanListId = listId.replace(/[^a-zA-Z0-9_-]/g, "");
+      const res = await fetch(`${this.baseUrl}/list/${cleanListId}`, {
+        method: "GET",
+        headers: this.getHeaders(),
+      });
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          return {
+            success: false,
+            status: 404,
+            error: `ClickUp API-Key ist gültig (${userName}), aber die List-ID '${listId}' wurde nicht gefunden oder ist nicht freigeschaltet.`,
+          };
+        }
+        const errText = await res.text();
+        return { success: false, status: res.status, error: `ClickUp Listen-Fehler (${res.status}): ${errText}` };
+      }
+
       const data = await res.json();
       return {
         success: true,

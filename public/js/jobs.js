@@ -10,8 +10,9 @@ import { transferJobToClickUp } from "./clickup.js";
 const START_PAGE_SIZE = 50;
 let currentPage = 1;
 const openDetailsStates = {};
+let lastRenderSignature = "";
 
-export function renderJobsList(jobs = state.jobs) {
+export function renderJobsList(jobs = state.jobs, force = false) {
   const jobList = document.getElementById("job-list");
   if (!jobList) return;
 
@@ -46,6 +47,41 @@ export function renderJobsList(jobs = state.jobs) {
     hiddenCountSpan.innerText = hiddenCount;
   }
 
+  const startIndex = (currentPage - 1) * START_PAGE_SIZE;
+  const endIndex = Math.min(startIndex + START_PAGE_SIZE, totalFiltered);
+  const pageJobs = filteredJobs.slice(startIndex, endIndex);
+
+  // Avoid visual flicker: check if page data or filters actually changed
+  const currentSignature = JSON.stringify({
+    page: currentPage,
+    filter: state.activeFilter,
+    search: state.searchQuery,
+    comp: state.companyFilter,
+    date: state.dateFilter,
+    sort: state.sortOrder,
+    cats: Array.from(state.selectedCategories || []).sort(),
+    jobs: pageJobs.map((j) => [
+      j.id,
+      j.status,
+      j.error,
+      j.result?.full,
+      j.result?.documentDate,
+      j.result?.invoiceNumber,
+      j.result?.invoiceAmmount,
+      j.clickup?.taskId,
+      j.clickup?.status,
+      j.isHidden,
+      j.isPrivate,
+      j.suspectedDuplicate,
+      Object.keys(j.lexofficeTransfers || {}).join(","),
+    ]),
+  });
+
+  if (!force && currentSignature === lastRenderSignature) {
+    return;
+  }
+  lastRenderSignature = currentSignature;
+
   jobList.innerHTML = "";
 
   if (totalFiltered === 0) {
@@ -57,10 +93,6 @@ export function renderJobsList(jobs = state.jobs) {
     renderPagination(0, 1);
     return;
   }
-
-  const startIndex = (currentPage - 1) * START_PAGE_SIZE;
-  const endIndex = Math.min(startIndex + START_PAGE_SIZE, totalFiltered);
-  const pageJobs = filteredJobs.slice(startIndex, endIndex);
 
   pageJobs.forEach((job) => {
     // Special handling for Drive-only results found in cloud OCR
@@ -203,7 +235,7 @@ export function renderJobsList(jobs = state.jobs) {
 
     // 7. Preview Image with 4.2x Hover/Touch Zoom
     const webViewLink = res.webViewLink || job.webViewLink || (job.filePath ? `/api/jobs/${job.id}/file` : "#");
-    const thumbUrl = `/api/thumbnail/${job.id}?t=${Date.now()}`;
+    const thumbUrl = `/api/thumbnail/${job.id}?v=${job.aiPipelineCompletedAt || job.uploadDate || 1}`;
     const previewHtml = `
       <a href="${webViewLink}" target="_blank" class="pdf-preview-container" title="Beleg öffnen (Hover/Touch vergrößert Vorschau)">
         <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
