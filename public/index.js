@@ -131,10 +131,11 @@ openSettingsBtn.addEventListener("click", async () => {
       document.getElementById("auth-status").innerText = "Bereit zur Authentifizierung";
       document.getElementById("auth-btn").style.display = "inline-block";
 
-      // Initialize Google Auth client for Server-Side Google Drive ONLY (Restricted to drive.file)
+      // Initialize Google Auth client for Server-Side Google Drive ONLY (Restricted strictly to drive.file)
       authClientCode = window.google.accounts.oauth2.initCodeClient({
         client_id: googleClientId,
         scope: "https://www.googleapis.com/auth/drive.file",
+        include_granted_scopes: false,
         prompt: "consent",
         ux_mode: "popup",
         callback: async (response) => {
@@ -167,6 +168,19 @@ openSettingsBtn.addEventListener("click", async () => {
 
 function populateSettingsForm() {
   if (window.currentSettings) {
+    if (window.currentSettings.FOLDER_ID) {
+      const rawIdEl = document.getElementById("raw-folder-id");
+      const rawDispEl = document.getElementById("raw-folder-display");
+      if (rawIdEl) rawIdEl.value = window.currentSettings.FOLDER_ID;
+      if (rawDispEl) rawDispEl.value = window.currentSettings.FOLDER_ID;
+    }
+    if (window.currentSettings.FOLDER_ID_SORTED) {
+      const aiIdEl = document.getElementById("ai-folder-id");
+      const aiDispEl = document.getElementById("ai-folder-display");
+      if (aiIdEl) aiIdEl.value = window.currentSettings.FOLDER_ID_SORTED;
+      if (aiDispEl) aiDispEl.value = window.currentSettings.FOLDER_ID_SORTED;
+    }
+
     document.getElementById("ai-categories-input").value =
       window.currentSettings.AI_CATEGORIES ||
       "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
@@ -422,45 +436,59 @@ async function openGooglePicker(target) {
     const tokenRes = await fetch("/api/drive/picker-token");
     const tokenData = await tokenRes.json();
     if (!tokenData.success || !tokenData.token) {
-      alert("Fehler beim Laden des Picker-Tokens. Bitte Google Drive Verbindung prüfen.");
+      alert(tokenData.error || "Fehler beim Laden des Picker-Tokens. Bitte Google Drive Verbindung prüfen.");
       return;
     }
 
-    if (typeof gapi === "undefined" || !gapi.load) {
-      alert("Google Picker API wird noch geladen. Bitte kurz warten und erneut versuchen.");
-      return;
-    }
+    function createAndShowPicker() {
+      try {
+        const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+          .setIncludeFolders(true)
+          .setSelectFolderEnabled(true)
+          .setMimeTypes("application/vnd.google-apps.folder");
 
-    gapi.load("picker", () => {
-      const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
-        .setIncludeFolders(true)
-        .setSelectFolderEnabled(true)
-        .setMimeTypes("application/vnd.google-apps.folder");
+        let builder = new google.picker.PickerBuilder()
+          .addView(view)
+          .setOAuthToken(tokenData.token);
 
-      const picker = new google.picker.PickerBuilder()
-        .addView(view)
-        .setOAuthToken(tokenData.token)
-        .setCallback((data) => {
-          if (data[google.picker.Response.ACTION] === google.picker.Action.PICKED) {
-            const doc = data[google.picker.Response.DOCUMENTS][0];
-            const folderId = doc[google.picker.Document.ID];
-            const folderName = doc[google.picker.Document.NAME];
-            if (target === "raw") {
-              document.getElementById("raw-folder-display").value = folderName;
-              document.getElementById("raw-folder-id").value = folderId;
-            } else if (target === "ai") {
-              document.getElementById("ai-folder-display").value = folderName;
-              document.getElementById("ai-folder-id").value = folderId;
+        if (tokenData.clientId || googleClientId) {
+          builder = builder.setAppId(tokenData.clientId || googleClientId);
+        }
+
+        const picker = builder
+          .setCallback((data) => {
+            if (data[google.picker.Response.ACTION] === google.picker.Action.PICKED) {
+              const doc = data[google.picker.Response.DOCUMENTS][0];
+              const folderId = doc[google.picker.Document.ID];
+              const folderName = doc[google.picker.Document.NAME];
+              if (target === "raw") {
+                document.getElementById("raw-folder-display").value = `${folderName} (${folderId})`;
+                document.getElementById("raw-folder-id").value = folderId;
+              } else if (target === "ai") {
+                document.getElementById("ai-folder-display").value = `${folderName} (${folderId})`;
+                document.getElementById("ai-folder-id").value = folderId;
+              }
+              fbModal.style.display = "none";
             }
-            fbModal.style.display = "none";
-          }
-        })
-        .build();
-      picker.setVisible(true);
-    });
+          })
+          .build();
+        picker.setVisible(true);
+      } catch (pickerErr) {
+        console.error("PickerBuilder error:", pickerErr);
+        alert("Google Picker Dialog konnte nicht initialisiert werden: " + pickerErr.message);
+      }
+    }
+
+    if (window.google && window.google.picker) {
+      createAndShowPicker();
+    } else if (window.gapi && window.gapi.load) {
+      window.gapi.load("picker", { callback: createAndShowPicker });
+    } else {
+      alert("Google API-Bibliothek wird geladen. Bitte in wenigen Sekunden erneut versuchen.");
+    }
   } catch (err) {
     console.error("Google Picker Error", err);
-    alert("Fehler beim Öffnen des Google Drive Pickers.");
+    alert("Fehler beim Öffnen des Google Drive Pickers: " + err.message);
   }
 }
 

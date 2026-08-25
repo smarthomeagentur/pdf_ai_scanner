@@ -529,11 +529,26 @@ app.get("/api/drive/folders", requireAdmin, async (req, res) => {
 
 app.get("/api/drive/picker-token", requireAdmin, async (req, res) => {
   try {
+    let clientId = "";
+    if (fs.existsSync(CREDENTIALS_PATH)) {
+      try {
+        const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_PATH));
+        const key = keys.installed || keys.web;
+        clientId = key ? key.client_id : "";
+      } catch (e) {}
+    }
     const authClient = await driveApi.authorize();
+    if (!authClient) {
+      return res.status(401).json({ error: "Google Drive ist noch nicht verbunden. Bitte zuerst verbinden." });
+    }
     const tokenRes = await authClient.getAccessToken();
-    const token = typeof tokenRes === "string" ? tokenRes : tokenRes.token;
-    res.json({ success: true, token, clientId: googleClientId || "" });
+    const token = typeof tokenRes === "string" ? tokenRes : (tokenRes ? tokenRes.token : null);
+    if (!token) {
+      return res.status(401).json({ error: "Kein gültiges Google Drive Access Token vorhanden." });
+    }
+    res.json({ success: true, token, clientId });
   } catch (e) {
+    console.error("[PICKER] Fehler beim Erzeugen des Picker-Tokens:", e);
     res.status(500).json({ error: e.toString() });
   }
 });
