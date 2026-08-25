@@ -34,28 +34,46 @@ router.get("/api/documents/deep-search", async (req, res) => {
         const driveRes = await drive.files.list({
           q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
           fields: "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description)",
-          pageSize: 50,
+          pageSize: 40,
         });
 
-        for (const file of driveRes.data.files || []) {
-          const driveText = await getDrivePdfText(drive, file.id, file.modifiedTime);
-          const snippet = extractExactSnippet(driveText, q) || file.description || "Gefunden in Dokument-Volltext";
+        const files = driveRes.data.files || [];
+        const driveSnippetPromises = files.slice(0, 8).map(async (file) => {
+          try {
+            const driveText = await Promise.race([
+              getDrivePdfText(drive, file.id, file.modifiedTime),
+              new Promise((resolve) => setTimeout(() => resolve(""), 1500)),
+            ]);
+            return extractExactSnippet(driveText, q);
+          } catch (e) {
+            return "";
+          }
+        });
+
+        const snippets = await Promise.all(driveSnippetPromises);
+
+        files.forEach((file, index) => {
+          const snippet = snippets[index] || file.description || "Gefunden in Dokument-Volltext (Google Drive)";
           seenNames.add(normalizeDocName(file.name));
 
           results.push({
             id: `gdrive_${file.id}`,
+            jobId: `gdrive_${file.id}`,
             name: file.name,
+            originalName: file.name,
             source: "Google Drive",
             type: "drive",
             isLocal: false,
+            isDriveOnly: true,
             isLinked: true,
             date: file.createdTime,
+            uploadDate: file.createdTime,
             size: file.size,
             webViewLink: file.webViewLink,
-            thumbnailLink: file.thumbnailLink,
+            thumbnailLink: file.thumbnailLink || `/api/thumbnail/${file.id}`,
             snippet,
           });
-        }
+        });
       }
     } catch (driveErr) {}
 

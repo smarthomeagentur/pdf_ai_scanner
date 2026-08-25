@@ -39,16 +39,16 @@ router.post("/api/settings", requireAdmin, (req, res) => {
 router.get("/api/auth/client-id", async (req, res) => {
   try {
     if (!fs.existsSync(CREDENTIALS_FILE)) {
-      return res.status(404).json({ error: "gdrive_secret.json nicht gefunden" });
+      return res.status(404).json({ success: false, error: "gdrive_secret.json nicht gefunden" });
     }
     const keys = JSON.parse(await fs.promises.readFile(CREDENTIALS_FILE, "utf8"));
     const key = keys.installed || keys.web;
     if (!key || !key.client_id) {
-      return res.status(500).json({ error: "Keine client_id in gdrive_secret.json" });
+      return res.status(500).json({ success: false, error: "Keine client_id in gdrive_secret.json" });
     }
-    res.json({ clientId: key.client_id });
+    res.json({ success: true, clientId: key.client_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

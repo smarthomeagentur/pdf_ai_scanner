@@ -18,6 +18,13 @@ export const STORAGE_KEYS = {
 export const state = {
   isAdmin: false,
   activeFilter: "all",
+  searchQuery: "",
+  deepSearchSnippets: new Map(),
+  driveOnlySearchResults: [],
+  selectedCategories: new Set(),
+  dateFilter: "alle",
+  companyFilter: "alle",
+  sortOrder: "docdate_desc",
   jobs: [],
   selectedJobId: null,
   gmailAccounts: [],

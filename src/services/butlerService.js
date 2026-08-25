@@ -1,4 +1,4 @@
-// app/butlerApi.js
+// src/services/butlerService.js
 // BuchhaltungsButler (buchhaltungsbutler.de) REST API Integration
 
 const BUTLER_API_BASE = "https://api.buchhaltungsbutler.de/v1";

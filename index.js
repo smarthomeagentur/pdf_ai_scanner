@@ -1,8 +1,27 @@
+// Suppress noisy internal PDF.js font parsing warnings from third-party libraries (pdf-parse)
+const originalConsoleWarn = console.warn;
+const originalConsoleLog = console.log;
+const isFontWarning = (msg) =>
+  typeof msg === "string" &&
+  (msg.includes("Ran out of space in font private use area") ||
+    msg.includes("TT: undefined function:") ||
+    msg.includes("Unknown/unsupported coordinate math opcode"));
+
+console.warn = function (...args) {
+  if (args.length > 0 && isFontWarning(args[0])) return;
+  originalConsoleWarn.apply(console, args);
+};
+
+console.log = function (...args) {
+  if (args.length > 0 && isFontWarning(args[0])) return;
+  originalConsoleLog.apply(console, args);
+};
+
 const dotenv = require("dotenv");
 dotenv.config();
 
 const app = require("./src/server");
-const aiAgent = require("./app/aiAgent");
+const aiAgent = require("./src/services/aiService");
 const { appSettings } = require("./src/config/settings");
 const { driveApi } = require("./src/services/driveService");
 const {

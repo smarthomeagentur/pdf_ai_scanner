@@ -2,14 +2,13 @@ const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
 const { pipeline } = require("stream/promises");
-const { exiftool } = require("exiftool-vendored");
-const aiAgent = require("../../app/aiAgent");
+const aiAgent = require("./aiService");
 const { JOBS_FILE, DOWNLOADS_DIR, getPythonPath } = require("../config/paths");
 const { appSettings } = require("../config/settings");
 const { driveApi } = require("./driveService");
 const { findDuplicatesForJob } = require("./duplicateService");
 const { renderPdfToJpeg } = require("./fileRenderService");
-const ClickUpAPI = require("../../app/clickupApi");
+const { ClickUpAPI } = require("./clickupService");
 
 let uploadJobs = {};
 let uploadQueue = [];
@@ -360,12 +359,16 @@ function addJobs(newJobs) {
 }
 
 function getJobs(ids = "all", isAdmin = true) {
+  if (typeof ids === "boolean") {
+    isAdmin = ids;
+    ids = "all";
+  }
   let list =
-    ids === "all"
+    ids === "all" || !ids
       ? Object.values(uploadJobs).sort(
           (a, b) => new Date(b.uploadDate) - new Date(a.uploadDate)
         )
-      : (ids ? ids.split(",") : []).map((id) => uploadJobs[id]).filter(Boolean);
+      : (typeof ids === "string" ? ids.split(",") : Array.isArray(ids) ? ids : []).map((id) => uploadJobs[id]).filter(Boolean);
 
   if (!isAdmin) {
     list = list.filter((j) => !j.isPrivate);
@@ -385,18 +388,11 @@ function updateJob(id, updates) {
 }
 
 function deleteJob(id) {
-  if (uploadJobs[id]) {
-    delete uploadJobs[id];
-    uploadQueue = uploadQueue.filter((qid) => qid !== id);
-    saveJobs();
-    return true;
-  }
-  return false;
+  return hideJob(id) !== null;
 }
 
 function clearAllJobs() {
-  uploadJobs = {};
-  uploadQueue = [];
+  Object.keys(uploadJobs).forEach((id) => hideJob(id));
   saveJobs();
 }
 

@@ -15,16 +15,26 @@ const execFileAsync = util.promisify(execFile);
 async function renderPdfToJpeg(pdfPath, targetThumbPath) {
   if (!fs.existsSync(pdfPath)) return false;
 
-  // 1. PyMuPDF (fitz)
+  // 1. PyMuPDF (pymupdf / fitz)
   try {
     await execFileAsync(getPythonPath(), [
       "-c",
-      "import sys, fitz; doc=fitz.open(sys.argv[1]); page=doc[0]; pix=page.get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
+      "import sys; import pymupdf; doc=pymupdf.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
       pdfPath,
       targetThumbPath,
     ], { timeout: 30000 });
     if (fs.existsSync(targetThumbPath)) return true;
-  } catch (fitzErr) {}
+  } catch (fitzErr) {
+    try {
+      await execFileAsync(getPythonPath(), [
+        "-c",
+        "import sys, fitz; doc=fitz.open(sys.argv[1]); page=doc[0]; pix=page.get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
+        pdfPath,
+        targetThumbPath,
+      ], { timeout: 30000 });
+      if (fs.existsSync(targetThumbPath)) return true;
+    } catch (e) {}
+  }
 
   // 2. pdftoppm (Poppler)
   try {

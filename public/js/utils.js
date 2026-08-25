@@ -59,6 +59,24 @@ export function formatCurrency(amount) {
 }
 
 /**
+ * Highlights matching search query substrings safely.
+ */
+export function highlightQueryText(text, query) {
+  if (!text || !query || !String(query).trim()) return escapeHtml(text || "");
+  const safeText = String(text);
+  const q = String(query).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${q})`, "gi");
+  const parts = safeText.split(regex);
+  return parts
+    .map((part) =>
+      part.toLowerCase() === String(query).trim().toLowerCase()
+        ? `<mark class="bg-warning text-dark px-1 rounded">${escapeHtml(part)}</mark>`
+        : escapeHtml(part)
+    )
+    .join("");
+}
+
+/**
  * Debounce helper for input search.
  */
 export function debounce(fn, delay = 300) {

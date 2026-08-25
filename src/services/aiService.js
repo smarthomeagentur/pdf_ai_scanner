@@ -5,6 +5,7 @@ const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const { Ollama } = require("ollama");
 const dotenv = require("dotenv");
+const { getPythonPath } = require("../config/paths");
 dotenv.config();
 
 let debug = false;
@@ -183,14 +184,6 @@ function checkFileDate(text) {
     }
   }
   return "unknown";
-}
-
-function getPythonPath() {
-  const venvWin = path.join(__dirname, "..", "venv", "Scripts", "python.exe");
-  const venvUnix = path.join(__dirname, "..", "venv", "bin", "python");
-  if (fs.existsSync(venvWin)) return venvWin;
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  return "python";
 }
 
 async function getPdfImageBuffer(pdfPath) {

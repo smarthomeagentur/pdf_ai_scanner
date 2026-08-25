@@ -19,7 +19,7 @@ const {
   saveJobs,
   processQueue,
 } = require("../services/jobQueueService");
-const { getOrGenerateThumbnailPath } = require("../services/fileRenderService");
+const { getOrGenerateThumbnailPath, renderPdfToJpeg } = require("../services/fileRenderService");
 const { normalizeAlphaNum } = require("../services/duplicateService");
 
 const router = express.Router();
@@ -34,8 +34,12 @@ router.post("/api/upload", uploadLimiter, upload.array("files"), (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
 
   const jobs = req.files.map((file) => {
+    const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+    const targetThumb = path.join(DOWNLOADS_DIR, `thumb_${jobId}.jpg`);
+    renderPdfToJpeg(file.path, targetThumb).catch(() => {});
+
     return {
-      id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+      id: jobId,
       originalName: file.originalname,
       status: "pending",
       source: req.body.source || "upload",
@@ -120,7 +124,7 @@ router.get("/api/jobs/:id/preview", async (req, res) => {
   }
 });
 
-router.get("/api/thumbnail/:id", async (req, res) => {
+router.get(["/api/thumbnail/:id", "/api/jobs/:id/thumbnail"], async (req, res) => {
   try {
     const id = req.params.id;
     const thumbPath = await getOrGenerateThumbnailPath(id, getJob);
@@ -149,6 +153,51 @@ router.post("/api/jobs/:id/hide", (req, res) => {
   res.json({ success: true, isHidden });
 });
 
+router.post("/api/jobs/:id/private", (req, res) => {
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+  const isPrivate = req.body.isPrivate !== undefined ? (req.body.isPrivate === true || req.body.isPrivate === "true") : !job.isPrivate;
+  job.isPrivate = isPrivate;
+  saveJobs();
+  res.json({ success: true, isPrivate: job.isPrivate });
+});
+
+router.post("/api/jobs/:id/category", (req, res) => {
+  const { category } = req.body;
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+  if (!job.result) job.result = {};
+  job.result.category = category;
+  saveJobs();
+  res.json({ success: true, category: job.result.category });
+});
+
+router.post("/api/jobs/:id/company", (req, res) => {
+  const { company } = req.body;
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+  if (!job.result) job.result = {};
+  job.result.company = company;
+  const compLower = (company || "").toLowerCase();
+  if (compLower.includes("wirewire")) job.targetCompany = "wirewire";
+  else if (compLower.includes("the wire") || compLower.includes("thewire")) job.targetCompany = "thewire";
+  else if (compLower.includes("polyxo")) job.targetCompany = "polyxo";
+  else if (compLower.includes("daniel")) job.targetCompany = "daniel";
+  saveJobs();
+  res.json({ success: true, company: job.result.company });
+});
+
+router.post("/api/jobs/:id/update-meta", (req, res) => {
+  const { category, company } = req.body;
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+  if (!job.result) job.result = {};
+  if (category) job.result.category = category;
+  if (company) job.result.company = company;
+  saveJobs();
+  res.json({ success: true, result: job.result });
+});
+
 router.post("/api/jobs/:id/retry", (req, res) => {
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
@@ -162,20 +211,20 @@ router.post("/api/jobs/:id/retry", (req, res) => {
 });
 
 router.post("/api/jobs/:id/cancel", (req, res) => {
-  const success = deleteJob(req.params.id);
-  if (!success) return res.status(404).json({ success: false, error: "Auftrag nicht gefunden." });
-  res.json({ success: true, message: "Auftrag abgebrochen und gelöscht." });
+  const job = hideJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Auftrag nicht gefunden." });
+  res.json({ success: true, message: "Auftrag ausgeblendet." });
 });
 
 router.delete("/api/jobs/:id", requireAdmin, (req, res) => {
-  const success = deleteJob(req.params.id);
-  if (!success) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
-  res.json({ success: true });
+  const job = hideJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+  res.json({ success: true, message: "Dokument ausgeblendet." });
 });
 
 router.delete("/api/jobs", requireAdmin, (req, res) => {
   clearAllJobs();
-  res.json({ success: true });
+  res.json({ success: true, message: "Alle Dokumente ausgeblendet." });
 });
 
 router.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {

@@ -592,6 +592,63 @@ iframe[src*="docs.google.com/picker"] {
   background-color: #e0f2fe !important;
 }
 
+.job-action-btn.btn-reprocess-ai {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+.job-action-btn.btn-reprocess-ai:hover {
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+}
+
+.job-action-btn.btn-hide-job {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+.job-action-btn.btn-hide-job:hover {
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+}
+.job-action-btn.btn-hide-job.btn-hidden-active {
+  background-color: #fff7ed !important;
+  color: #c2410c !important;
+  border: 1px solid #fed7aa !important;
+}
+.job-action-btn.btn-hide-job.btn-hidden-active:hover {
+  background-color: #ffedd5 !important;
+}
+
+.job-action-btn.btn-delete-job {
+  background-color: #fef2f2 !important;
+  color: #dc2626 !important;
+  border: 1px solid #fecaca !important;
+}
+.job-action-btn.btn-delete-job:hover {
+  background-color: #fee2e2 !important;
+  color: #b91c1c !important;
+  border-color: #fca5a5 !important;
+}
+
+.job-result .job-action-btn {
+  flex: 0 0 auto !important;
+  font-size: 12px !important;
+  padding: 4px 10px !important;
+  border-radius: 8px !important;
+}
+
+.spin-animation {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 576px) {
   .job-action-bar {
     gap: 4px !important;

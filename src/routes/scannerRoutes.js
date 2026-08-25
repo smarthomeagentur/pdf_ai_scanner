@@ -4,7 +4,7 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
 const { upload } = require("../middleware/upload");
-const { DOWNLOADS_DIR, ROOT_DIR, getPythonPath } = require("../config/paths");
+const { DOWNLOADS_DIR, ROOT_DIR, getPythonPath, SCANNER_SCRIPT } = require("../config/paths");
 const { addJobs } = require("../services/jobQueueService");
 
 const router = express.Router();
@@ -25,7 +25,7 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
       new Promise((resolve, reject) => {
         execFile(
           getPythonPath(),
-          [path.join(ROOT_DIR, "app", "scanner.py"), inputPath, tempPdfPath, coordsStr, algorithm],
+          [SCANNER_SCRIPT, inputPath, tempPdfPath, coordsStr, algorithm],
           (error) => {
             if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
             if (error) reject(error);
@@ -106,7 +106,7 @@ router.post("/api/preview", upload.single("image"), async (req, res) => {
     await new Promise((resolve, reject) => {
       execFile(
         getPythonPath(),
-        [path.join(ROOT_DIR, "app", "scanner.py"), inputPath, outputJpgPath, req.body.coords || "skip", algorithm],
+        [SCANNER_SCRIPT, inputPath, outputJpgPath, req.body.coords || "skip", algorithm],
         (error, stdout) => {
           if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
           if (error) return reject(error);

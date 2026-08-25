@@ -4,7 +4,7 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { requireAdmin } = require("../middleware/auth");
 const { appSettings } = require("../config/settings");
-const { DOWNLOADS_DIR, ROOT_DIR, getPythonPath } = require("../config/paths");
+const { DOWNLOADS_DIR, ROOT_DIR, getPythonPath, COMPRESS_SCRIPT } = require("../config/paths");
 const { getJob, saveJobs, uploadJobs } = require("../services/jobQueueService");
 const { driveApi } = require("../services/driveService");
 const { renderPdfToJpeg } = require("../services/fileRenderService");
@@ -271,7 +271,7 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
         await new Promise((resolve, reject) => {
           execFile(
             getPythonPath(),
-            [path.join(ROOT_DIR, "app", "compress_pdf.py"), tempIn, tempOut],
+            [COMPRESS_SCRIPT, tempIn, tempOut],
             (error) => {
               if (error) reject(error);
               else resolve();
@@ -397,6 +397,124 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
     }
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung." });
+  }
+});
+
+router.get("/api/accounting/voucher-preview", async (req, res) => {
+  try {
+    const { companyKey, voucherId } = req.query;
+    let apiKey = (req.query.apiKey || "").trim();
+
+    if (!apiKey && companyKey) {
+      const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
+      apiKey = (appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
+    }
+
+    if (!voucherId || !apiKey) {
+      return res.status(400).json({ success: false, error: "voucherId und apiKey erforderlich" });
+    }
+
+    let fileBuffer = null;
+    let contentType = "";
+
+    // Strategy 1: /v1/vouchers/{voucherId}
+    try {
+      const voucherRes = await fetch(`https://api.lexoffice.io/v1/vouchers/${voucherId}`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      });
+
+      if (voucherRes.ok) {
+        const voucherJson = await voucherRes.json();
+        let fileId = null;
+        if (voucherJson.files && voucherJson.files.length > 0) {
+          const firstFile = voucherJson.files[0];
+          fileId = typeof firstFile === "string" ? firstFile : (firstFile.documentFileId || firstFile.id || firstFile.fileId);
+        } else if (voucherJson.documentFileId) {
+          fileId = voucherJson.documentFileId;
+        }
+
+        if (fileId) {
+          const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${fileId}`, {
+            headers: { Authorization: `Bearer ${apiKey}`, Accept: "*/*" },
+          });
+          if (fileRes.ok) {
+            contentType = fileRes.headers.get("content-type") || "";
+            const arrayBuffer = await fileRes.arrayBuffer();
+            fileBuffer = Buffer.from(arrayBuffer);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // Strategy 2: /v1/invoices/{voucherId}/document
+    if (!fileBuffer) {
+      try {
+        const docRes = await fetch(`https://api.lexoffice.io/v1/invoices/${voucherId}/document`, {
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+        });
+        if (docRes.ok) {
+          const docJson = await docRes.json();
+          if (docJson.documentFileId) {
+            const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${docJson.documentFileId}`, {
+              headers: { Authorization: `Bearer ${apiKey}`, Accept: "*/*" },
+            });
+            if (fileRes.ok) {
+              contentType = fileRes.headers.get("content-type") || "";
+              const arrayBuffer = await fileRes.arrayBuffer();
+              fileBuffer = Buffer.from(arrayBuffer);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Strategy 3: /v1/files/{voucherId} directly
+    if (!fileBuffer) {
+      try {
+        const fileRes = await fetch(`https://api.lexoffice.io/v1/files/${voucherId}`, {
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: "*/*" },
+        });
+        if (fileRes.ok) {
+          contentType = fileRes.headers.get("content-type") || "";
+          const arrayBuffer = await fileRes.arrayBuffer();
+          fileBuffer = Buffer.from(arrayBuffer);
+        }
+      } catch (e) {}
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return res.status(404).json({ success: false, error: "Beleg-Datei konnte aus Lexoffice nicht geladen werden" });
+    }
+
+    if (contentType.includes("image/jpeg") || contentType.includes("image/png") || contentType.includes("image/webp")) {
+      res.setHeader("Content-Type", contentType);
+      return res.send(fileBuffer);
+    }
+
+    // Render PDF page 1 to JPEG
+    const tempDir = path.join(DOWNLOADS_DIR, "temp");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const tempPdf = path.join(tempDir, `lex_${voucherId}_${Date.now()}.pdf`);
+    const tempJpg = path.join(tempDir, `lex_${voucherId}_${Date.now()}.jpg`);
+
+    await fs.promises.writeFile(tempPdf, fileBuffer);
+    await renderPdfToJpeg(tempPdf, tempJpg);
+
+    if (fs.existsSync(tempJpg)) {
+      const jpgBuffer = await fs.promises.readFile(tempJpg);
+      fs.promises.unlink(tempPdf).catch(() => {});
+      fs.promises.unlink(tempJpg).catch(() => {});
+
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(jpgBuffer);
+    } else {
+      fs.promises.unlink(tempPdf).catch(() => {});
+      return res.status(500).json({ success: false, error: "Rendering fehlgeschlagen" });
+    }
+  } catch (err) {
+    console.error("[ACCOUNTING PREVIEW] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

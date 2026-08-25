@@ -16,6 +16,8 @@ const TOKEN_FILE = path.join(STORE_DIR, "token.json");
 const JOBS_FILE = path.join(STORE_DIR, "jobs.json");
 const SKIPPED_EMAILS_FILE = path.join(STORE_DIR, "skipped_emails.json");
 const CREDENTIALS_FILE = path.join(ROOT_DIR, "gdrive_secret.json");
+const SCANNER_SCRIPT = path.join(__dirname, "..", "workers", "scanner.py");
+const COMPRESS_SCRIPT = path.join(__dirname, "..", "workers", "compress_pdf.py");
 
 function getPythonPath() {
   const venvWin = path.join(ROOT_DIR, "venv", "Scripts", "python.exe");
@@ -35,5 +37,7 @@ module.exports = {
   JOBS_FILE,
   SKIPPED_EMAILS_FILE,
   CREDENTIALS_FILE,
+  SCANNER_SCRIPT,
+  COMPRESS_SCRIPT,
   getPythonPath,
 };

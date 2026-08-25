@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const butlerApi = require("../../app/butlerApi");
+const butlerApi = require("./butlerService");
 const { normalizeAlphaNum } = require("./duplicateService");
 
 async function fetchLexofficeWithRetry(url, options, maxRetries = 3) {
