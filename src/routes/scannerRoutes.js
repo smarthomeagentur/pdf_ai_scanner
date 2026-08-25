@@ -19,15 +19,16 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
 
   console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
 
+  let tempPdfs = [];
   try {
-    const tempPdfs = [];
     const runScannerTask = (inputPath, tempPdfPath, coordsStr) =>
       new Promise((resolve, reject) => {
         execFile(
           getPythonPath(),
           [SCANNER_SCRIPT, inputPath, tempPdfPath, coordsStr, algorithm],
+          { timeout: 60000, killSignal: "SIGKILL" },
           (error) => {
-            if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+            if (fs.existsSync(inputPath)) fs.promises.unlink(inputPath).catch(() => {});
             if (error) reject(error);
             else resolve(tempPdfPath);
           }
@@ -57,10 +58,11 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
       fs.writeFileSync(outputPdfPath, await mergedPdf.save());
 
       tempPdfs.forEach((p, i) => {
-        if (fs.existsSync(p)) fs.unlinkSync(p);
+        if (fs.existsSync(p)) fs.promises.unlink(p).catch(() => {});
         const jpg = p.replace(".pdf", ".jpg");
-        if (fs.existsSync(jpg))
-          i === 0 ? fs.renameSync(jpg, outputPdfPath.replace(".pdf", ".jpg")) : fs.unlinkSync(jpg);
+        if (fs.existsSync(jpg)) {
+          i === 0 ? fs.renameSync(jpg, outputPdfPath.replace(".pdf", ".jpg")) : fs.promises.unlink(jpg).catch(() => {});
+        }
       });
     }
 
@@ -91,7 +93,19 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: "Fehler beim Scannen des Dokuments." });
+    console.error("[SCANNER] Fehler beim Scan-Vorgang:", error);
+    res.status(500).json({ error: "Fehler beim Scannen des Dokuments: " + (error.message || "Unbekannt") });
+  } finally {
+    // Sicherstellen, dass keine verwaisten temp_*.pdf Dateien verbleiben
+    tempPdfs.forEach((p) => {
+      if (fs.existsSync(p) && p !== outputPdfPath) {
+        fs.promises.unlink(p).catch(() => {});
+      }
+      const jpg = p.replace(".pdf", ".jpg");
+      if (fs.existsSync(jpg) && jpg !== outputPdfPath.replace(".pdf", ".jpg")) {
+        fs.promises.unlink(jpg).catch(() => {});
+      }
+    });
   }
 });
 
@@ -107,10 +121,11 @@ router.post("/api/preview", upload.single("image"), async (req, res) => {
       execFile(
         getPythonPath(),
         [SCANNER_SCRIPT, inputPath, outputJpgPath, req.body.coords || "skip", algorithm],
+        { timeout: 45000, killSignal: "SIGKILL" },
         (error, stdout) => {
-          if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+          if (fs.existsSync(inputPath)) fs.promises.unlink(inputPath).catch(() => {});
           if (error) return reject(error);
-          const match = stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/);
+          const match = stdout && stdout.match ? stdout.match(/Auto-Detect: Nutze Filter '([^']+)'/) : null;
           if (match) {
             res.setHeader("X-Detected-Algorithm", match[1]);
             res.setHeader("Access-Control-Expose-Headers", "X-Detected-Algorithm");
@@ -125,6 +140,8 @@ router.post("/api/preview", upload.single("image"), async (req, res) => {
         setTimeout(() => fs.existsSync(outputJpgPath) && fs.unlinkSync(outputJpgPath), 10000);
     });
   } catch (error) {
+    if (fs.existsSync(inputPath)) fs.promises.unlink(inputPath).catch(() => {});
+    if (fs.existsSync(outputJpgPath)) fs.promises.unlink(outputJpgPath).catch(() => {});
     res.status(500).json({ error: "Fehler bei der Vorschaugenerierung." });
   }
 });

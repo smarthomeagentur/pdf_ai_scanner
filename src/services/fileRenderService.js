@@ -22,7 +22,7 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
       "import sys; import pymupdf; doc=pymupdf.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
       pdfPath,
       targetThumbPath,
-    ], { timeout: 30000 });
+    ], { timeout: 45000, killSignal: "SIGKILL" });
     if (fs.existsSync(targetThumbPath)) return true;
   } catch (fitzErr) {
     try {
@@ -31,7 +31,7 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
         "import sys, fitz; doc=fitz.open(sys.argv[1]); page=doc[0]; pix=page.get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
         pdfPath,
         targetThumbPath,
-      ], { timeout: 30000 });
+      ], { timeout: 45000, killSignal: "SIGKILL" });
       if (fs.existsSync(targetThumbPath)) return true;
     } catch (e) {}
   }
@@ -39,7 +39,10 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
   // 2. pdftoppm (Poppler)
   try {
     const prefix = targetThumbPath.replace(/\.jpe?g$/i, "");
-    await execFileAsync("pdftoppm", ["-jpeg", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix], { timeout: 30000 });
+    await execFileAsync("pdftoppm", ["-jpeg", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix], {
+      timeout: 45000,
+      killSignal: "SIGKILL",
+    });
     if (fs.existsSync(targetThumbPath)) return true;
     if (fs.existsSync(`${prefix}.jpg`)) {
       if (`${prefix}.jpg` !== targetThumbPath) {
@@ -62,7 +65,7 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
       "-r150",
       `-sOutputFile=${targetThumbPath}`,
       pdfPath,
-    ], { timeout: 30000 });
+    ], { timeout: 45000, killSignal: "SIGKILL" });
     if (fs.existsSync(targetThumbPath)) return true;
   } catch (gsErr) {}
 
@@ -74,7 +77,7 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
       "150",
       `${pdfPath}[0]`,
       targetThumbPath,
-    ], { timeout: 30000 });
+    ], { timeout: 45000, killSignal: "SIGKILL" });
     if (fs.existsSync(targetThumbPath)) return true;
   } catch (gmErr) {}
 

@@ -18,9 +18,9 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 | **P1 (Hoch)** | **ARCH-02** | Architektur | Modularisierung von `public/index.js` (Frontend in native ES-Module aufgeteilt) | `public/js/`, [`public/index.html`](file:///c:/WSL/adobe_cloud_downloader/public/index.html) | ✅ **Erledigt** |
 | **P2 (Mittel)** | **CLEAN-01** | Bereinigung | Server-seitige Legacy-Gmail-Reste isolieren / aufräumen | [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), `src/` | ✅ **Erledigt** |
 | **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung (`jobs.json`) auf SQLite / Embedded DB migrieren | `src/services/jobQueueService.js`, `store/` | ⏳ Bereit zur Umsetzung |
-| **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | `src/services/fileRenderService.js`, `app/` | ⏳ Bereit zur Umsetzung |
-| **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | `src/server.js` | ⏳ Bereit zur Umsetzung |
-| **P2 (Mittel)** | **AI-01** | KI / Robustheit | Ollama Timeout-Handling mit `AbortController` & Exponential Backoff | [`app/aiAgent.js`](file:///c:/WSL/adobe_cloud_downloader/app/aiAgent.js) | ⏳ Bereit zur Umsetzung |
+| **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | [`src/services/fileRenderService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/fileRenderService.js), [`src/routes/scannerRoutes.js`](file:///c:/WSL/adobe_cloud_downloader/src/routes/scannerRoutes.js) | ✅ **Erledigt** |
+| **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | [`src/server.js`](file:///c:/WSL/adobe_cloud_downloader/src/server.js), `package.json` | ✅ **Erledigt** |
+| **P2 (Mittel)** | **AI-01** | KI / Robustheit | Ollama Timeout-Handling (6-Min-Timeout) & Exponential Backoff Retry | [`src/services/aiService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/aiService.js) | ✅ **Erledigt** |
 | **P3 (Niedrig)** | **TEST-01** | Qualitätssicherung | Automatisierte Test-Suite (Unit- & Integrationstests) | `test/`, `package.json` | ⏳ Bereit zur Umsetzung |
 | **P3 (Niedrig)** | **DOC-01** | Dokumentation | OpenAPI / Swagger API-Dokumentation & `.env.example` | `readme.md`, `.env.example` | ⏳ Bereit zur Umsetzung |
 
@@ -186,48 +186,30 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 ### Task STAB-01: Subprocess-Timeouts & Zombie-Process-Handling
 - **Priorität:** `P1 (Hoch)`
 - **Kategorie:** Stabilität & Ressourcen
-- **Betroffene Dateien:** [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), [`app/scanner.py`](file:///c:/WSL/adobe_cloud_downloader/app/scanner.py), [`app/compress_pdf.py`](file:///c:/WSL/adobe_cloud_downloader/app/compress_pdf.py)
-- **Aktueller Zustand:**
-  Python-Skripte (`scanner.py`, `compress_pdf.py`), Ghostscript und Exiftool werden als Child-Prozesse ausgeführt. Hängt ein Prozess (z.B. defektes PDF mit Endlosschleife im Ghostscript-Parser), kann die gesamte Abarbeitungs-Queue blockieren.
-- **Lösungsvorschlag:**
-  1. `execFile` immer mit festem Timeout (z.B. `timeout: 60000`) und `killSignal: 'SIGKILL'` ausstatten.
-  2. Temporäre Zwischendateien (`tmp_*.pdf`, Bildausschnitte) immer in `try ... finally`-Blöcken aufräumen, um Speicherlecks auf der Festplatte zu verhindern.
+- **Betroffene Dateien:** [`src/services/fileRenderService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/fileRenderService.js), [`src/services/aiService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/aiService.js), [`src/routes/scannerRoutes.js`](file:///c:/WSL/adobe_cloud_downloader/src/routes/scannerRoutes.js), [`src/routes/accountingRoutes.js`](file:///c:/WSL/adobe_cloud_downloader/src/routes/accountingRoutes.js)
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Alle `execFile`-Aufrufe (Ghostscript, pdftoppm, PyMuPDF, `scanner.py`, `compress_pdf.py`, `ocrmypdf`) sind mit harten Timeouts (30–60s) und `killSignal: 'SIGKILL'` abgesichert. Temporäre Zwischendateien (`tmp_*.pdf`, Bildausschnitte) werden in `try ... finally`-Blöcken restlos gelöscht.
 
 ---
 
 ### Task SEC-04: HTTP-Security-Header via `helmet` & globales Rate-Limiting
 - **Priorität:** `P2 (Mittel)`
 - **Kategorie:** Sicherheit
-- **Betroffene Dateien:** [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `package.json`
-- **Aktueller Zustand:**
-  Es fehlen standardmäßige HTTP-Sicherheitsheader (`Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options`).
-  Rate-Limiting ist aktuell nur auf `/api/admin-login` aktiv, nicht jedoch auf `/api/upload` oder Standard-Logins.
-- **Lösungsvorschlag:**
-  - `helmet` Middleware einbinden.
-  - Globales Rate-Limiting für API-Endpunkte und Datei-Uploads konfigurieren.
+- **Betroffene Dateien:** [`src/server.js`](file:///c:/WSL/adobe_cloud_downloader/src/server.js), `package.json`
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  `helmet` ist in `src/server.js` eingebunden. Die Content-Security-Policy (CSP) erlaubt Google GSI, Google Drive Picker, Bootstrap CDN und ONNX WASM. `crossOriginOpenerPolicy` ist auf `same-origin-allow-popups` konfiguriert für reibungslose Google-Logins. Upload- und Scan-Endpunkte sind per `uploadLimiter` abgesichert.
 
 ---
 
-### Task CLEAN-01: Server-seitige Legacy-Gmail-Reste isolieren / aufräumen
-- **Priorität:** `P2 (Mittel)`
-- **Kategorie:** Code-Hygiene & Bereinigung
-- **Betroffene Dateien:** [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js)
-- **Aktueller Zustand:**
-  Da der Gmail-Scanner jetzt vollständig client-seitig (Zero-Trust via LocalStorage) läuft, werden die Server-Routen `/api/gmail/inbox`, `/api/gmail/process`, `/api/gmail/skip` und `app/gmailApi.js` im Normalbetrieb nicht mehr benötigt.
-- **Lösungsvorschlag:**
-  - Nicht mehr genutzte Server-Gmail-Routen und -Dateien entweder als Legacy kennzeichnen oder entfernen, um Verwirrung und Angriffsfläche zu minimieren.
-
----
-
-### Task AI-01: Ollama Timeout-Handling mit `AbortController` & Exponential Backoff
+### Task AI-01: Ollama Timeout-Handling & Exponential Backoff
 - **Priorität:** `P2 (Mittel)`
 - **Kategorie:** KI / Robustheit
-- **Betroffene Dateien:** [`app/aiAgent.js`](file:///c:/WSL/adobe_cloud_downloader/app/aiAgent.js)
-- **Aktueller Zustand:**
-  `fetch` zu Ollama wartet ohne Timeout. Wenn Ollama hängt oder überlastet ist, blockiert die Anfrage unbegrenzt.
-- **Lösungsvorschlag:**
-  - Timeout per `AbortSignal.timeout(90000)` (90 Sekunden) hinzufügen.
-  - Bei temporären 503/429 Fehlern 1-2 automatische Wiederholungsversuche mit kurzem Backoff einbauen.
+- **Betroffene Dateien:** [`src/services/aiService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/aiService.js)
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  `customFetch` nutzt einen konfigurierbaren 6-Minuten-Timeout (`AI_TIMEOUT_MS = 360000`) per `AbortController` (geeignet für rechenintensive Modell-Inferenzen) mit automatischem Retry und Exponential Backoff (1s, 2s) bei temporären 503/429/Verbindungsfehlern.
 
 ---
 

@@ -361,6 +361,7 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
           execFile(
             getPythonPath(),
             [COMPRESS_SCRIPT, tempIn, tempOut],
+            { timeout: 45000, killSignal: "SIGKILL" },
             (error) => {
               if (error) reject(error);
               else resolve();

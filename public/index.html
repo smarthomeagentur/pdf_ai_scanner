@@ -22,7 +22,7 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
 
-    <link rel="stylesheet" href="/index.css?v=20260825_modular_accounting_v52" />
+    <link rel="stylesheet" href="/index.css?v=20260825_clean_dom_v54" />
     <link rel="stylesheet" href="/md3-theme.css" />
 
     <!-- ONNX Modell & WASM Prefetch für blitzschnelles Öffnen des Scanners -->
@@ -870,7 +870,7 @@
               <span>Admin-Bereich • Zero-Trust Sicherheit</span>
             </div>
             <div class="d-flex align-items-center gap-2">
-              <button type="button" class="btn btn-sm btn-outline-secondary px-3" onclick="document.getElementById('settings-modal').style.display='none'">
+              <button id="closeSettingsBottomBtn" type="button" class="btn btn-sm btn-outline-secondary px-3">
                 Schließen
               </button>
               <button id="saveSettingsBtn" type="button" class="btn btn-sm btn-primary px-4">
@@ -898,6 +898,7 @@
           </div>
 
           <form id="admin-login-form" autocomplete="off" onsubmit="return false;">
+            <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
             <div class="gdev-body" style="padding: 20px;">
               <p class="text-muted small mb-3" style="line-height: 1.4;">
                 Bitte gib das Administrator-Passwort ein, um Zugriff auf die Einstellungen und sensible Aktionen zu erhalten.
@@ -978,7 +979,7 @@
             <!-- Lexoffice Fields -->
             <div id="acc-modal-lex-fields" class="p-3 bg-light border mb-3">
               <label class="gdev-label">Lexoffice API-Key:</label>
-              <input type="password" id="acc-modal-lex-key" autocomplete="new-password" class="form-control gdev-input" placeholder="Lexoffice API Key..." />
+              <input type="text" id="acc-modal-lex-key" autocomplete="off" spellcheck="false" class="form-control gdev-input font-monospace" style="-webkit-text-security: disc;" placeholder="Lexoffice API Key..." />
               <div class="gdev-helper">Zu finden in Lexoffice unter Einstellungen &gt; Erweiterungen &gt; API-Schlüssel.</div>
             </div>
 
@@ -990,11 +991,11 @@
               </div>
               <div class="mb-2">
                 <label class="gdev-label">API Secret:</label>
-                <input type="password" id="acc-modal-butler-secret" autocomplete="new-password" class="form-control gdev-input" placeholder="BuchhaltungsButler Secret..." />
+                <input type="text" id="acc-modal-butler-secret" autocomplete="off" spellcheck="false" class="form-control gdev-input font-monospace" style="-webkit-text-security: disc;" placeholder="BuchhaltungsButler Secret..." />
               </div>
               <div>
                 <label class="gdev-label">API Key:</label>
-                <input type="password" id="acc-modal-butler-key" autocomplete="new-password" class="form-control gdev-input" placeholder="BuchhaltungsButler Key..." />
+                <input type="text" id="acc-modal-butler-key" autocomplete="off" spellcheck="false" class="form-control gdev-input font-monospace" style="-webkit-text-security: disc;" placeholder="BuchhaltungsButler Key..." />
               </div>
             </div>
 
@@ -1496,7 +1497,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260825_login_rate_limiter_v53"></script>
+      <script type="module" src="/js/app.js?v=20260825_clean_dom_v56"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

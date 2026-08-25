@@ -22,11 +22,63 @@ const inboxRoutes = require("./routes/inboxRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const scannerRoutes = require("./routes/scannerRoutes");
 
+const helmet = require("helmet");
+const { uploadLimiter } = require("./middleware/rateLimiters");
+
 const app = express();
+
+// HTTP Security Headers
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          "'wasm-unsafe-eval'",
+          "https://accounts.google.com/gsi/client",
+          "https://apis.google.com",
+          "https://cdn.jsdelivr.net",
+        ],
+        scriptSrcAttr: ["'unsafe-inline'"],
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          "https://fonts.googleapis.com",
+          "https://cdn.jsdelivr.net",
+        ],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net"],
+        imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
+        connectSrc: [
+          "'self'",
+          "https://accounts.google.com",
+          "https://www.googleapis.com",
+          "https://apis.google.com",
+          "https://api.lexoffice.io",
+          "https://api.buchhaltungsbutler.de",
+          "https://api.clickup.com",
+          "https://cdn.jsdelivr.net",
+        ],
+        frameSrc: ["'self'", "https://accounts.google.com", "https://docs.google.com"],
+        workerSrc: ["'self'", "blob:"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: null,
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  })
+);
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
+
+// Rate limit upload & scan endpoints
+app.use(["/api/upload", "/api/scan"], uploadLimiter);
 
 // Auth gate for HTML pages
 app.use((req, res, next) => {

@@ -632,10 +632,13 @@ export async function clearAppCacheAndStorage() {
 export function initSettingsEvents() {
   document.getElementById("openSettingsBtn")?.addEventListener("click", openSettingsModal);
 
-  document.getElementById("closeSettingsBtn")?.addEventListener("click", () => {
+  const closeSettings = () => {
     const modal = document.getElementById("settings-modal");
     if (modal) modal.style.display = "none";
-  });
+  };
+
+  document.getElementById("closeSettingsBtn")?.addEventListener("click", closeSettings);
+  document.getElementById("closeSettingsBottomBtn")?.addEventListener("click", closeSettings);
 
   // Admin Login Modal Events
   document.getElementById("admin-login-close-btn")?.addEventListener("click", closeAdminLoginModal);
