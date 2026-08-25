@@ -8,6 +8,10 @@ let syncDataCache = null;
 let currentFilter = "all";
 
 export async function openDriveSyncModal() {
+  if (!state.isAdmin) {
+    showToast("Google Drive Synchronisation ist nur für Administratoren verfügbar.", "warning");
+    return;
+  }
   debugLog("DRIVE_SYNC", "Opening Google Drive Sync Modal...");
   const modalEl = document.getElementById("drive-sync-modal");
   const loadingEl = document.getElementById("drive-sync-loading");

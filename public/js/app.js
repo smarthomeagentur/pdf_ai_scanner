@@ -11,7 +11,7 @@ import { openSettingsModal, saveAllSettings, initSettingsEvents } from "./settin
 import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js";
 import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js";
 import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js";
-import { renderJobsList, initJobEventDelegation } from "./jobs.js";
+import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview } from "./jobs.js";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
@@ -24,6 +24,8 @@ window.openClickUpSyncModal = openClickUpSyncModal;
 window.requestGmailAccountAuth = requestGmailAccountAuth;
 window.loadInboxData = loadInboxData;
 window.loadRechnungenView = loadRechnungenView;
+window.openDocPreview = openDocPreview;
+window.closeDocPreview = closeDocPreview;
 
 window.retryJob = async (jobId) => {
   try {
@@ -145,6 +147,10 @@ function initTabSwitching() {
 
   uploadTab?.addEventListener("click", () => switchTab(uploadTab, viewUpload));
   rechnungenTab?.addEventListener("click", () => {
+    if (!state.isAdmin) {
+      showToast("Das Rechnungs-Modul ist nur für Administratoren verfügbar.", "warning");
+      return;
+    }
     switchTab(rechnungenTab, viewRechnungen);
     loadRechnungenView();
   });
@@ -171,13 +177,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Load config & client ID for GIS
   try {
     const config = await apiRequest("/api/config");
-    state.isAdmin = config.isAdmin;
+    state.isAdmin = !!config.isAdmin;
 
     const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
     const navInboxTab = document.getElementById("nav-inbox-tab");
-    if (state.isAdmin) {
-      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
-      if (navInboxTab) navInboxTab.style.display = "inline-flex";
+    if (navRechnungenTab) {
+      navRechnungenTab.style.display = state.isAdmin ? "inline-flex" : "none";
+    }
+    if (navInboxTab) {
+      navInboxTab.style.display = "inline-flex";
     }
   } catch (e) {}
 

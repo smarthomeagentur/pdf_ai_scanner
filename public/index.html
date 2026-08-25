@@ -22,7 +22,7 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
 
-    <link rel="stylesheet" href="/index.css?v=20260825_btn_styles_v28" />
+    <link rel="stylesheet" href="/index.css?v=20260825_modular_accounting_v52" />
     <link rel="stylesheet" href="/md3-theme.css" />
 
     <!-- ONNX Modell & WASM Prefetch für blitzschnelles Öffnen des Scanners -->
@@ -31,20 +31,17 @@
     <link rel="prefetch" href="/vendor/onnx/ort-wasm-simd-threaded.wasm" as="fetch" crossorigin="anonymous" />
     <style>
       .pdf-preview-container {
-        position: absolute;
-        right: 14px;
-        top: 14px;
-        width: 82px;
-        height: calc(100% - 28px);
-        max-height: 135px;
+        position: relative;
+        width: 62px;
+        height: 80px;
         text-decoration: none;
-        z-index: 1;
-        transition: z-index 0.2s;
-        display: flex;
-        align-items: stretch;
+        display: block;
+        flex-shrink: 0;
+        border-radius: 8px;
+        cursor: pointer;
       }
       .pdf-preview-container:hover {
-        z-index: 100;
+        z-index: 50;
       }
       .pdf-preview-img {
         width: 100%;
@@ -60,7 +57,7 @@
         transform-origin: top right;
       }
       .pdf-preview-container:hover .pdf-preview-img {
-        transform: scale(4.2);
+        transform: scale(3.2);
         box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
         border-color: #94a3b8;
       }
@@ -537,335 +534,427 @@
         </div>
       </div>
 
-      <!-- Settings Modal -->
+      <!-- Document Preview Modal (Mobile & Desktop) -->
+      <div id="doc-preview-modal" class="modal-overlay" style="display: none; z-index: 2200; background: rgba(0,0,0,0.75); backdrop-filter: blur(5px);">
+        <div class="modal-content" style="max-width: 1100px; width: 96vw; height: 92vh; display: flex; flex-direction: column; padding: 0; border-radius: 16px; overflow: hidden; background: #fff; box-shadow: 0 16px 48px rgba(0,0,0,0.4);">
+          <!-- Modal Header -->
+          <div class="modal-header d-flex justify-content-between align-items-center p-3 border-bottom bg-light m-0" style="flex-shrink: 0; position: static;">
+            <div class="d-flex align-items-center gap-2 text-truncate" style="min-width: 0; max-width: 55%;">
+              <span class="material-symbols-outlined text-primary" style="font-size: 28px;">description</span>
+              <div class="text-truncate">
+                <h5 id="doc-preview-title" class="m-0 text-truncate fw-bold" style="font-size: 15px;">Dokument</h5>
+                <div id="doc-preview-subtitle" class="text-muted small text-truncate" style="font-size: 12px;"></div>
+              </div>
+            </div>
+
+            <!-- Controls & Actions -->
+            <div class="d-flex align-items-center gap-2 flex-shrink-0">
+              <!-- Extra Download Button (Mobil & Desktop) -->
+              <a id="doc-preview-download-btn" href="#" download="" class="btn btn-sm btn-primary d-flex align-items-center gap-1 px-3" style="border-radius: 20px; font-weight: 600; font-size: 13px;" title="Dokument herunterladen">
+                <span class="material-symbols-outlined" style="font-size: 18px;">download</span>
+                <span>Download</span>
+              </a>
+
+              <a id="doc-preview-external-btn" href="#" target="_blank" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 8px;" title="In neuem Tab öffnen">
+                <span class="material-symbols-outlined" style="font-size: 18px;">open_in_new</span>
+                <span class="d-none d-sm-inline">Im Browser</span>
+              </a>
+
+              <button id="doc-preview-close-btn" type="button" class="btn btn-sm btn-light rounded-circle d-flex align-items-center justify-content-center ms-1" style="width: 34px; height: 34px; padding: 0;" title="Schließen (Esc)">
+                <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Modal Body with Document Viewer -->
+          <div class="modal-body p-0 flex-grow-1 position-relative" style="background: #525659; min-height: 0;">
+            <div id="doc-preview-loading" class="position-absolute top-50 start-50 translate-middle text-center text-white" style="z-index: 5;">
+              <div class="spinner-border text-light mb-2" role="status"></div>
+              <div class="small fw-medium">Lade Belegvorschau...</div>
+            </div>
+            <iframe id="doc-preview-iframe" src="" style="width: 100%; height: 100%; border: 0; display: block;"></iframe>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Modal (Google Developer / Material 3 Console Design) -->
       <div id="settings-modal" class="modal-overlay">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>Einstellungen</h3>
-            <button class="modal-close d-flex align-items-center justify-content-center" id="closeSettingsBtn">
-              <span class="material-symbols-outlined">close</span>
+        <div class="modal-content gdev-modal">
+          <!-- Header with Google Blue Top Accent -->
+          <div class="gdev-header">
+            <div>
+              <h3 class="gdev-title">
+                <span class="material-symbols-outlined text-primary" style="font-size: 22px;">settings</span>
+                <span>Einstellungen</span>
+              </h3>
+              <div class="gdev-subtitle">Systemkonfiguration, API-Verbindungen & Mandanten</div>
+            </div>
+            <button class="gdev-close-btn" id="closeSettingsBtn" title="Schließen">
+              <span class="material-symbols-outlined" style="font-size: 20px;">close</span>
             </button>
           </div>
 
-          <div
-            class="setting-group"
-            style="
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              background: #f8f9fa;
-              padding: 15px;
-              border-radius: 8px;
-            "
-          >
-            <div>
-              <strong>Google Drive</strong>
-              <div id="auth-status" class="text-muted" style="margin-left: 0">Status wird geladen...</div>
+          <!-- Google Developer Style Segment Tabs -->
+          <div class="gdev-tabs-bar">
+            <button type="button" class="gdev-tab-btn active" data-tab-target="drive">
+              <span class="material-symbols-outlined" style="font-size: 18px;">cloud</span>
+              <span>Google Drive</span>
+            </button>
+            <button type="button" class="gdev-tab-btn" data-tab-target="gmail">
+              <span class="material-symbols-outlined" style="font-size: 18px;">mail</span>
+              <span>Gmail Scanner</span>
+            </button>
+            <button type="button" class="gdev-tab-btn" data-tab-target="ai">
+              <span class="material-symbols-outlined" style="font-size: 18px;">psychology</span>
+              <span>KI-Erkennung</span>
+            </button>
+            <button type="button" class="gdev-tab-btn" data-tab-target="accounting">
+              <span class="material-symbols-outlined" style="font-size: 18px;">account_balance</span>
+              <span>Buchhaltung & ClickUp</span>
+            </button>
+            <button type="button" class="gdev-tab-btn" data-tab-target="system">
+              <span class="material-symbols-outlined" style="font-size: 18px;">tune</span>
+              <span>System & Wartung</span>
+            </button>
+          </div>
+
+          <!-- Body / Tab Content Area -->
+          <div class="gdev-body">
+            <!-- TAB 1: Google Drive -->
+            <div id="settings-panel-drive" class="settings-tab-panel">
+              <div class="gdev-card">
+                <div class="gdev-card-title">
+                  <span>Google Drive Authentifizierung</span>
+                  <span class="badge bg-light text-dark border" style="font-size: 11px; font-weight: normal;">OAuth 2.0</span>
+                </div>
+                <div class="d-flex align-items-center justify-content-between p-3 border bg-light mb-3">
+                  <div>
+                    <div style="font-size: 13.5px; font-weight: 500; color: #202124;">Google Drive API Status:</div>
+                    <div id="auth-status" class="text-muted small" style="margin-top: 2px;">Status wird geladen...</div>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <button id="auth-btn" type="button" class="btn btn-sm btn-primary" style="display: none;">
+                      Mit Google Anmelden
+                    </button>
+                    <button id="auth-disconnect-btn" type="button" class="btn btn-sm btn-outline-danger" style="display: none;">
+                      Trennen
+                    </button>
+                  </div>
+                </div>
+
+                <div id="folder-settings-container" class="setting-group mb-3" style="display: none;">
+                  <label class="gdev-label">Google Drive Ordner für rohe Uploads:</label>
+                  <div class="d-flex gap-2">
+                    <input type="text" id="raw-folder-display" disabled placeholder="Kein Ordner ausgewählt" class="form-control gdev-input flex-grow-1" />
+                    <input type="hidden" id="raw-folder-id" />
+                    <button id="raw-folder-browse" type="button" class="btn btn-sm btn-outline-secondary px-3" disabled>
+                      Durchsuchen
+                    </button>
+                  </div>
+                  <div class="mt-2 d-flex align-items-center gap-2">
+                    <input type="checkbox" id="monitor-drive-checkbox" style="width: 16px; height: 16px; cursor: pointer;" />
+                    <label for="monitor-drive-checkbox" class="mb-0 text-muted small" style="cursor: pointer;">
+                      Ordner automatisch auf neue Dateien überwachen (alle 15 Sek.)
+                    </label>
+                  </div>
+                </div>
+
+                <div id="ai-folder-settings-container" class="setting-group mb-3" style="display: none;">
+                  <label class="gdev-label">Google Drive Ordner für KI-erkannte PDFs (Sortiert):</label>
+                  <div class="d-flex gap-2">
+                    <input type="text" id="ai-folder-display" disabled placeholder="Kein Ordner ausgewählt" class="form-control gdev-input flex-grow-1" />
+                    <input type="hidden" id="ai-folder-id" />
+                    <button id="ai-folder-browse" type="button" class="btn btn-sm btn-outline-secondary px-3" disabled>
+                      Durchsuchen
+                    </button>
+                  </div>
+                </div>
+
+                <div id="drive-sync-settings-container" class="setting-group mt-3 pt-3 border-top" style="display: none;">
+                  <button id="openDriveSyncBtn" type="button" class="btn btn-sm btn-outline-primary w-100 d-flex align-items-center justify-content-center gap-2 py-2">
+                    <span class="material-symbols-outlined" style="font-size: 18px;">sync</span>
+                    <span>Google Drive Belege nachladen & synchronisieren</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB 2: Gmail Scanner -->
+            <div id="settings-panel-gmail" class="settings-tab-panel" style="display: none;">
+              <div class="gdev-card" id="gmail-settings-container">
+                <div class="gdev-card-title">
+                  <span>Google Mail (Workmail) Client Scanner</span>
+                  <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Zero-Trust LocalStorage</span>
+                </div>
+                <div class="text-muted small mb-3" style="line-height: 1.4;">
+                  Tokens und E-Mails verbleiben ausschließlich sicher in deinem lokalen Browser-Speicher. Der Server hat keinen Zugriff auf dein Postfach.
+                </div>
+
+                <div class="setting-group mb-3">
+                  <div class="d-flex align-items-center gap-2">
+                    <input type="checkbox" id="gmail-auto-archive-checkbox" checked style="width: 16px; height: 16px; cursor: pointer;" />
+                    <label for="gmail-auto-archive-checkbox" class="mb-0 gdev-label" style="cursor: pointer;">
+                      E-Mails nach der Verarbeitung standardmäßig archivieren
+                    </label>
+                  </div>
+                </div>
+
+                <div class="setting-group mb-3">
+                  <label class="gdev-label">Gmail-Suchabfrage (Filter):</label>
+                  <input type="text" id="gmail-scan-query-input" class="form-control gdev-input" placeholder="in:inbox filename:pdf" />
+                  <div class="gdev-helper">Standardmäßig werden alle ungelesenen E-Mails im Posteingang mit PDF-Anhängen gescannt.</div>
+                </div>
+
+                <div class="setting-group mb-3">
+                  <label class="gdev-label">Verbundene Posteingänge:</label>
+                  <div id="gmail-accounts-container" class="d-flex flex-column gap-2 mt-1">
+                    <!-- Dynamically populated -->
+                  </div>
+                </div>
+
+                <button id="settings-add-gmail-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 py-2">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">add</span>
+                  <span>Weiteres Gmail-Konto verbinden</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- TAB 3: KI-Erkennung -->
+            <div id="settings-panel-ai" class="settings-tab-panel" style="display: none;">
+              <div class="gdev-card" id="ai-prompt-settings-container">
+                <div class="gdev-card-title">
+                  <span>KI Prompt & Erkennungsparameter</span>
+                  <span class="badge bg-light text-dark border" style="font-size: 11px; font-weight: normal;">Gemini / Claude</span>
+                </div>
+                <div class="setting-group mb-3">
+                  <label class="gdev-label">Kategorien (Komma-getrennt):</label>
+                  <textarea id="ai-categories-input" class="form-control gdev-input" rows="3" placeholder="Administration, Personal, Projekte, Rechnungen..."></textarea>
+                  <div class="gdev-helper">Verfügbare Kategorien für die automatische Klassifizierung von Belegen.</div>
+                </div>
+                <div class="setting-group mb-3">
+                  <label class="gdev-label">Firmen / Rechnungsempfänger (Komma-getrennt):</label>
+                  <textarea id="ai-company-input" class="form-control gdev-input" rows="3" placeholder="wirewire GmbH, The Wire UG, Polyxo Studios GmbH..."></textarea>
+                  <div class="gdev-helper">Erkannte Zielunternehmen für die automatische Zuordnung und Buchhaltung.</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB 4: Buchhaltung & ClickUp -->
+            <div id="settings-panel-accounting" class="settings-tab-panel" style="display: none;">
+              <div class="gdev-card" id="lexoffice-settings-container">
+                <div class="gdev-card-title">
+                  <span>Modulare Buchhaltungs-Zugänge</span>
+                  <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Zero-Trust</span>
+                </div>
+                <div class="text-muted small mb-3" style="line-height: 1.4;">
+                  Verbinde beliebig viele Mandanten für Lexoffice und BuchhaltungsButler. Zugänge werden benannt und stehen sofort im Beleg-Modal und im Uploader zur Verfügung.
+                </div>
+
+                <!-- Dynamic Accounts List -->
+                <div id="accounting-accounts-container" class="d-flex flex-column gap-2 mb-3">
+                  <!-- Dynamically rendered via JS -->
+                </div>
+
+                <button id="add-accounting-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 py-2">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">add_circle</span>
+                  <span>Neuen Buchhaltungs-Zugang hinzufügen</span>
+                </button>
+              </div>
+
+              <div class="gdev-card" id="clickup-settings-container">
+                <div class="gdev-card-title">
+                  <span>ClickUp Integration</span>
+                  <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
+                </div>
+                <form id="clickup-form" autocomplete="off" onsubmit="return false;">
+                  <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
+                  <div class="mb-3">
+                    <label class="gdev-label">ClickUp API Key (Personal Token):</label>
+                    <input type="password" id="clickup-api-key" autocomplete="new-password" class="form-control gdev-input" placeholder="pk_..." />
+                  </div>
+                  <div class="mb-3">
+                    <label class="gdev-label">Zielliste ID (z. B. Inbox):</label>
+                    <input type="text" id="clickup-list-id" class="form-control gdev-input" placeholder="901510878865" />
+                  </div>
+                </form>
+                <div class="d-flex flex-column gap-2 mb-3">
+                  <div class="d-flex align-items-center gap-2">
+                    <input type="checkbox" id="clickup-auto-task" style="width: 16px; height: 16px; cursor: pointer;" />
+                    <label for="clickup-auto-task" class="mb-0 text-muted small" style="cursor: pointer;">
+                      Automatisch Task in ClickUp erstellen nach Scan / Drive-Sync
+                    </label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <input type="checkbox" id="clickup-filter-private" style="width: 16px; height: 16px; cursor: pointer;" />
+                    <label for="clickup-filter-private" class="mb-0 text-muted small" style="cursor: pointer;">
+                      Private Dokumente (z. B. Firma "Daniel" / Kategorie "Privat") überspringen
+                    </label>
+                  </div>
+                </div>
+                <div class="d-flex gap-2">
+                  <button id="clickup-test-connection-btn" type="button" class="btn btn-sm btn-outline-secondary flex-grow-1 d-flex align-items-center justify-content-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">sync_alt</span> Verbindung prüfen
+                  </button>
+                  <button id="clickup-trigger-sync-btn" type="button" class="btn btn-sm btn-outline-primary flex-grow-1 d-flex align-items-center justify-content-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">cloud_sync</span> Sync Review
+                  </button>
+                </div>
+                <div id="clickup-test-status" class="mt-2 small"></div>
+              </div>
+            </div>
+
+            <!-- TAB 5: System & Wartung -->
+            <div id="settings-panel-system" class="settings-tab-panel" style="display: none;">
+              <div class="gdev-card" id="admin-backup-container">
+                <div class="gdev-card-title">
+                  <span>Backup & Wiederherstellung</span>
+                  <span class="badge bg-light text-dark border" style="font-size: 11px; font-weight: normal;">JSON</span>
+                </div>
+                <div class="d-flex gap-2">
+                  <button id="download-backup-btn" type="button" class="btn btn-sm btn-outline-success flex-grow-1 d-flex align-items-center justify-content-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">download</span> Backup exportieren
+                  </button>
+                  <input type="file" id="restore-file-input" accept=".json" style="display: none;" />
+                  <button id="trigger-restore-btn" type="button" class="btn btn-sm btn-outline-info flex-grow-1 d-flex align-items-center justify-content-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">upload</span> Backup einspielen
+                  </button>
+                </div>
+              </div>
+
+              <div class="gdev-card">
+                <div class="gdev-card-title">
+                  <span>Diagnose & Entwickler-Optionen</span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                  <input type="checkbox" id="debug-logs-checkbox" checked style="width: 16px; height: 16px; cursor: pointer;" />
+                  <label for="debug-logs-checkbox" class="mb-0 text-muted small" style="cursor: pointer;">
+                    Ausführliche Debug-Logs in der Browser-Konsole aktivieren
+                  </label>
+                </div>
+              </div>
+
+              <div class="gdev-card">
+                <div class="gdev-card-title">
+                  <span>App-Cache & Offline-Speicher</span>
+                  <span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 11px; font-weight: normal;">Hard Reload</span>
+                </div>
+                <p class="text-muted small mb-2" style="line-height: 1.4;">
+                  Löscht alle zwischengespeicherten Daten, Service-Worker und den lokalen Speicher im Browser und lädt die Anwendung vollständig neu vom Server.
+                </p>
+                <button id="clear-cache-storage-btn" type="button" class="btn btn-sm btn-outline-danger d-inline-flex align-items-center justify-content-center gap-1 w-100 py-2">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">cached</span>
+                  <span>Gesamten Cache & Storage leeren</span>
+                </button>
+              </div>
+
+              <div class="gdev-card">
+                <div class="gdev-card-title">
+                  <span>Warteschlange & Bereinigung</span>
+                </div>
+                <div class="d-flex flex-column gap-2">
+                  <button id="trigger-rescan-duplicates-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">content_copy</span> Duplikate neu scannen
+                  </button>
+                  <button id="trigger-clear-jobs-btn" type="button" class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">delete_sweep</span> Belegliste leeren
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sticky Footer Bar -->
+          <div class="gdev-footer">
+            <div class="text-muted small d-flex align-items-center gap-1">
+              <span class="material-symbols-outlined text-success" style="font-size: 16px;">verified_user</span>
+              <span>Admin-Bereich • Zero-Trust Sicherheit</span>
             </div>
             <div class="d-flex align-items-center gap-2">
-              <button id="auth-btn" class="action-button" style="margin-top: 0; padding: 8px 15px; display: none">
-                Mit Google Anmelden
+              <button type="button" class="btn btn-sm btn-outline-secondary px-3" onclick="document.getElementById('settings-modal').style.display='none'">
+                Schließen
               </button>
-              <button id="auth-disconnect-btn" type="button" class="btn btn-outline-danger btn-sm" style="display: none; border-radius: 8px; font-size: 12px; padding: 6px 12px;">
-                Trennen
-              </button>
-            </div>
-          </div>
-
-          <div class="setting-group" id="folder-settings-container" style="display: none">
-            <label>Ordner für rohe Uploads:</label>
-            <div style="display: flex; gap: 10px">
-              <input
-                type="text"
-                id="raw-folder-display"
-                disabled
-                placeholder="Kein Ordner ausgewählt"
-                style="flex-grow: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 5px"
-              />
-              <input type="hidden" id="raw-folder-id" />
-              <button
-                id="raw-folder-browse"
-                class="action-button"
-                disabled
-                style="margin: 0; padding: 8px 15px; flex-shrink: 0"
-              >
-                Durchsuchen
-              </button>
-            </div>
-            <div style="margin-top: 10px; display: flex; align-items: center; gap: 8px">
-              <input type="checkbox" id="monitor-drive-checkbox" style="width: 18px; height: 18px" />
-              <label
-                for="monitor-drive-checkbox"
-                style="margin: 0; font-weight: normal; font-size: 14px; cursor: pointer"
-                >Ordner automatisch auf neue Dateien überwachen (alle 15 Sek)</label
-              >
-            </div>
-          </div>
-
-          <div class="setting-group" id="ai-folder-settings-container" style="display: none">
-            <label>Ordner für AI erkannte PDFs:</label>
-            <div style="display: flex; gap: 10px">
-              <input
-                type="text"
-                id="ai-folder-display"
-                disabled
-                placeholder="Kein Ordner ausgewählt"
-                style="flex-grow: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 5px"
-              />
-              <input type="hidden" id="ai-folder-id" />
-              <button
-                id="ai-folder-browse"
-                class="action-button"
-                disabled
-                style="margin: 0; padding: 8px 15px; flex-shrink: 0"
-              >
-                Durchsuchen
+              <button id="saveSettingsBtn" type="button" class="btn btn-sm btn-primary px-4">
+                Einstellungen speichern
               </button>
             </div>
           </div>
+        </div>
+      </div>
 
-          <div class="setting-group" id="drive-sync-settings-container" style="display: none; margin-top: 10px;">
-            <button
-              id="openDriveSyncBtn"
-              type="button"
-              class="btn btn-outline-primary w-100 d-flex align-items-center justify-content-center gap-2"
-              style="border-radius: 8px; font-weight: 500; padding: 8px 16px;"
-            >
-              <span class="material-symbols-outlined" style="font-size: 20px;">sync</span>
-              <span>Google Drive Belege nachladen & synchronisieren</span>
+      <!-- Accounting Account Create/Edit Modal (Google Dev Style) -->
+      <div id="accounting-account-modal" class="modal-overlay" style="z-index: 2500; display: none;">
+        <div class="modal-content gdev-modal" style="max-width: 520px; height: auto; max-height: 90vh;">
+          <div class="gdev-header">
+            <div>
+              <h3 class="gdev-title" id="acc-modal-title">
+                <span class="material-symbols-outlined text-primary" style="font-size: 20px;">account_balance</span>
+                <span>Buchhaltungs-Zugang anlegen</span>
+              </h3>
+              <div class="gdev-subtitle">Zugangsdaten & Mandanten-Konfiguration</div>
+            </div>
+            <button class="gdev-close-btn" id="acc-modal-close-btn" title="Schließen">
+              <span class="material-symbols-outlined" style="font-size: 18px;">close</span>
             </button>
           </div>
 
-          <div class="setting-group" id="gmail-settings-container" style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
-            <label><strong>Google Mail (Workmail) Client Scanner:</strong></label>
-            <div class="text-muted small mb-2" style="font-size: 12px;">Tokens und E-Mails verbleiben sicher in deinem lokalen Browser-Speicher (LocalStorage). Der Server hat keinen Zugriff auf dein Postfach.</div>
-            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="checkbox" id="gmail-auto-archive-checkbox" checked style="width: 18px; height: 18px;" />
-                E-Mails nach der Verarbeitung standardmäßig archivieren
-              </label>
-            </div>
-            <div style="margin-top: 10px;">
-              <label style="font-size: 0.85em; color: #555;">Gmail-Suchabfrage (Filter):</label>
-              <input
-                type="text"
-                id="gmail-scan-query-input"
-                style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px;"
-                placeholder="in:inbox filename:pdf"
-              />
+          <div class="gdev-body" style="padding: 20px;">
+            <input type="hidden" id="acc-modal-id" />
+
+            <div class="setting-group mb-3">
+              <label class="gdev-label">Name des Mandanten / Unternehmens:</label>
+              <input type="text" id="acc-modal-name" class="form-control gdev-input" placeholder="z. B. wirewire GmbH oder The Wire UG" autocomplete="off" />
+              <div class="gdev-helper">Dieser Name wird für die automatische Beleg-Zuordnung und im Uploader angezeigt.</div>
             </div>
 
-            <!-- Connected Accounts List in Settings -->
-            <div style="margin-top: 12px;">
-              <label style="font-size: 0.85em; color: #555; font-weight: 600;">Verbundene Posteingänge (im Browser gespeichert):</label>
-              <div id="gmail-accounts-container" class="d-flex flex-column gap-2 mt-1">
-                <!-- Dynamically filled -->
+            <div class="setting-group mb-3">
+              <label class="gdev-label">Buchhaltungs-Software (Anbieter):</label>
+              <select id="acc-modal-provider" class="form-select gdev-input">
+                <option value="lexoffice">Lexoffice (REST API)</option>
+                <option value="buchhaltungsbutler">BuchhaltungsButler (API)</option>
+              </select>
+            </div>
+
+            <!-- Lexoffice Fields -->
+            <div id="acc-modal-lex-fields" class="p-3 bg-light border mb-3">
+              <label class="gdev-label">Lexoffice API-Key:</label>
+              <input type="password" id="acc-modal-lex-key" autocomplete="new-password" class="form-control gdev-input" placeholder="Lexoffice API Key..." />
+              <div class="gdev-helper">Zu finden in Lexoffice unter Einstellungen &gt; Erweiterungen &gt; API-Schlüssel.</div>
+            </div>
+
+            <!-- Butler Fields -->
+            <div id="acc-modal-butler-fields" class="p-3 bg-light border mb-3" style="display: none;">
+              <div class="mb-2">
+                <label class="gdev-label">API Client (z. B. the_wire_ug):</label>
+                <input type="text" id="acc-modal-butler-client" class="form-control gdev-input" placeholder="the_wire_ug" autocomplete="off" />
+              </div>
+              <div class="mb-2">
+                <label class="gdev-label">API Secret:</label>
+                <input type="password" id="acc-modal-butler-secret" autocomplete="new-password" class="form-control gdev-input" placeholder="BuchhaltungsButler Secret..." />
+              </div>
+              <div>
+                <label class="gdev-label">API Key:</label>
+                <input type="password" id="acc-modal-butler-key" autocomplete="new-password" class="form-control gdev-input" placeholder="BuchhaltungsButler Key..." />
               </div>
             </div>
 
-            <button id="settings-add-gmail-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-2 w-100 mt-3" style="border-radius: 8px; padding: 8px 12px; font-weight: 500;">
-              <span class="material-symbols-outlined" style="font-size: 18px;">add</span>
-              <span>Weiteres Gmail-Konto verbinden</span>
+            <!-- Connection Test Status Box -->
+            <div id="acc-modal-test-status" class="small mb-2" style="min-height: 20px;"></div>
+          </div>
+
+          <div class="gdev-footer">
+            <button type="button" id="acc-modal-test-btn" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1">
+              <span class="material-symbols-outlined" style="font-size: 16px;">sync_alt</span>
+              <span>Verbindung testen</span>
             </button>
-          </div>
-
-          <div
-            class="setting-group"
-            id="ai-prompt-settings-container"
-            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
-          >
-            <label>KI Prompt Konfiguration:</label>
-            <div style="margin-top: 10px">
-              <label style="font-size: 0.9em; color: #555">Kategorien (Komma-getrennt):</label>
-              <textarea
-                id="ai-categories-input"
-                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; resize: vertical"
-                rows="2"
-                placeholder="Administration, Personal, Projekte..."
-              ></textarea>
-            </div>
-            <div style="margin-top: 10px">
-              <label style="font-size: 0.9em; color: #555">Firmen / Rechnungsempfänger (Komma-getrennt):</label>
-              <textarea
-                id="ai-company-input"
-                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px; resize: vertical"
-                rows="2"
-                placeholder="wirewire GmbH, Daniel..."
-              ></textarea>
-            </div>
-          </div>
-
-          <div
-            class="setting-group"
-            id="lexoffice-settings-container"
-            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
-          >
-            <label class="d-flex align-items-center justify-content-between">
-              <strong>Buchhaltung API-Zugänge (nur Admin):</strong>
-              <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
-            </label>
-            <form id="lexoffice-form-wirewire" autocomplete="off" onsubmit="return false;">
-              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
-              <div style="margin-top: 10px">
-                <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für wirewire GmbH:</label>
-                <input
-                  type="password"
-                  id="lexoffice-key-wirewire"
-                  autocomplete="new-password"
-                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="Lexoffice API Key..."
-                />
-              </div>
-            </form>
-            <form id="butler-form-thewire" autocomplete="off" onsubmit="return false;">
-              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
-              <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px;">
-                <div style="font-size: 0.9em; font-weight: bold; color: #333; margin-bottom: 8px;">BuchhaltungsButler Zugangsdaten für The Wire UG:</div>
-                <div style="margin-bottom: 8px;">
-                  <label style="font-size: 0.85em; color: #555">API Client (z. B. the_wire_ug):</label>
-                  <input
-                    type="text"
-                    id="butler-key-thewire-client"
-                    autocomplete="off"
-                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
-                    placeholder="the_wire_ug"
-                  />
-                </div>
-                <div style="margin-bottom: 8px;">
-                  <label style="font-size: 0.85em; color: #555">API Secret:</label>
-                  <input
-                    type="password"
-                    id="butler-key-thewire-secret"
-                    autocomplete="new-password"
-                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
-                    placeholder="BuchhaltungsButler Secret..."
-                  />
-                </div>
-                <div>
-                  <label style="font-size: 0.85em; color: #555">API Key:</label>
-                  <input
-                    type="password"
-                    id="butler-key-thewire-key"
-                    autocomplete="new-password"
-                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
-                    placeholder="BuchhaltungsButler Key..."
-                  />
-                </div>
-              </div>
-            </form>
-            <form id="lexoffice-form-polyxo" autocomplete="off" onsubmit="return false;">
-              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
-              <div style="margin-top: 10px">
-                <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für Polyxo Studios GmbH:</label>
-                <input
-                  type="password"
-                  id="lexoffice-key-polyxo"
-                  autocomplete="new-password"
-                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="Lexoffice API Key..."
-                />
-              </div>
-            </form>
-          </div>
-
-          <div
-            class="setting-group"
-            id="clickup-settings-container"
-            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
-          >
-            <label class="d-flex align-items-center justify-content-between">
-              <strong>ClickUp Integration (nur Admin):</strong>
-              <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
-            </label>
-            <form id="clickup-form" autocomplete="off" onsubmit="return false;">
-              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
-              <div style="margin-top: 10px">
-                <label style="font-size: 0.9em; color: #555">ClickUp API Key (Personal Token):</label>
-                <input
-                  type="password"
-                  id="clickup-api-key"
-                  autocomplete="new-password"
-                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="pk_..."
-                />
-              </div>
-              <div style="margin-top: 10px">
-                <label style="font-size: 0.9em; color: #555">Zielliste ID (z.B. Inbox):</label>
-                <input
-                  type="text"
-                  id="clickup-list-id"
-                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="901510878865"
-                />
-              </div>
-            </form>
-            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
-              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="checkbox" id="clickup-auto-task" style="width: 18px; height: 18px;" />
-                Automatisch Task in ClickUp erstellen nach Scan / Drive-Sync
-              </label>
-              <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="checkbox" id="clickup-filter-private" style="width: 18px; height: 18px;" />
-                Private Dokumente (z.B. Firma "Daniel" / Kategorie "Privat") überspringen
-              </label>
-            </div>
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-              <button id="clickup-test-connection-btn" type="button" class="action-button" style="background-color: #6c757d; color: white; flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <span class="material-symbols-outlined" style="font-size: 18px;">sync_alt</span> Verbindung prüfen
+            <div class="d-flex align-items-center gap-2">
+              <button type="button" id="acc-modal-cancel-btn" class="btn btn-sm btn-outline-secondary px-3">
+                Abbrechen
               </button>
-              <button id="clickup-trigger-sync-btn" type="button" class="action-button" style="background-color: #7b68ee; color: white; flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <span class="material-symbols-outlined" style="font-size: 18px;">cloud_sync</span> Sync All Review
-              </button>
-            </div>
-            <div id="clickup-test-status" style="margin-top: 8px; font-size: 13px;"></div>
-          </div>
-
-          <div
-            class="setting-group"
-            id="admin-backup-container"
-            style="display: none; border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;"
-          >
-            <label><strong>Backup & Wiederherstellung (nur Admin):</strong></label>
-            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
-              <button id="download-backup-btn" type="button" class="action-button" style="background-color: #198754; color: white; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <span class="material-symbols-outlined" style="font-size: 18px;">download</span> Backup herunterladen (.json)
-              </button>
-              <input type="file" id="restore-file-input" accept=".json" style="display: none;" />
-              <button id="trigger-restore-btn" type="button" class="action-button" style="background-color: #0dcaf0; color: #000; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <span class="material-symbols-outlined" style="font-size: 18px;">upload</span> Backup wiederherstellen
+              <button type="button" id="acc-modal-save-btn" class="btn btn-sm btn-primary px-4">
+                Speichern
               </button>
             </div>
           </div>
-
-          <div
-            class="setting-group"
-            style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;"
-          >
-            <label><strong>Diagnose & Entwickler-Optionen:</strong></label>
-            <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" id="debug-logs-checkbox" checked style="width: 18px; height: 18px;" />
-              <label for="debug-logs-checkbox" style="margin: 0; font-weight: normal; font-size: 13.5px; cursor: pointer;">
-                Ausführliche Debug-Logs in der Browser-Konsole aktivieren
-              </label>
-            </div>
-          </div>
-
-          <div
-            class="setting-group"
-            style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
-          >
-            <label>Warteschlange & Bereinigung:</label>
-            <button id="trigger-rescan-duplicates-btn" class="action-button" style="width: 100%; margin-top: 10px; background-color: #6f42c1; color: white; display: flex; align-items: center; justify-content: center; gap: 6px;">
-              <span class="material-symbols-outlined" style="font-size: 18px;">content_copy</span> Duplikate neu scannen
-            </button>
-            <button id="trigger-clear-jobs-btn" class="action-button" style="width: 100%; margin-top: 10px; background-color: #dc3545; color: white;">
-              Liste leeren
-            </button>
-          </div>
-
-          <button id="saveSettingsBtn" class="action-button" style="width: 100%; display: none; margin-top: 15px">
-            Einstellungen Speichern
-          </button>
         </div>
       </div>
 
@@ -1346,7 +1435,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260825_clickup_modal_v45"></script>
+      <script type="module" src="/js/app.js?v=20260825_modular_accounting_v52"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

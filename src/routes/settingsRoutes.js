@@ -36,7 +36,7 @@ router.post("/api/settings", requireAdmin, (req, res) => {
   res.json({ success: true, settings: appSettings });
 });
 
-router.get("/api/auth/client-id", async (req, res) => {
+router.get("/api/auth/client-id", requireAdmin, async (req, res) => {
   try {
     if (!fs.existsSync(CREDENTIALS_FILE)) {
       return res.status(404).json({ success: false, error: "gdrive_secret.json nicht gefunden" });
@@ -75,7 +75,7 @@ router.post("/api/auth/disconnect", requireAdmin, async (req, res) => {
   }
 });
 
-router.get("/api/auth/token-status", (req, res) => {
+router.get("/api/auth/token-status", requireAdmin, (req, res) => {
   const isConnected = fs.existsSync(TOKEN_FILE);
   res.json({ isConnected });
 });

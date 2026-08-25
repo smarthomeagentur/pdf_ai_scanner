@@ -497,6 +497,55 @@ async function executeDriveSync(items) {
   return { success: true, total: items.length };
 }
 
+async function importDriveFile(driveFileId, name = null) {
+  const cleanId = String(driveFileId).replace(/^gdrive_/, "");
+  const drive = await driveApi.getClient();
+
+  let fileName = name;
+  let webViewLink = null;
+  if (!fileName) {
+    const fileMeta = await drive.files.get({
+      fileId: cleanId,
+      fields: "id, name, webViewLink",
+    });
+    fileName = fileMeta.data.name;
+    webViewLink = fileMeta.data.webViewLink;
+  }
+
+  const safeName = fileName.toLowerCase().endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+  const localPath = path.join(DOWNLOADS_DIR, `${Date.now()}-${safeName}`);
+  const dest = fs.createWriteStream(localPath);
+  const downloadRes = await drive.files.get({ fileId: cleanId, alt: "media" }, { responseType: "stream" });
+  await pipeline(downloadRes.data, dest);
+
+  const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+  const targetThumb = path.join(DOWNLOADS_DIR, `thumb_${jobId}.jpg`);
+  renderPdfToJpeg(localPath, targetThumb).catch(() => {});
+
+  const newJob = {
+    id: jobId,
+    originalName: fileName,
+    status: "pending",
+    source: "drive_import",
+    rawDriveId: cleanId,
+    driveFileId: cleanId,
+    webViewLink: webViewLink || `https://drive.google.com/file/d/${cleanId}/view`,
+    inAiPipeline: true,
+    aiPipelineStartedAt: new Date().toISOString(),
+    result: null,
+    error: null,
+    filePath: localPath,
+    uploadDate: new Date().toISOString(),
+  };
+
+  uploadJobs[jobId] = newJob;
+  uploadQueue.push(jobId);
+  saveJobs();
+  processQueue();
+
+  return newJob;
+}
+
 module.exports = {
   loadJobs,
   saveJobs,
@@ -515,6 +564,7 @@ module.exports = {
   validateDocumentDate,
   getDriveSyncState,
   executeDriveSync,
+  importDriveFile,
   get uploadJobs() {
     return uploadJobs;
   },

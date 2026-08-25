@@ -1,5 +1,5 @@
 const express = require("express");
-const { requireAdmin } = require("../middleware/auth");
+const { requireAppAuth } = require("../middleware/auth");
 const {
   getAllSkipped,
   addSkipped,
@@ -8,11 +8,11 @@ const {
 
 const router = express.Router();
 
-router.get("/api/inbox/skipped", requireAdmin, (req, res) => {
+router.get("/api/inbox/skipped", requireAppAuth, (req, res) => {
   res.json({ success: true, skipped: getAllSkipped() });
 });
 
-router.post("/api/inbox/skipped", requireAdmin, (req, res) => {
+router.post("/api/inbox/skipped", requireAppAuth, (req, res) => {
   try {
     const { id, mail } = req.body;
     const skipped = addSkipped(id, mail);
@@ -22,7 +22,7 @@ router.post("/api/inbox/skipped", requireAdmin, (req, res) => {
   }
 });
 
-router.delete("/api/inbox/skipped/:id", requireAdmin, (req, res) => {
+router.delete("/api/inbox/skipped/:id", requireAppAuth, (req, res) => {
   try {
     const skipped = removeSkipped(req.params.id);
     res.json({ success: true, skipped });

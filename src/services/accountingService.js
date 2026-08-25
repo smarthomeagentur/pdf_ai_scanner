@@ -29,12 +29,19 @@ function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFile
     const vContact = (v.contactName || "").toLowerCase();
     const vStatus = v.voucherStatus || "offen";
 
+    let hasInvMatch = false;
+    let hasAmountMatch = false;
+    let hasDateMatch = false;
+    let hasCompanyMatch = false;
+
     if (normSearchInv && normVoucherNum && (normSearchInv.includes(normVoucherNum) || normVoucherNum.includes(normSearchInv))) {
       matchReasons.push(`Rechnungsnummer stimmt überein (${v.voucherNumber})`);
+      hasInvMatch = true;
     }
 
     if (targetAmountEuro !== null && vAmount > 0 && Math.abs(vAmount - targetAmountEuro) < 0.02) {
       matchReasons.push(`Betrag stimmt überein (${vAmount.toFixed(2).replace(".", ",")} €)`);
+      hasAmountMatch = true;
     }
 
     if (documentDate && documentDate !== "-" && documentDate !== "unknown") {
@@ -42,14 +49,23 @@ function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFile
       const cleanVDate = vDate.replace(/[^0-9]/g, "");
       if (vDate.startsWith(documentDate) || (cleanDocDate.length >= 6 && cleanVDate.includes(cleanDocDate))) {
         matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+        hasDateMatch = true;
       }
     }
 
     if (cleanCompany && vContact && (vContact.includes(cleanCompany) || cleanCompany.includes(vContact))) {
       matchReasons.push(`Lieferant / Kontakt stimmt überein (${v.contactName})`);
+      hasCompanyMatch = true;
     }
 
-    if (matchReasons.length > 0) {
+    // High confidence criteria for duplicate detection:
+    // 1. Matching Invoice Number (direct match)
+    // 2. Matching Amount AND (Matching Date OR Matching Company/Partner)
+    // A standalone company name or date match without matching amount/invoice number is NOT a duplicate.
+    const isConfidentMatch = hasInvMatch || (hasAmountMatch && (hasDateMatch || hasCompanyMatch));
+
+    if (isConfidentMatch && matchReasons.length > 0) {
+      const score = (hasInvMatch ? 4 : 0) + (hasAmountMatch ? 3 : 0) + (hasDateMatch ? 2 : 0) + (hasCompanyMatch ? 1 : 0);
       matches.push({
         id: v.id,
         voucherNumber: v.voucherNumber || "-",
@@ -58,10 +74,12 @@ function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFile
         contactName: v.contactName || "-",
         voucherStatus: vStatus,
         matchReasons,
+        score,
       });
     }
   }
 
+  matches.sort((a, b) => b.score - a.score);
   return { found: matches.length > 0, matches };
 }
 

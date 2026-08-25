@@ -206,6 +206,10 @@ export function initClickUpEvents() {
 }
 
 export async function openClickUpSyncModal() {
+  if (!state.isAdmin) {
+    showToast("ClickUp-Synchronisation ist nur für Administratoren verfügbar.", "warning");
+    return;
+  }
   const clickupSyncModal = document.getElementById("clickup-sync-modal");
   const syncItemsList = document.getElementById("clickup-sync-items-list");
   const confirmSyncModalBtn = document.getElementById("confirm-clickup-sync-btn");
@@ -338,6 +342,11 @@ function renderSyncPreviewItems() {
 }
 
 export async function transferJobToClickUp(jobId, force = false, btn = null) {
+  if (!state.isAdmin) {
+    showToast("ClickUp-Synchronisation ist nur für Administratoren verfügbar.", "warning");
+    return;
+  }
+
   if (force) {
     return await executeClickupTransfer(jobId, true, btn);
   }

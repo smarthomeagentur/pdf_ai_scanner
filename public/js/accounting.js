@@ -1,15 +1,12 @@
-/**
- * Accounting Integration & Rechnungs-Ansicht (Lexoffice & BuchhaltungsButler)
- */
 import { escapeHtml, formatCurrency, formatDateDisplay, highlightQueryText, showToast, debugLog } from "./utils.js";
 import { apiRequest } from "./api.js";
-import { getAllClientCredentials, state } from "./state.js";
+import { getAllClientCredentials, getAccountingAccounts, state } from "./state.js";
 import { transferJobToClickUp } from "./clickup.js";
 
 let allRechnungenJobs = [];
 let currentLexJobId = null;
 let currentLexCheckData = null;
-let currentSelectedLexCompany = "thewire";
+let currentSelectedLexCompany = null;
 
 let currentCompareJobId = null;
 let currentCompareCompany = null;
@@ -144,6 +141,10 @@ export function closeLexofficeModal() {
 }
 
 export async function openAccountingModal(jobId, companyKey = null) {
+  if (!state.isAdmin) {
+    showToast("Buchhaltungssynchronisation ist nur für Administratoren verfügbar.", "warning");
+    return;
+  }
   const lexSyncModal = document.getElementById("lexoffice-sync-modal");
   if (!lexSyncModal) return;
 
@@ -195,8 +196,19 @@ export async function openAccountingModal(jobId, companyKey = null) {
     lexDocAmount.innerText = `Betrag: ${amountStr}`;
   }
 
-  // Default target company
-  currentSelectedLexCompany = companyKey || job.targetCompany || detectDefaultTargetCompany(res.company) || "thewire";
+  const accounts = getAccountingAccounts();
+  if (accounts.length === 0) {
+    showToast("Bitte lege zuerst unter Einstellungen > Buchhaltung einen Buchhaltungs-Zugang an.", "warning");
+  }
+
+  // Detect matching target company from accounts
+  let matchedAccount = null;
+  if (res.company) {
+    const cLow = res.company.toLowerCase();
+    matchedAccount = accounts.find((a) => a.name && (cLow.includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(cLow)));
+  }
+
+  currentSelectedLexCompany = companyKey || job.targetCompany || (matchedAccount ? matchedAccount.id : (accounts[0]?.id || "thewire"));
 
   await checkLexofficeTarget(jobId, currentSelectedLexCompany);
 }
@@ -207,13 +219,14 @@ async function checkLexofficeTarget(jobId, companyKey) {
 
   if (!lexModalSubmitBtn || !lexModalStatusContainer) return;
 
-  currentSelectedLexCompany = companyKey || currentSelectedLexCompany || "thewire";
+  const accounts = getAccountingAccounts();
+  currentSelectedLexCompany = companyKey || currentSelectedLexCompany || (accounts[0]?.id || "thewire");
 
   lexModalSubmitBtn.disabled = true;
   lexModalStatusContainer.innerHTML = `
     <div class="d-flex align-items-center gap-2 text-muted py-2">
       <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-      <span>Prüfe alle angebundenen Unternehmen & Buchhaltungssysteme auf Belege...</span>
+      <span>Prüfe alle angebundenen Buchhaltungs-Mandanten auf Belege...</span>
     </div>
   `;
 
@@ -224,6 +237,7 @@ async function checkLexofficeTarget(jobId, companyKey) {
       body: JSON.stringify({
         jobId,
         companyKey: currentSelectedLexCompany,
+        accounts,
         credentials: {
           wirewireApiKey: creds.wirewireApiKey || "",
           polyxoApiKey: creds.polyxoApiKey || "",
@@ -263,19 +277,25 @@ function renderAccountingModalContent() {
   if (!currentLexCheckData || !currentLexJobId) return;
 
   const data = currentLexCheckData;
-  const companyKey = currentSelectedLexCompany || "thewire";
+  const accounts = (data.accounts && data.accounts.length > 0) ? data.accounts : getAccountingAccounts();
   const allCompanyChecks = data.allCompanyChecks || {};
-  const selectedData = allCompanyChecks[companyKey] || {
+  
+  if (!currentSelectedLexCompany && accounts.length > 0) {
+    currentSelectedLexCompany = accounts[0].id;
+  }
+  const companyKey = currentSelectedLexCompany;
+
+  const selectedData = allCompanyChecks[companyKey] || (accounts.length > 0 ? allCompanyChecks[accounts[0].id] : null) || {
     companyKey,
-    companyDisplayName: companyKey === "thewire" ? "The Wire UG" : (companyKey === "wirewire" ? "wirewire GmbH" : "Polyxo Studios GmbH"),
-    provider: companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice",
-    providerName: companyKey === "thewire" ? "BuchhaltungsButler" : "Lexoffice",
+    companyDisplayName: companyKey,
+    provider: "lexoffice",
+    providerName: "Lexoffice",
     apiValid: false,
     alreadyTransferred: false,
     liveSearch: { found: false, matches: [] },
   };
 
-  const isButler = companyKey === "thewire";
+  const isButler = selectedData.provider === "buchhaltungsbutler";
   const providerName = selectedData.providerName || (isButler ? "BuchhaltungsButler" : "Lexoffice");
 
   const lexModalProviderBadge = document.getElementById("lex-modal-provider-badge");
@@ -290,17 +310,15 @@ function renderAccountingModalContent() {
       : "badge bg-primary-subtle text-primary border border-primary-subtle small";
   }
 
-  const companyKeys = ["thewire", "wirewire", "polyxo"];
-
-  // 1. Interactive Company Badges (Target Selection)
+  // 1. Interactive Modular Account Badges (Target Selection)
   const badgesContainer = document.getElementById("lex-modal-company-badges");
-  const companyBadgesHtml = companyKeys
-    .map((ck) => {
-      const cInfo = allCompanyChecks[ck];
-      if (!cInfo) return "";
+  const companyBadgesHtml = accounts
+    .map((acc) => {
+      const ck = acc.id;
+      const cInfo = allCompanyChecks[ck] || { apiValid: false, alreadyTransferred: false, liveSearch: { found: false } };
       const isSelected = ck === companyKey;
-      const shortName = ck === "thewire" ? "The Wire UG" : (ck === "wirewire" ? "wirewire GmbH" : "Polyxo Studios");
-      const providerLabel = ck === "thewire" ? "BuchhaltungsButler" : "Lexoffice";
+      const shortName = acc.name || ck;
+      const providerLabel = acc.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
 
       let badgeClass = "bg-light text-muted border";
       let statusIcon = "radio_button_unchecked";
@@ -327,14 +345,14 @@ function renderAccountingModalContent() {
       return `
         <div class="company-select-badge p-2 px-3 rounded-3 d-flex flex-column gap-1 flex-grow-1" 
              style="${cardStyle} min-width: 140px; transition: all 0.15s ease;"
-             data-company="${ck}"
-             title="${shortName} (${providerLabel}): ${statusText}">
+             data-company="${escapeHtml(ck)}"
+             title="${escapeHtml(shortName)} (${providerLabel}): ${statusText}">
           <div class="d-flex align-items-center justify-content-between gap-2">
             <div class="d-flex align-items-center gap-1">
               <span class="material-symbols-outlined" style="font-size: 16px; color: ${isSelected ? '#0d6efd' : '#666'};">
                 ${isSelected ? 'radio_button_checked' : 'radio_button_unchecked'}
               </span>
-              <strong style="font-size: 13px; color: ${isSelected ? '#0d6efd' : '#222'};">${shortName}</strong>
+              <strong style="font-size: 13px; color: ${isSelected ? '#0d6efd' : '#222'};">${escapeHtml(shortName)}</strong>
             </div>
             <span class="badge ${badgeClass} d-inline-flex align-items-center gap-1" style="font-size: 10px; padding: 2px 6px;">
               <span class="material-symbols-outlined" style="font-size: 11px;">${statusIcon}</span> ${statusText}
@@ -363,9 +381,10 @@ function renderAccountingModalContent() {
     });
   }
 
-  // 2. Cross-Company Warning Alerts for Other Companies
+  // 2. Cross-Account Warning Alerts for Other Configured Accounts
   let otherCompanyAlertsHtml = "";
-  companyKeys.forEach((ck) => {
+  accounts.forEach((acc) => {
+    const ck = acc.id;
     if (ck === companyKey) return;
     const otherInfo = allCompanyChecks[ck];
     if (!otherInfo) return;
@@ -385,12 +404,12 @@ function renderAccountingModalContent() {
           <div class="d-flex align-items-center gap-2">
             <span class="material-symbols-outlined text-success" style="font-size: 20px;">task_alt</span>
             <div style="font-size: 12.5px;">
-              <strong>Bereits übertragen:</strong> Beleg existiert schon in <strong>${otherInfo.companyDisplayName}</strong> (${otherInfo.providerName}, übertragen am ${dateFormatted} Uhr).
+              <strong>Bereits übertragen:</strong> Beleg existiert schon in <strong>${escapeHtml(otherInfo.companyDisplayName)}</strong> (${otherInfo.providerName}, übertragen am ${dateFormatted} Uhr).
             </div>
           </div>
-          <button type="button" class="btn btn-sm btn-outline-success btn-switch-modal-company py-1 px-2 d-inline-flex align-items-center gap-1" data-company="${ck}" style="border-radius: 6px; font-size: 11.5px; font-weight: 500;">
+          <button type="button" class="btn btn-sm btn-outline-success btn-switch-modal-company py-1 px-2 d-inline-flex align-items-center gap-1" data-company="${escapeHtml(ck)}" style="border-radius: 6px; font-size: 11.5px; font-weight: 500;">
             <span class="material-symbols-outlined" style="font-size: 14px;">swap_horiz</span>
-            <span>Zu ${otherInfo.companyDisplayName} wechseln</span>
+            <span>Zu ${escapeHtml(otherInfo.companyDisplayName)} wechseln</span>
           </button>
         </div>
       `;
@@ -401,17 +420,17 @@ function renderAccountingModalContent() {
           <div class="d-flex align-items-center gap-2">
             <span class="material-symbols-outlined text-warning-emphasis" style="font-size: 20px;">find_in_page</span>
             <div style="font-size: 12.5px;">
-              <strong>Gefunden in anderem Unternehmen:</strong> In <strong>${otherInfo.companyDisplayName}</strong> (${otherInfo.providerName}) existiert bereits ein übereinstimmender Beleg (${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : (topMatch.amount || topMatch.totalAmount || '')}).
+              <strong>Gefunden in anderem Mandanten:</strong> In <strong>${escapeHtml(otherInfo.companyDisplayName)}</strong> (${otherInfo.providerName}) existiert bereits ein übereinstimmender Beleg (${topMatch.invoiceNumber !== '-' ? topMatch.invoiceNumber : (topMatch.amount || topMatch.totalAmount || '')}).
             </div>
           </div>
           <div class="d-flex align-items-center gap-1">
-            <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal py-1 px-2 d-inline-flex align-items-center gap-1" data-job-id="${currentLexJobId}" data-company="${ck}" data-match-index="0" style="border-radius: 6px; font-size: 11.5px;">
+            <button type="button" class="btn btn-sm btn-outline-primary btn-open-compare-modal py-1 px-2 d-inline-flex align-items-center gap-1" data-job-id="${currentLexJobId}" data-company="${escapeHtml(ck)}" data-match-index="0" style="border-radius: 6px; font-size: 11.5px;">
               <span class="material-symbols-outlined" style="font-size: 14px;">compare</span>
               <span>Vorschau</span>
             </button>
-            <button type="button" class="btn btn-sm btn-outline-dark btn-switch-modal-company py-1 px-2 d-inline-flex align-items-center gap-1" data-company="${ck}" style="border-radius: 6px; font-size: 11.5px; font-weight: 500;">
+            <button type="button" class="btn btn-sm btn-outline-dark btn-switch-modal-company py-1 px-2 d-inline-flex align-items-center gap-1" data-company="${escapeHtml(ck)}" style="border-radius: 6px; font-size: 11.5px; font-weight: 500;">
               <span class="material-symbols-outlined" style="font-size: 14px;">swap_horiz</span>
-              <span>Zu ${otherInfo.companyDisplayName} wechseln</span>
+              <span>Zu ${escapeHtml(otherInfo.companyDisplayName)} wechseln</span>
             </button>
           </div>
         </div>
@@ -620,9 +639,15 @@ function wireModalInternalButtons() {
 async function handleLexModalSubmit() {
   if (!currentLexJobId) return;
   const jobId = currentLexJobId;
-  const companyKey = currentSelectedLexCompany || "thewire";
+  const accounts = getAccountingAccounts();
+  const targetAccount = accounts.find((a) => a.id === companyKey) || {
+    id: companyKey,
+    name: companyKey,
+    provider: (companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice"),
+  };
+  const accountName = targetAccount.name || companyKey;
   const isForce = currentLexCheckData && currentLexCheckData.allCompanyChecks && currentLexCheckData.allCompanyChecks[companyKey]?.alreadyTransferred;
-  const providerName = (currentLexCheckData?.allCompanyChecks && currentLexCheckData.allCompanyChecks[companyKey]?.providerName) || (companyKey === "thewire" ? "BuchhaltungsButler" : "Lexoffice");
+  const providerName = targetAccount.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
 
   const lexModalSubmitBtn = document.getElementById("lex-modal-submit-btn");
   const lexModalCancelBtn = document.getElementById("lex-modal-cancel-btn");
@@ -638,7 +663,7 @@ async function handleLexModalSubmit() {
     lexModalStatusContainer.innerHTML = `
       <div class="d-flex align-items-center gap-2 text-primary">
         <div class="spinner-border spinner-border-sm" role="status"></div>
-        <span>Lade Beleg zu ${providerName} (<strong>${companyKey}</strong>) hoch...</span>
+        <span>Lade Beleg zu ${providerName} (<strong>${escapeHtml(accountName)}</strong>) hoch...</span>
       </div>
     `;
   }
@@ -650,6 +675,7 @@ async function handleLexModalSubmit() {
       body: JSON.stringify({
         jobId,
         companyKey,
+        account: targetAccount,
         force: isForce,
         apiKey: companyKey === "polyxo" ? creds.polyxoApiKey : creds.wirewireApiKey,
         client: creds.thewireClient,
@@ -659,7 +685,7 @@ async function handleLexModalSubmit() {
     });
 
     if (data.success) {
-      showToast(`✓ Beleg erfolgreich an ${providerName} (${companyKey}) übertragen!`, "success");
+      showToast(`✓ Beleg erfolgreich an ${providerName} (${accountName}) übertragen!`, "success");
       closeLexofficeModal();
       if (window.loadRechnungenView) window.loadRechnungenView();
     } else {
@@ -793,7 +819,9 @@ export function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
         }
       };
       const creds = getAllClientCredentials();
-      const apiKey = companyKey === "polyxo" ? (creds.polyxoApiKey || "") : (creds.wirewireApiKey || "");
+      const accounts = getAccountingAccounts();
+      const targetAcc = accounts.find((a) => a.id === companyKey);
+      const apiKey = targetAcc?.credentials?.apiKey || (companyKey === "polyxo" ? (creds.polyxoApiKey || "") : (creds.wirewireApiKey || ""));
       compareRemoteImg.src = `/api/accounting/voucher-preview?companyKey=${encodeURIComponent(companyKey)}&voucherId=${encodeURIComponent(match.id)}&apiKey=${encodeURIComponent(apiKey)}&_t=${Date.now()}`;
     }
   }
@@ -804,6 +832,10 @@ export function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
 }
 
 export async function loadRechnungenView() {
+  if (!state.isAdmin) {
+    showToast("Rechnungs-Modul ist nur für Administratoren verfügbar.", "warning");
+    return;
+  }
   const rechnungenList = document.getElementById("rechnungen-list");
   if (!rechnungenList) return;
 

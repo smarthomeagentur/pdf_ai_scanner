@@ -16,6 +16,7 @@ const {
   checkJobNeedsEnrichment,
   getDriveSyncState,
   executeDriveSync,
+  importDriveFile,
   uploadJobs,
   hiddenDriveFiles,
   saveJobs,
@@ -229,6 +230,18 @@ router.get("/api/drive/sync-status", requireAdmin, (req, res) => {
     success: true,
     ...getDriveSyncState(),
   });
+});
+
+router.post("/api/drive/import-file", requireAdmin, async (req, res) => {
+  try {
+    const { driveFileId, name } = req.body;
+    if (!driveFileId) return res.status(400).json({ success: false, error: "driveFileId erforderlich." });
+    const job = await importDriveFile(driveFileId, name);
+    res.json({ success: true, job });
+  } catch (err) {
+    console.error("[DRIVE IMPORT] Fehler:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post("/api/drive/sync-execute", requireAdmin, async (req, res) => {

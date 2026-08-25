@@ -1,9 +1,17 @@
 /**
  * Settings Modal & Zero-Trust Secrets Management with Debug Logging
  */
-import { showToast, debugLog, extractCleanFolderId, isDebugEnabled, setDebugEnabled } from "./utils.js";
+import { showToast, debugLog, extractCleanFolderId, isDebugEnabled, setDebugEnabled, escapeHtml } from "./utils.js";
 import { apiRequest } from "./api.js";
-import { STORAGE_KEYS, getClientSecret, setClientSecret, state } from "./state.js";
+import {
+  STORAGE_KEYS,
+  getClientSecret,
+  setClientSecret,
+  getAccountingAccounts,
+  saveOrUpdateAccountingAccount,
+  deleteAccountingAccountById,
+  state,
+} from "./state.js";
 import { openGooglePicker } from "./drivePicker.js";
 
 let googleClientId = null;
@@ -26,24 +34,36 @@ export async function openSettingsModal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: pw }),
       });
-      const loginData = await loginRes.json();
+      const loginData = await loginRes.json().catch(() => ({}));
       if (!loginData.success) {
-        alert("Falsches Admin-Passwort.");
+        showToast("Falsches Admin-Passwort.", "error");
         return;
       }
       state.isAdmin = true;
       const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
-      const navInboxTab = document.getElementById("nav-inbox-tab");
       if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
-      if (navInboxTab) navInboxTab.style.display = "inline-flex";
     } else {
       state.isAdmin = true;
     }
   } catch (e) {
     console.error("Admin Check Error", e);
+    return;
   }
 
+  if (!state.isAdmin) return;
+
   modalEl.style.display = "flex";
+
+  // Reset active tab to first tab
+  const firstTab = document.querySelector("#settings-modal .gdev-tab-btn");
+  if (firstTab) {
+    document.querySelectorAll("#settings-modal .gdev-tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll("#settings-modal .settings-tab-panel").forEach((p) => (p.style.display = "none"));
+    firstTab.classList.add("active");
+    const target = firstTab.getAttribute("data-tab-target");
+    const targetPanel = document.getElementById(`settings-panel-${target}`);
+    if (targetPanel) targetPanel.style.display = "block";
+  }
 
   // Show all admin setting sections
   const showSection = (id) => {
@@ -71,8 +91,184 @@ export async function openSettingsModal() {
     populateSettingsForm({});
   }
 
+  // Render modular accounting accounts list
+  renderAccountingAccountsList();
+
   // Setup Drive auth status & GIS code client
   await initDriveAuthSection();
+}
+
+export function renderAccountingAccountsList() {
+  const container = document.getElementById("accounting-accounts-container");
+  if (!container) return;
+
+  const accounts = getAccountingAccounts();
+  if (accounts.length === 0) {
+    container.innerHTML = `
+      <div class="p-3 text-center border bg-light text-muted small">
+        <span class="material-symbols-outlined d-block mb-1" style="font-size: 24px;">account_balance</span>
+        Noch keine Buchhaltungs-Zugänge angelegt.<br />Klicke auf den Button unten, um einen Lexoffice- oder BuchhaltungsButler-Zugang hinzuzufügen.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = accounts
+    .map((acc) => {
+      const isButler = acc.provider === "buchhaltungsbutler";
+      const badgeHtml = isButler
+        ? `<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle" style="font-size: 11px; font-weight: normal; border-radius: 0;">BuchhaltungsButler</span>`
+        : `<span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 11px; font-weight: normal; border-radius: 0;">Lexoffice</span>`;
+
+      let credDetail = "";
+      if (isButler) {
+        credDetail = `Client: <code>${escapeHtml(acc.credentials?.client || "-")}</code>`;
+      } else {
+        const key = acc.credentials?.apiKey || "";
+        const masked = key.length > 8 ? `${key.substring(0, 4)}...${key.substring(key.length - 4)}` : (key ? "***" : "Kein Key");
+        credDetail = `API-Key: <code>${escapeHtml(masked)}</code>`;
+      }
+
+      return `
+        <div class="d-flex align-items-center justify-content-between p-2 px-3 border bg-white" data-acc-id="${escapeHtml(acc.id)}" style="border-radius: 0;">
+          <div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="fw-semibold text-dark" style="font-size: 13.5px;">${escapeHtml(acc.name)}</span>
+              ${badgeHtml}
+            </div>
+            <div class="text-muted small mt-1" style="font-size: 11.5px;">
+              ${credDetail}
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-1">
+            <button type="button" class="btn btn-sm btn-outline-secondary btn-test-acc p-1 px-2" data-acc-id="${escapeHtml(acc.id)}" title="Verbindung prüfen" style="border-radius: 0; font-size: 12px;">
+              <span class="material-symbols-outlined" style="font-size: 15px; vertical-align: middle;">sync_alt</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-primary btn-edit-acc p-1 px-2" data-acc-id="${escapeHtml(acc.id)}" title="Bearbeiten" style="border-radius: 0; font-size: 12px;">
+              <span class="material-symbols-outlined" style="font-size: 15px; vertical-align: middle;">edit</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger btn-delete-acc p-1 px-2" data-acc-id="${escapeHtml(acc.id)}" title="Entfernen" style="border-radius: 0; font-size: 12px;">
+              <span class="material-symbols-outlined" style="font-size: 15px; vertical-align: middle;">delete</span>
+            </button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+export function openAccountingAccountModal(accToEdit = null) {
+  const modal = document.getElementById("accounting-account-modal");
+  const title = document.getElementById("acc-modal-title");
+  const idInput = document.getElementById("acc-modal-id");
+  const nameInput = document.getElementById("acc-modal-name");
+  const providerSelect = document.getElementById("acc-modal-provider");
+  const lexFields = document.getElementById("acc-modal-lex-fields");
+  const butlerFields = document.getElementById("acc-modal-butler-fields");
+  const lexKeyInput = document.getElementById("acc-modal-lex-key");
+  const butlerClientInput = document.getElementById("acc-modal-butler-client");
+  const butlerSecretInput = document.getElementById("acc-modal-butler-secret");
+  const butlerKeyInput = document.getElementById("acc-modal-butler-key");
+  const statusBox = document.getElementById("acc-modal-test-status");
+
+  if (!modal) return;
+
+  if (statusBox) statusBox.innerHTML = "";
+
+  if (accToEdit) {
+    if (title) title.innerHTML = `<span class="material-symbols-outlined text-primary" style="font-size: 20px;">account_balance</span><span>Zugang bearbeiten</span>`;
+    if (idInput) idInput.value = accToEdit.id;
+    if (nameInput) nameInput.value = accToEdit.name || "";
+    if (providerSelect) providerSelect.value = accToEdit.provider || "lexoffice";
+    if (lexKeyInput) lexKeyInput.value = accToEdit.credentials?.apiKey || "";
+    if (butlerClientInput) butlerClientInput.value = accToEdit.credentials?.client || "";
+    if (butlerSecretInput) butlerSecretInput.value = accToEdit.credentials?.secret || "";
+    if (butlerKeyInput) butlerKeyInput.value = accToEdit.credentials?.key || "";
+  } else {
+    if (title) title.innerHTML = `<span class="material-symbols-outlined text-primary" style="font-size: 20px;">account_balance</span><span>Buchhaltungs-Zugang anlegen</span>`;
+    if (idInput) idInput.value = "";
+    if (nameInput) nameInput.value = "";
+    if (providerSelect) providerSelect.value = "lexoffice";
+    if (lexKeyInput) lexKeyInput.value = "";
+    if (butlerClientInput) butlerClientInput.value = "";
+    if (butlerSecretInput) butlerSecretInput.value = "";
+    if (butlerKeyInput) butlerKeyInput.value = "";
+  }
+
+  // Toggle fields
+  const isButler = (providerSelect?.value === "buchhaltungsbutler");
+  if (lexFields) lexFields.style.display = isButler ? "none" : "block";
+  if (butlerFields) butlerFields.style.display = isButler ? "block" : "none";
+
+  modal.style.display = "flex";
+}
+
+export function closeAccountingAccountModal() {
+  const modal = document.getElementById("accounting-account-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function testAccountingAccountConnectionFromModal() {
+  const provider = document.getElementById("acc-modal-provider")?.value || "lexoffice";
+  const lexKey = document.getElementById("acc-modal-lex-key")?.value?.trim() || "";
+  const butlerClient = document.getElementById("acc-modal-butler-client")?.value?.trim() || "";
+  const butlerSecret = document.getElementById("acc-modal-butler-secret")?.value?.trim() || "";
+  const butlerKey = document.getElementById("acc-modal-butler-key")?.value?.trim() || "";
+  const statusBox = document.getElementById("acc-modal-test-status");
+
+  if (!statusBox) return;
+
+  statusBox.innerHTML = `<div class="text-muted d-flex align-items-center gap-1"><span class="spinner-border spinner-border-sm"></span> <span>Prüfe Verbindung...</span></div>`;
+
+  try {
+    const creds = provider === "buchhaltungsbutler"
+      ? { client: butlerClient, secret: butlerSecret, key: butlerKey }
+      : { apiKey: lexKey };
+
+    const res = await apiRequest("/api/accounting/test-connection", {
+      method: "POST",
+      body: JSON.stringify({ provider, credentials: creds }),
+    });
+
+    if (res.success) {
+      statusBox.innerHTML = `<div class="text-success fw-medium">✓ Verbindung erfolgreich! (${escapeHtml(res.companyName || "Aktiv")})</div>`;
+    } else {
+      statusBox.innerHTML = `<div class="text-danger fw-medium">✗ Fehler: ${escapeHtml(res.error || "Keine Verbindung")}</div>`;
+    }
+  } catch (err) {
+    statusBox.innerHTML = `<div class="text-danger fw-medium">✗ Netzwerkfehler: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function saveAccountingAccountFromModal() {
+  const idInput = document.getElementById("acc-modal-id")?.value?.trim() || "";
+  const nameInput = document.getElementById("acc-modal-name")?.value?.trim() || "";
+  const provider = document.getElementById("acc-modal-provider")?.value || "lexoffice";
+  const lexKey = document.getElementById("acc-modal-lex-key")?.value?.trim() || "";
+  const butlerClient = document.getElementById("acc-modal-butler-client")?.value?.trim() || "";
+  const butlerSecret = document.getElementById("acc-modal-butler-secret")?.value?.trim() || "";
+  const butlerKey = document.getElementById("acc-modal-butler-key")?.value?.trim() || "";
+
+  if (!nameInput) {
+    showToast("Bitte gib einen Namen für den Mandanten ein.", "warning");
+    return;
+  }
+
+  const credentials = provider === "buchhaltungsbutler"
+    ? { client: butlerClient, secret: butlerSecret, key: butlerKey }
+    : { apiKey: lexKey };
+
+  const accountObj = {
+    id: idInput || `acc_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+    name: nameInput,
+    provider,
+    credentials,
+  };
+
+  saveOrUpdateAccountingAccount(accountObj);
+  showToast(`Buchhaltungs-Zugang "${nameInput}" gespeichert!`, "success");
+  closeAccountingAccountModal();
+  renderAccountingAccountsList();
 }
 
 function populateSettingsForm(settings = {}) {
@@ -110,11 +306,6 @@ function populateSettingsForm(settings = {}) {
   if (queryInput) queryInput.value = settings.GMAIL_SCAN_QUERY || "in:inbox filename:pdf";
 
   // Client-only localStorage keys
-  setVal("lexoffice-key-wirewire", getClientSecret(STORAGE_KEYS.LEXOFFICE_WIREWIRE));
-  setVal("lexoffice-key-polyxo", getClientSecret(STORAGE_KEYS.LEXOFFICE_POLYXO));
-  setVal("butler-key-thewire-client", getClientSecret(STORAGE_KEYS.BUTTLER_CLIENT));
-  setVal("butler-key-thewire-secret", getClientSecret(STORAGE_KEYS.BUTTLER_SECRET));
-  setVal("butler-key-thewire-key", getClientSecret(STORAGE_KEYS.BUTTLER_KEY));
   setVal("clickup-api-key", getClientSecret(STORAGE_KEYS.CLICKUP_API_KEY));
   setVal("clickup-list-id", getClientSecret(STORAGE_KEYS.CLICKUP_LIST_ID));
 
@@ -246,6 +437,57 @@ async function initDriveAuthSection() {
   } catch (e) {}
 }
 
+export async function clearAppCacheAndStorage() {
+  if (!confirm("Möchtest du wirklich den gesamten Cache, Offline-Speicher und Service Worker leeren und die App neu laden?")) {
+    return;
+  }
+  showToast("Cache und Speicher werden geleert...", "info");
+  try {
+    // 1. Unregister all Service Workers
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const registration of registrations) {
+        await registration.unregister();
+      }
+    }
+
+    // 2. Clear all CacheStorage caches
+    if ("caches" in window) {
+      const cacheKeys = await caches.keys();
+      for (const key of cacheKeys) {
+        await caches.delete(key);
+      }
+    }
+
+    // 3. Clear Storage (localStorage, sessionStorage)
+    localStorage.clear();
+    sessionStorage.clear();
+
+    // 4. Clear IndexedDB if present
+    if (window.indexedDB && window.indexedDB.databases) {
+      try {
+        const dbs = await window.indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name) {
+            window.indexedDB.deleteDatabase(db.name);
+          }
+        }
+      } catch (e) {}
+    }
+
+    showToast("Cache erfolgreich geleert! App wird neu geladen...", "success");
+
+    // 5. Hard reload with cache buster
+    setTimeout(() => {
+      const cleanUrl = window.location.origin + window.location.pathname + "?v=" + Date.now();
+      window.location.replace(cleanUrl);
+    }, 400);
+  } catch (err) {
+    console.error("Fehler beim Leeren des Caches:", err);
+    showToast("Fehler beim Leeren: " + err.message, "error");
+  }
+}
+
 export function initSettingsEvents() {
   document.getElementById("openSettingsBtn")?.addEventListener("click", openSettingsModal);
 
@@ -254,7 +496,98 @@ export function initSettingsEvents() {
     if (modal) modal.style.display = "none";
   });
 
+  // Settings Tab Switching (Google Developer Style)
+  document.querySelectorAll("#settings-modal .gdev-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tabTarget = btn.getAttribute("data-tab-target");
+      if (!tabTarget) return;
+      document.querySelectorAll("#settings-modal .gdev-tab-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll("#settings-modal .settings-tab-panel").forEach((p) => (p.style.display = "none"));
+      btn.classList.add("active");
+      const activePanel = document.getElementById(`settings-panel-${tabTarget}`);
+      if (activePanel) activePanel.style.display = "block";
+    });
+  });
+
+  // Modular Accounting Accounts Events
+  document.getElementById("add-accounting-account-btn")?.addEventListener("click", () => {
+    openAccountingAccountModal(null);
+  });
+
+  document.getElementById("acc-modal-close-btn")?.addEventListener("click", closeAccountingAccountModal);
+  document.getElementById("acc-modal-cancel-btn")?.addEventListener("click", closeAccountingAccountModal);
+
+  document.getElementById("acc-modal-provider")?.addEventListener("change", (e) => {
+    const isButler = e.target.value === "buchhaltungsbutler";
+    const lexFields = document.getElementById("acc-modal-lex-fields");
+    const butlerFields = document.getElementById("acc-modal-butler-fields");
+    if (lexFields) lexFields.style.display = isButler ? "none" : "block";
+    if (butlerFields) butlerFields.style.display = isButler ? "block" : "none";
+  });
+
+  document.getElementById("acc-modal-test-btn")?.addEventListener("click", testAccountingAccountConnectionFromModal);
+  document.getElementById("acc-modal-save-btn")?.addEventListener("click", saveAccountingAccountFromModal);
+
+  // Accounting accounts list action buttons delegation
+  document.getElementById("accounting-accounts-container")?.addEventListener("click", async (e) => {
+    const testBtn = e.target.closest(".btn-test-acc");
+    if (testBtn) {
+      const accId = testBtn.getAttribute("data-acc-id");
+      const accounts = getAccountingAccounts();
+      const targetAcc = accounts.find((a) => a.id === accId);
+      if (targetAcc) {
+        testBtn.disabled = true;
+        testBtn.innerHTML = `<span class="spinner-border spinner-border-sm" style="width: 12px; height: 12px;"></span>`;
+        try {
+          const res = await apiRequest("/api/accounting/test-connection", {
+            method: "POST",
+            body: JSON.stringify({ provider: targetAcc.provider, credentials: targetAcc.credentials }),
+          });
+          if (res.success) {
+            showToast(`✓ Verbindung zu "${targetAcc.name}" (${res.companyName || targetAcc.provider}) erfolgreich!`, "success");
+          } else {
+            showToast(`✗ Verbindung fehlgeschlagen: ${res.error || "Fehler"}`, "error");
+          }
+        } catch (err) {
+          showToast(`✗ Netzwerkfehler: ${err.message}`, "error");
+        } finally {
+          testBtn.disabled = false;
+          testBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 15px; vertical-align: middle;">sync_alt</span>`;
+        }
+      }
+      return;
+    }
+
+    const editBtn = e.target.closest(".btn-edit-acc");
+    if (editBtn) {
+      const accId = editBtn.getAttribute("data-acc-id");
+      const accounts = getAccountingAccounts();
+      const targetAcc = accounts.find((a) => a.id === accId);
+      if (targetAcc) {
+        openAccountingAccountModal(targetAcc);
+      }
+      return;
+    }
+
+    const deleteBtn = e.target.closest(".btn-delete-acc");
+    if (deleteBtn) {
+      const accId = deleteBtn.getAttribute("data-acc-id");
+      const accounts = getAccountingAccounts();
+      const targetAcc = accounts.find((a) => a.id === accId);
+      if (targetAcc) {
+        if (confirm(`Möchtest du den Buchhaltungs-Zugang "${targetAcc.name}" wirklich entfernen?`)) {
+          deleteAccountingAccountById(accId);
+          showToast(`Zugang "${targetAcc.name}" entfernt.`, "info");
+          renderAccountingAccountsList();
+        }
+      }
+      return;
+    }
+  });
+
   document.getElementById("saveSettingsBtn")?.addEventListener("click", saveAllSettings);
+
+  document.getElementById("clear-cache-storage-btn")?.addEventListener("click", clearAppCacheAndStorage);
 
   document.getElementById("raw-folder-browse")?.addEventListener("click", (e) => {
     e.preventDefault();

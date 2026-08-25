@@ -44,6 +44,16 @@ export function initGmailScannerEvents() {
   if (settingsAddGmailAccountBtn) settingsAddGmailAccountBtn.addEventListener("click", () => requestGmailAccountAuth());
   if (inboxRefreshBtn) inboxRefreshBtn.addEventListener("click", () => loadInboxData(false));
 
+  document.addEventListener("click", (e) => {
+    const reauthBtn = e.target.closest(".reauth-gmail-btn");
+    if (reauthBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const email = reauthBtn.getAttribute("data-email");
+      requestGmailAccountAuth(email);
+    }
+  });
+
   if (inboxAccountSelect) {
     inboxAccountSelect.addEventListener("change", () => loadInboxData(false));
   }
@@ -134,9 +144,100 @@ export function saveStoredGmailAccounts(accounts) {
   setClientSecret(STORAGE_KEYS.GMAIL_ACCOUNTS, JSON.stringify(accounts || []));
 }
 
+/**
+ * Ensures that the given account has a valid access token.
+ * If token is missing, expired, or expiring within 2 minutes, attempts silent refresh via GIS (prompt: '').
+ */
+export async function ensureAccountTokenValid(account, forceRefresh = false) {
+  const isExpiringSoon = !account.expiresAt || (Date.now() > (account.expiresAt - 2 * 60 * 1000));
+  if (!forceRefresh && !isExpiringSoon && account.accessToken && !account.needsReauth) {
+    return { valid: true, accessToken: account.accessToken };
+  }
+
+  debugLog("GMAIL", `Token for ${account.email} needs refresh. Attempting silent GIS refresh...`);
+
+  try {
+    const data = await apiRequest("/api/auth/client-id");
+    const clientId = data?.clientId;
+    if (!clientId || !window.google?.accounts?.oauth2) {
+      account.needsReauth = true;
+      return { valid: false, needsReauth: true, error: "GIS nicht geladen" };
+    }
+
+    const tokenResponse = await new Promise((resolve) => {
+      let resolved = false;
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve({ error: "timeout" });
+        }
+      }, 6000);
+
+      try {
+        const tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
+          include_granted_scopes: false,
+          hint: account.email,
+          prompt: "", // Silent mode (no user popup)
+          callback: (res) => {
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timer);
+              resolve(res);
+            }
+          },
+        });
+        tokenClient.requestAccessToken({ prompt: "" });
+      } catch (clientErr) {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve({ error: clientErr.message });
+        }
+      }
+    });
+
+    if (tokenResponse && !tokenResponse.error && tokenResponse.access_token) {
+      const accessToken = tokenResponse.access_token;
+      const expiresIn = parseInt(tokenResponse.expires_in, 10) || 3599;
+      const expiresAt = Date.now() + (expiresIn - 60) * 1000;
+
+      account.accessToken = accessToken;
+      account.expiresAt = expiresAt;
+      account.needsReauth = false;
+
+      // Update in storage
+      const accounts = getStoredGmailAccounts();
+      const idx = accounts.findIndex((a) => (a.id && a.id === account.id) || a.email.toLowerCase() === account.email.toLowerCase());
+      if (idx >= 0) {
+        accounts[idx] = { ...accounts[idx], accessToken, expiresAt, needsReauth: false };
+        saveStoredGmailAccounts(accounts);
+      }
+
+      debugLog("GMAIL", `Silent refresh successful for ${account.email}! New expiry: ${new Date(expiresAt).toLocaleTimeString()}`);
+      return { valid: true, accessToken };
+    } else {
+      debugLog("GMAIL", `Silent refresh failed for ${account.email}:`, tokenResponse?.error || "Unknown");
+      account.needsReauth = true;
+      const accounts = getStoredGmailAccounts();
+      const idx = accounts.findIndex((a) => (a.id && a.id === account.id) || a.email.toLowerCase() === account.email.toLowerCase());
+      if (idx >= 0) {
+        accounts[idx].needsReauth = true;
+        saveStoredGmailAccounts(accounts);
+      }
+      return { valid: false, needsReauth: true, error: tokenResponse?.error || "Silent refresh failed" };
+    }
+  } catch (err) {
+    debugLog("GMAIL", `Silent refresh exception for ${account.email}:`, err);
+    account.needsReauth = true;
+    return { valid: false, needsReauth: true, error: err.message };
+  }
+}
+
 export async function requestGmailAccountAuth(accountHint = null) {
   try {
-    debugLog("GMAIL", "Fetching Google Client ID...");
+    debugLog("GMAIL", "Fetching Google Client ID for Interactive Auth...");
     const data = await apiRequest("/api/auth/client-id");
     const clientId = data?.clientId;
     if (!clientId) {
@@ -184,6 +285,7 @@ export async function requestGmailAccountAuth(accountHint = null) {
             name: prof.emailAddress,
             accessToken: accessToken,
             expiresAt: expiresAt,
+            needsReauth: false,
             connectedAt: new Date().toISOString(),
           };
 
@@ -195,7 +297,7 @@ export async function requestGmailAccountAuth(accountHint = null) {
 
           saveStoredGmailAccounts(accounts);
           updateAccountsDropdown(accounts);
-          showToast(`Gmail-Konto ${prof.emailAddress} sicher verbunden!`, "success");
+          showToast(`Gmail-Konto ${prof.emailAddress} erfolgreich verbunden & reaktiviert!`, "success");
           await loadInboxData(false);
         } catch (profErr) {
           debugLog("GMAIL", "Profile error:", profErr);
@@ -220,9 +322,10 @@ function updateAccountsDropdown(accounts) {
   select.innerHTML = `<option value="all">📥 Alle Posteingänge (${inboxAccounts.length || 0})</option>`;
 
   inboxAccounts.forEach((acc) => {
+    const isExpired = acc.needsReauth || (acc.expiresAt && Date.now() > acc.expiresAt);
     const opt = document.createElement("option");
     opt.value = acc.id || acc.email;
-    opt.innerText = `✉️ ${acc.email}`;
+    opt.innerText = `${isExpired ? "⚠️" : "✉️"} ${acc.email}${isExpired ? " (Re-Auth erforderlich)" : ""}`;
     select.appendChild(opt);
   });
 
@@ -238,15 +341,28 @@ function updateAccountsDropdown(accounts) {
       settingsContainer.innerHTML = `<div class="text-muted small">Noch keine Gmail-Konten im Browser verknüpft.</div>`;
     } else {
       inboxAccounts.forEach((acc) => {
+        const isExpired = acc.needsReauth || (acc.expiresAt && Date.now() > acc.expiresAt);
+        const expiresTimeStr = acc.expiresAt ? new Date(acc.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
         const item = document.createElement("div");
-        item.className = "d-flex justify-content-between align-items-center p-2 rounded border bg-white small mb-1";
+        item.className = "d-flex justify-content-between align-items-center p-2 rounded border bg-white small mb-2 flex-wrap gap-2";
         item.innerHTML = `
           <div class="d-flex align-items-center gap-2 text-truncate">
             <span class="material-symbols-outlined text-primary" style="font-size: 18px;">mail</span>
             <strong class="text-truncate">${escapeHtml(acc.email)}</strong>
-            <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 10px;">LocalStorage</span>
+            ${isExpired
+              ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 10px;">Token abgelaufen</span>`
+              : `<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 10px;">Aktiv (bis ${expiresTimeStr})</span>`
+            }
           </div>
-          <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>
+          <div class="d-flex align-items-center gap-2">
+            ${isExpired ? `
+              <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 reauth-gmail-btn d-inline-flex align-items-center gap-1" data-email="${escapeHtml(acc.email)}" style="font-size: 11px;">
+                <span class="material-symbols-outlined" style="font-size: 14px;">lock_reset</span>
+                <span>Reaktivieren</span>
+              </button>
+            ` : ""}
+            <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>
+          </div>
         `;
         item.querySelector(".remove-gmail-acc-btn")?.addEventListener("click", () => {
           if (confirm(`Möchtest du das Google-Konto "${acc.email}" trennen?`)) {
@@ -313,13 +429,13 @@ export async function loadInboxData(silent = false) {
 
   const scanQuery = "in:inbox filename:pdf";
   const allMails = [];
-  let hasAuthError = false;
+  const expiredAccounts = [];
 
   for (const account of targetAccounts) {
     try {
       const res = await fetchAccountEmailsDirect(account, scanQuery);
       if (res.expired) {
-        hasAuthError = true;
+        expiredAccounts.push(account);
       } else if (res.emails) {
         res.emails.forEach((mail) => {
           if (!localSkipped[mail.id]) {
@@ -336,11 +452,28 @@ export async function loadInboxData(silent = false) {
     inboxLoadingContainer.style.setProperty("display", "none", "important");
   }
 
-  if (hasAuthError) {
+  if (expiredAccounts.length > 0) {
     if (inboxErrorAlert) {
-      document.getElementById("inbox-error-text").innerText = "Token für mindestens ein Google-Konto abgelaufen. Bitte neu anmelden.";
+      const errorTextEl = document.getElementById("inbox-error-text");
+      if (errorTextEl) {
+        errorTextEl.innerHTML = `
+          <div class="d-flex flex-column gap-2">
+            <div><strong>Anmeldung abgelaufen:</strong> Die Sitzung für ${expiredAccounts.length === 1 ? 'folgendes Google-Konto' : 'folgende Google-Konten'} muss bestätigt werden:</div>
+            <div class="d-flex flex-wrap gap-2">
+              ${expiredAccounts.map((acc) => `
+                <button type="button" class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1 reauth-gmail-btn" data-email="${escapeHtml(acc.email)}" style="font-size: 12px; font-weight: 500; border-radius: 6px;">
+                  <span class="material-symbols-outlined" style="font-size: 16px;">lock_reset</span>
+                  <span>${escapeHtml(acc.email)} reaktivieren</span>
+                </button>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }
       inboxErrorAlert.style.setProperty("display", "block", "important");
     }
+  } else {
+    if (inboxErrorAlert) inboxErrorAlert.style.setProperty("display", "none", "important");
   }
 
   inboxActiveEmails = allMails.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -375,17 +508,32 @@ function updateCounterBadges(detected, active, skipped) {
 }
 
 async function fetchAccountEmailsDirect(account, query) {
-  if (Date.now() > (account.expiresAt || 0)) {
+  // 1. Validate & Silent Refresh if needed
+  const tokenCheck = await ensureAccountTokenValid(account);
+  if (!tokenCheck.valid) {
     return { expired: true, account, emails: [] };
   }
 
+  let currentToken = tokenCheck.accessToken;
   const searchUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=30`;
-  const res = await fetch(searchUrl, {
-    headers: { Authorization: `Bearer ${account.accessToken}` },
+  let res = await fetch(searchUrl, {
+    headers: { Authorization: `Bearer ${currentToken}` },
   });
 
+  // If 401 Unauthorized, attempt forced silent refresh once
   if (res.status === 401) {
-    return { expired: true, account, emails: [] };
+    debugLog("GMAIL", `Received 401 for ${account.email}. Attempting forced silent refresh...`);
+    const retryCheck = await ensureAccountTokenValid(account, true);
+    if (!retryCheck.valid) {
+      return { expired: true, account, emails: [] };
+    }
+    currentToken = retryCheck.accessToken;
+    res = await fetch(searchUrl, {
+      headers: { Authorization: `Bearer ${currentToken}` },
+    });
+    if (!res.ok) {
+      return { expired: true, account, emails: [] };
+    }
   }
 
   if (!res.ok) {
@@ -400,7 +548,7 @@ async function fetchAccountEmailsDirect(account, query) {
   const detailPromises = messages.map(async (item) => {
     try {
       const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${item.id}?format=full`, {
-        headers: { Authorization: `Bearer ${account.accessToken}` },
+        headers: { Authorization: `Bearer ${currentToken}` },
       });
       if (!msgRes.ok) return null;
       const msg = await msgRes.json();
@@ -813,10 +961,12 @@ async function processBatchSelectedEmails() {
 
 async function archiveGmailMessage(account, messageId) {
   try {
+    const tokenCheck = await ensureAccountTokenValid(account);
+    const token = tokenCheck.valid ? tokenCheck.accessToken : account.accessToken;
     await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/modify`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${account.accessToken}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ removeLabelIds: ["INBOX"] }),
@@ -839,9 +989,12 @@ async function getGmailAttachmentBlob(account, messageId, attachment) {
     return new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
   }
 
+  const tokenCheck = await ensureAccountTokenValid(account);
+  const token = tokenCheck.valid ? tokenCheck.accessToken : account.accessToken;
+
   const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachment.attachmentId}`;
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${account.accessToken}` },
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`Fehler beim Herunterladen des Anhangs (${res.status})`);
   const data = await res.json();

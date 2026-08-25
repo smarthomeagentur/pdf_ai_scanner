@@ -88,23 +88,69 @@ router.get("/share-target", (req, res) => {
   res.redirect("/");
 });
 
-router.get("/api/jobs/:id/file", (req, res) => {
+const { driveApi } = require("../services/driveService");
+
+router.get("/api/jobs/:id/file", async (req, res) => {
   try {
-    const job = getJob(req.params.id);
-    if (!job || !job.filePath || !fs.existsSync(job.filePath)) {
-      return res.status(404).send("Datei nicht gefunden");
-    }
-    if (job.isPrivate && !checkIsAdmin(req)) {
+    const rawId = req.params.id;
+    const cleanId = String(rawId).replace(/^gdrive_/, "");
+    const job = getJob(rawId) || getJob(cleanId);
+
+    if (job && job.isPrivate && !checkIsAdmin(req)) {
       return res.status(403).send("Forbidden");
     }
-    if (!isSafeSubpath(DOWNLOADS_DIR, job.filePath)) {
-      return res.status(403).send("Invalid file path");
-    }
-    const filename = job.result?.full || job.originalName || "Dokument.pdf";
+
+    const filename = job?.result?.full || job?.originalName || job?.name || "Dokument.pdf";
     const safeName = filename.replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, "_");
-    res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
-    res.sendFile(job.filePath);
+    const safeFilename = safeName.endsWith(".pdf") ? safeName : `${safeName}.pdf`;
+    const isDownload = req.query.download === "1" || req.query.download === "true";
+    const disposition = isDownload ? `attachment; filename="${safeFilename}"` : `inline; filename="${safeFilename}"`;
+
+    // 1. Check local file on disk
+    if (job && job.filePath && fs.existsSync(job.filePath)) {
+      if (!isSafeSubpath(DOWNLOADS_DIR, job.filePath)) {
+        return res.status(403).send("Invalid file path");
+      }
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", disposition);
+      return res.sendFile(job.filePath);
+    }
+
+    // 2. Stream from Google Drive if available
+    let driveFileId = job?.rawDriveId || job?.driveFileId;
+    if (!driveFileId && job?.result?.webViewLink) {
+      const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match) driveFileId = match[1];
+    }
+    if (!driveFileId && job?.webViewLink) {
+      const match = job.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match) driveFileId = match[1];
+    }
+    if (!driveFileId && /^[a-zA-Z0-9_-]{20,}$/.test(cleanId)) {
+      driveFileId = cleanId;
+    }
+
+    if (driveFileId) {
+      try {
+        const drive = await driveApi.getClient();
+        const driveStream = await drive.files.get(
+          { fileId: driveFileId, alt: "media" },
+          { responseType: "stream" }
+        );
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", disposition);
+        return driveStream.data.pipe(res);
+      } catch (driveErr) {
+        console.error(`[GET FILE] Fehler beim Laden von Google Drive (${driveFileId}):`, driveErr.message);
+        if (job?.result?.webViewLink || job?.webViewLink) {
+          return res.redirect(job.result?.webViewLink || job.webViewLink);
+        }
+      }
+    }
+
+    return res.status(404).send("Datei nicht gefunden");
   } catch (err) {
+    console.error("[GET FILE ERROR]", err);
     res.status(500).send("Fehler beim Laden der Datei: " + err.message);
   }
 });
@@ -146,14 +192,14 @@ router.post("/api/jobs/:id/notes", (req, res) => {
   res.json({ success: true, notes: job.notes });
 });
 
-router.post("/api/jobs/:id/hide", (req, res) => {
+router.post("/api/jobs/:id/hide", requireAdmin, (req, res) => {
   const isHidden = req.body.isHidden === true || req.body.isHidden === "true";
   const job = isHidden ? hideJob(req.params.id) : unhideJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
   res.json({ success: true, isHidden });
 });
 
-router.post("/api/jobs/:id/private", (req, res) => {
+router.post("/api/jobs/:id/private", requireAdmin, (req, res) => {
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
   const isPrivate = req.body.isPrivate !== undefined ? (req.body.isPrivate === true || req.body.isPrivate === "true") : !job.isPrivate;
@@ -162,7 +208,7 @@ router.post("/api/jobs/:id/private", (req, res) => {
   res.json({ success: true, isPrivate: job.isPrivate });
 });
 
-router.post("/api/jobs/:id/category", (req, res) => {
+router.post("/api/jobs/:id/category", requireAdmin, (req, res) => {
   const { category } = req.body;
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
@@ -172,7 +218,7 @@ router.post("/api/jobs/:id/category", (req, res) => {
   res.json({ success: true, category: job.result.category });
 });
 
-router.post("/api/jobs/:id/company", (req, res) => {
+router.post("/api/jobs/:id/company", requireAdmin, (req, res) => {
   const { company } = req.body;
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
@@ -187,7 +233,7 @@ router.post("/api/jobs/:id/company", (req, res) => {
   res.json({ success: true, company: job.result.company });
 });
 
-router.post("/api/jobs/:id/update-meta", (req, res) => {
+router.post("/api/jobs/:id/update-meta", requireAdmin, (req, res) => {
   const { category, company } = req.body;
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
@@ -198,7 +244,7 @@ router.post("/api/jobs/:id/update-meta", (req, res) => {
   res.json({ success: true, result: job.result });
 });
 
-router.post("/api/jobs/:id/retry", (req, res) => {
+router.post("/api/jobs/:id/retry", requireAdmin, (req, res) => {
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
   job.status = "pending";
@@ -210,7 +256,7 @@ router.post("/api/jobs/:id/retry", (req, res) => {
   res.json({ success: true, message: "KI-Erkennung wird erneut durchgeführt." });
 });
 
-router.post("/api/jobs/:id/cancel", (req, res) => {
+router.post("/api/jobs/:id/cancel", requireAdmin, (req, res) => {
   const job = hideJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Auftrag nicht gefunden." });
   res.json({ success: true, message: "Auftrag ausgeblendet." });
@@ -227,7 +273,7 @@ router.delete("/api/jobs", requireAdmin, (req, res) => {
   res.json({ success: true, message: "Alle Dokumente ausgeblendet." });
 });
 
-router.post("/api/jobs/:id/dismiss-duplicate", (req, res) => {
+router.post("/api/jobs/:id/dismiss-duplicate", requireAdmin, (req, res) => {
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
   job.suspectedDuplicate = false;

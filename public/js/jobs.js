@@ -109,8 +109,8 @@ export function renderJobsList(jobs = state.jobs, force = false) {
       const thumbUrl = job.thumbnailLink || `/api/thumbnail/${rawDriveId}`;
 
       div.innerHTML = `
-        <div style="padding-right: 94px; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-start;">
-          <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+          <div class="flex-grow-1" style="min-width: 0; display: flex; flex-direction: column;">
             <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
               <div class="d-flex align-items-center gap-1 flex-wrap">
                 <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;">
@@ -136,18 +136,26 @@ export function renderJobsList(jobs = state.jobs, force = false) {
                 <div class="font-monospace text-dark bg-white p-2 rounded border" style="font-size: 11.5px; line-height: 1.4; word-break: break-word;">${highlightedSnippet}</div>
               </div>` : ""}
           </div>
-          <div style="margin-top: 8px; width: 100%;">
-            <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
-              <a href="${webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 8px; font-size: 12px; padding: 4px 10px; text-decoration: none;">
-                <span class="material-symbols-outlined" style="font-size: 15px;">open_in_new</span>
-                <span>In Google Drive öffnen</span>
-              </a>
-            </div>
+          <div class="flex-shrink-0">
+            <a href="${webViewLink}" data-job-id="${job.id}" class="pdf-preview-container btn-open-doc-preview" title="Dokument in Google Drive öffnen">
+              <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
+            </a>
           </div>
         </div>
-        <a href="${webViewLink}" target="_blank" class="pdf-preview-container" title="Dokument in Google Drive öffnen">
-          <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
-        </a>`;
+        <div class="job-body-section" style="width: 100%;">
+          <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
+            ${state.isAdmin ? `
+              <button type="button" class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 btn-import-drive-file" data-drive-id="${rawDriveId}" data-file-name="${escapeHtml(job.originalName || job.name || '')}" style="border-radius: 8px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
+                <span class="material-symbols-outlined" style="font-size: 16px;">cloud_download</span>
+                <span>Importieren & per KI verarbeiten</span>
+              </button>
+            ` : ""}
+            <a href="${webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 8px; font-size: 12px; padding: 4px 10px; text-decoration: none;">
+              <span class="material-symbols-outlined" style="font-size: 15px;">open_in_new</span>
+              <span>In Google Drive öffnen</span>
+            </a>
+          </div>
+        </div>`;
       jobList.appendChild(div);
       return;
     }
@@ -233,11 +241,11 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     const invoiceAmtRaw = res.invoiceAmmount !== undefined ? res.invoiceAmmount : job.invoiceAmmount;
     const invoiceAmtDisplay = (invoiceAmtRaw !== undefined && invoiceAmtRaw !== null && invoiceAmtRaw !== 0) ? formatCurrency(invoiceAmtRaw) : "";
 
-    // 7. Preview Image with 4.2x Hover/Touch Zoom
+    // 7. Preview Image
     const webViewLink = res.webViewLink || job.webViewLink || (job.filePath ? `/api/jobs/${job.id}/file` : "#");
     const thumbUrl = `/api/thumbnail/${job.id}?v=${job.aiPipelineCompletedAt || job.uploadDate || 1}`;
     const previewHtml = `
-      <a href="${webViewLink}" target="_blank" class="pdf-preview-container" title="Beleg öffnen (Hover/Touch vergrößert Vorschau)">
+      <a href="${webViewLink}" data-job-id="${job.id}" class="pdf-preview-container" title="Beleg öffnen">
         <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
       </a>`;
 
@@ -256,7 +264,7 @@ export function renderJobsList(jobs = state.jobs, force = false) {
         </div>`;
     }
 
-    // 9. Action Bar: Details, ClickUp, Buchhaltung
+    // 9. Action Bar & Details
     const isClickupSynced = !!(job.clickup && job.clickup.taskId);
     const isDetailsOpen = openDetailsStates[job.id] === true;
 
@@ -264,9 +272,10 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     const safeCategory = escapeHtml(res.category || "-");
 
     div.innerHTML = `
-      <div style="padding-right: 94px; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-start;">
-        ${errorHeaderHtml}
-        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+      <!-- Top header section: info on left, thumbnail on right -->
+      <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+        <div class="flex-grow-1" style="min-width: 0; display: flex; flex-direction: column;">
+          ${errorHeaderHtml}
           <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
             <!-- Zeile 1: Die 3 prominenten Tags -->
             <div>${titleBadgesHtml}</div>
@@ -300,14 +309,19 @@ export function renderJobsList(jobs = state.jobs, force = false) {
           ${statusHtml}
           ${snippetHtml}
         </div>
+        <div class="flex-shrink-0">
+          ${previewHtml}
+        </div>
+      </div>
 
-        <!-- Action Bar -->
-        <div style="margin-top: 8px; width: 100%;">
-          <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
-            <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}">
-              <span class="material-symbols-outlined">${isDetailsOpen ? "expand_less" : "info"}</span>
-              <span>Details</span>
-            </button>
+      <!-- Action Bar & Details Section (Spans 100% full width of card) -->
+      <div class="job-body-section" style="width: 100%;">
+        <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
+          <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}">
+            <span class="material-symbols-outlined">${isDetailsOpen ? "expand_less" : "info"}</span>
+            <span>Details</span>
+          </button>
+          ${state.isAdmin ? `
             <button type="button" class="job-action-btn btn-manual-clickup-transfer ${isClickupSynced ? "btn-clickup-synced" : "btn-clickup-pending"}" data-job-id="${job.id}">
               <span class="material-symbols-outlined">${isClickupSynced ? "check_circle" : "cloud_upload"}</span>
               <span>ClickUp</span>
@@ -316,73 +330,72 @@ export function renderJobsList(jobs = state.jobs, force = false) {
               <span class="material-symbols-outlined">${isLexTransferred ? "check_circle" : "sync"}</span>
               <span>Buchhalt.</span>
             </button>
-          </div>
+          ` : ""}
+        </div>
 
-          <!-- Details Accordion -->
-          <details class="job-result" data-job-id="${job.id}" style="width: 100%; transition: all 0.3s;" ${isDetailsOpen ? "open" : ""}>
-            <summary style="display: none;"></summary>
-            <div class="mt-2 p-3 bg-white rounded-3 border shadow-sm" style="font-size: 13px; line-height: 1.6; margin-right: -65px;">
-              <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom flex-wrap gap-2">
-                <span class="fw-bold text-muted small" style="text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Dokumentendetails</span>
-                <div class="d-flex align-items-center gap-2">
-                  <button type="button" class="job-action-btn btn-reprocess-ai" data-job-id="${job.id}" title="KI-Erkennung wiederholen">
-                    <span class="material-symbols-outlined">psychology</span>
-                    <span>KI wiederholen</span>
-                  </button>
-                  <button type="button" class="job-action-btn btn-hide-job ${job.isHidden ? "btn-hidden-active" : ""}" data-job-id="${job.id}" data-is-hidden="${!!job.isHidden}" title="${job.isHidden ? "Beleg einblenden" : "Beleg ausblenden"}">
-                    <span class="material-symbols-outlined">${job.isHidden ? "visibility" : "visibility_off"}</span>
-                    <span>${job.isHidden ? "Einblenden" : "Ausblenden"}</span>
-                  </button>
-                </div>
-              </div>
-
-              ${isFailed ? `
-                <div class="p-2 mb-2 rounded bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 12px; line-height: 1.4;">
-                  <strong>Fehlerursache:</strong> ${escapeHtml(job.error || "Unbekannter Fehler bei der Analyse")}
-                </div>` : ""}
-
-              <div><strong style="color: #475569;">Originaler Dateiname:</strong> ${highlightQueryText(job.originalName || "-", state.searchQuery)}</div>
-              <div><strong style="color: #475569;">Hochgeladen am:</strong> ${escapeHtml(uploadDateDisplay)}</div>
-              <div><strong style="color: #475569;">Dokumentendatum:</strong> ${escapeHtml(docDateDisplay)}</div>
-              
-              <!-- Bearbeitbares Unternehmen -->
-              <div class="my-1 d-flex align-items-center gap-2">
-                <strong style="color: #475569;">Unternehmen:</strong> 
-                <div style="position: relative; display: inline-block;">
-                  <span class="company-editable" data-job-id="${job.id}" data-current-comp="${safeCompany}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #e0f2fe; color: #0369a1; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
-                    ${highlightQueryText(safeCompany, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
-                  </span>
-                </div>
-              </div>
-
-              <!-- Bearbeitbare Kategorie -->
-              <div class="my-1 d-flex align-items-center gap-2">
-                <strong style="color: #475569;">Kategorie:</strong> 
-                <div style="position: relative; display: inline-block;">
-                  <span class="category-editable" data-job-id="${job.id}" data-current-cat="${safeCategory}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #f3e8ff; color: #6b21a8; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
-                    ${highlightQueryText(safeCategory, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
-                  </span>
-                </div>
-              </div>
-
-              ${isInvoice ? `
-                <div><strong style="color: #475569;">Rechnungs-Nr:</strong> ${highlightQueryText(invoiceNumber || "-", state.searchQuery)}</div>
-                <div><strong style="color: #475569;">Rechnungsbetrag:</strong> ${invoiceAmtDisplay || "-"}</div>
-              ` : ""}
-
-              ${res.duration ? `<div><strong style="color: #475569;">Verarbeitungszeit:</strong> ${res.duration} s</div>` : ""}
-
-              <div class="mt-2 pt-2 border-top">
-                <label class="fw-semibold text-muted small d-flex align-items-center gap-1 mb-1">
-                  <span class="material-symbols-outlined" style="font-size: 15px;">edit_note</span> Notizen zu diesem Beleg:
-                </label>
-                <textarea class="form-control job-notes-input" data-job-id="${job.id}" rows="2" placeholder="Notizen hinterlegen..." style="font-size: 12.5px; border-radius: 8px;">${escapeHtml(job.notes || "")}</textarea>
+        <!-- Details Accordion (100% Full Width) -->
+        <details class="job-result" data-job-id="${job.id}" style="width: 100%; transition: all 0.3s;" ${isDetailsOpen ? "open" : ""}>
+          <summary style="display: none;"></summary>
+          <div class="mt-2 p-3 bg-white rounded-3 border shadow-sm" style="font-size: 13px; line-height: 1.6; width: 100%;">
+            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom flex-wrap gap-2">
+              <span class="fw-bold text-muted small" style="text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Dokumentendetails</span>
+              <div class="d-flex align-items-center gap-2">
+                <button type="button" class="job-action-btn btn-reprocess-ai" data-job-id="${job.id}" title="KI-Erkennung wiederholen">
+                  <span class="material-symbols-outlined">psychology</span>
+                  <span>KI wiederholen</span>
+                </button>
+                <button type="button" class="job-action-btn btn-hide-job ${job.isHidden ? "btn-hidden-active" : ""}" data-job-id="${job.id}" data-is-hidden="${!!job.isHidden}" title="${job.isHidden ? "Beleg einblenden" : "Beleg ausblenden"}">
+                  <span class="material-symbols-outlined">${job.isHidden ? "visibility" : "visibility_off"}</span>
+                  <span>${job.isHidden ? "Einblenden" : "Ausblenden"}</span>
+                </button>
               </div>
             </div>
-          </details>
-        </div>
-      </div>
-      ${previewHtml}`;
+
+            ${isFailed ? `
+              <div class="p-2 mb-2 rounded bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 12px; line-height: 1.4;">
+                <strong>Fehlerursache:</strong> ${escapeHtml(job.error || "Unbekannter Fehler bei der Analyse")}
+              </div>` : ""}
+
+            <div><strong style="color: #475569;">Originaler Dateiname:</strong> ${highlightQueryText(job.originalName || "-", state.searchQuery)}</div>
+            <div><strong style="color: #475569;">Hochgeladen am:</strong> ${escapeHtml(uploadDateDisplay)}</div>
+            <div><strong style="color: #475569;">Dokumentendatum:</strong> ${escapeHtml(docDateDisplay)}</div>
+            
+            <!-- Bearbeitbares Unternehmen -->
+            <div class="my-1 d-flex align-items-center gap-2">
+              <strong style="color: #475569;">Unternehmen:</strong> 
+              <div style="position: relative; display: inline-block;">
+                <span class="company-editable" data-job-id="${job.id}" data-current-comp="${safeCompany}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #e0f2fe; color: #0369a1; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
+                  ${highlightQueryText(safeCompany, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Bearbeitbare Kategorie -->
+            <div class="my-1 d-flex align-items-center gap-2">
+              <strong style="color: #475569;">Kategorie:</strong> 
+              <div style="position: relative; display: inline-block;">
+                <span class="category-editable" data-job-id="${job.id}" data-current-cat="${safeCategory}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #f3e8ff; color: #6b21a8; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
+                  ${highlightQueryText(safeCategory, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                </span>
+              </div>
+            </div>
+
+            ${isInvoice ? `
+              <div><strong style="color: #475569;">Rechnungs-Nr:</strong> ${highlightQueryText(invoiceNumber || "-", state.searchQuery)}</div>
+              <div><strong style="color: #475569;">Rechnungsbetrag:</strong> ${invoiceAmtDisplay || "-"}</div>
+            ` : ""}
+
+            ${res.duration ? `<div><strong style="color: #475569;">Verarbeitungszeit:</strong> ${res.duration} s</div>` : ""}
+
+            <div class="mt-2 pt-2 border-top">
+              <label class="fw-semibold text-muted small d-flex align-items-center gap-1 mb-1">
+                <span class="material-symbols-outlined" style="font-size: 15px;">edit_note</span> Notizen zu diesem Beleg:
+              </label>
+              <textarea class="form-control job-notes-input" data-job-id="${job.id}" rows="2" placeholder="Notizen hinterlegen..." style="font-size: 12.5px; border-radius: 8px;">${escapeHtml(job.notes || "")}</textarea>
+            </div>
+          </div>
+        </details>
+      </div>`;
 
     jobList.appendChild(div);
   });
@@ -604,8 +617,123 @@ function renderPagination(totalItems, totalPages) {
   nav.appendChild(nextLi);
 }
 
+export function openDocPreview(jobId) {
+  const modal = document.getElementById("doc-preview-modal");
+  const iframe = document.getElementById("doc-preview-iframe");
+  const title = document.getElementById("doc-preview-title");
+  const subtitle = document.getElementById("doc-preview-subtitle");
+  const downloadBtn = document.getElementById("doc-preview-download-btn");
+  const extBtn = document.getElementById("doc-preview-external-btn");
+  const loading = document.getElementById("doc-preview-loading");
+
+  if (!modal || !iframe) return;
+
+  const job = (state.jobs && state.jobs.find((j) => String(j.id) === String(jobId)));
+  if (!job) return;
+
+  const res = job.result || {};
+  const filename = res.full || job.originalName || job.name || "Dokument.pdf";
+  const docDate = res.documentDate || formatDateDisplay(job.uploadDate || job.date);
+  const company = res.company || job.targetCompany || "";
+  const invoiceNum = res.invoiceNumber && res.invoiceNumber !== "none" ? ` • Rechnungs-Nr: ${res.invoiceNumber}` : "";
+  const amountStr = res.invoiceAmmount ? ` • Betrag: ${formatCurrency(res.invoiceAmmount)}` : "";
+
+  if (title) title.innerText = filename;
+  if (subtitle) subtitle.innerText = `${docDate}${company ? ` • ${company}` : ""}${invoiceNum}${amountStr}`;
+
+  const isDriveOnly = job.isDriveOnly;
+  const rawDriveId = String(job.id).replace(/^gdrive_/, "");
+  const fileUrl = `/api/jobs/${job.id}/file`;
+  const downloadUrl = `/api/jobs/${job.id}/file?download=1`;
+  const extUrl = res.webViewLink || job.webViewLink || (isDriveOnly ? `https://drive.google.com/file/d/${rawDriveId}/view` : fileUrl);
+
+  if (downloadBtn) {
+    downloadBtn.href = downloadUrl;
+    downloadBtn.setAttribute("download", filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
+  }
+  if (extBtn) {
+    extBtn.href = extUrl;
+  }
+
+  if (loading) loading.style.setProperty("display", "block", "important");
+  modal.style.setProperty("display", "flex", "important");
+
+  iframe.onload = () => {
+    if (loading) loading.style.setProperty("display", "none", "important");
+  };
+  iframe.src = fileUrl;
+}
+
+export function closeDocPreview() {
+  const modal = document.getElementById("doc-preview-modal");
+  const iframe = document.getElementById("doc-preview-iframe");
+  if (modal) modal.style.setProperty("display", "none", "important");
+  if (iframe) iframe.src = "";
+}
+
 export function initJobEventDelegation() {
   document.addEventListener("click", async (e) => {
+    // 0. Thumbnail Preview Click (Mobile & Desktop)
+    const previewContainer = e.target.closest(".pdf-preview-container");
+    if (previewContainer) {
+      e.preventDefault();
+      e.stopPropagation();
+      const jobId = previewContainer.getAttribute("data-job-id");
+      if (jobId) openDocPreview(jobId);
+      return;
+    }
+
+    // 0b. Document Preview Modal Close Button or Overlay Click
+    const docModalClose = e.target.closest("#doc-preview-close-btn");
+    const docPreviewModal = document.getElementById("doc-preview-modal");
+    if (docModalClose || e.target === docPreviewModal) {
+      closeDocPreview();
+      return;
+    }
+
+    // 0c. Import Drive File Button
+    const importDriveBtn = e.target.closest(".btn-import-drive-file");
+    if (importDriveBtn) {
+      if (!state.isAdmin) {
+        showToast("Importieren ist nur für Administratoren verfügbar.", "warning");
+        return;
+      }
+      const driveId = importDriveBtn.getAttribute("data-drive-id");
+      const fileName = importDriveBtn.getAttribute("data-file-name") || "";
+      const originalHtml = importDriveBtn.innerHTML;
+      importDriveBtn.disabled = true;
+      importDriveBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" style="width: 13px; height: 13px;"></span> <span>Wird importiert...</span>`;
+
+      try {
+        const res = await apiRequest("/api/drive/import-file", {
+          method: "POST",
+          body: JSON.stringify({ driveFileId: driveId, name: fileName }),
+        });
+        if (res.success && res.job) {
+          showToast(`✓ "${fileName || 'Dokument'}" wurde importiert und wird per KI verarbeitet!`, "success");
+          if (state.jobs) {
+            // Replace the drive-only entry with the newly created processing job
+            const idx = state.jobs.findIndex((j) => String(j.id) === `gdrive_${driveId}` || String(j.id) === String(driveId));
+            if (idx !== -1) {
+              state.jobs[idx] = res.job;
+            } else {
+              state.jobs.unshift(res.job);
+            }
+          }
+          renderJobsList();
+        } else {
+          showToast("Import fehlgeschlagen: " + (res.error || "Unbekannter Fehler"), "error");
+          importDriveBtn.disabled = false;
+          importDriveBtn.innerHTML = originalHtml;
+        }
+      } catch (err) {
+        showToast("Fehler beim Import: " + err.message, "error");
+        importDriveBtn.disabled = false;
+        importDriveBtn.innerHTML = originalHtml;
+      }
+      return;
+    }
+
     // 1. Toggle Details
     const toggleDetailsBtn = e.target.closest(".btn-toggle-details");
     if (toggleDetailsBtn) {
@@ -624,6 +752,10 @@ export function initJobEventDelegation() {
     // 2. Private Toggle
     const privatePill = e.target.closest(".toggle-private-pill");
     if (privatePill) {
+      if (!state.isAdmin) {
+        showToast("Nur für Administratoren verfügbar.", "warning");
+        return;
+      }
       const jobId = privatePill.getAttribute("data-job-id");
       if (jobId) {
         try {
@@ -642,6 +774,10 @@ export function initJobEventDelegation() {
     // 3. Category Picker Opening
     const catTarget = e.target.closest(".category-editable");
     if (catTarget) {
+      if (!state.isAdmin) {
+        showToast("Kategorien können nur von Administratoren geändert werden.", "warning");
+        return;
+      }
       if (catTarget.parentElement.querySelector(".category-picker-box")) return;
       e.stopPropagation();
       e.preventDefault();
@@ -686,6 +822,7 @@ export function initJobEventDelegation() {
     // 4. Category Option Selection
     const catOptionPill = e.target.closest(".cat-option-pill");
     if (catOptionPill) {
+      if (!state.isAdmin) return;
       e.stopPropagation();
       e.preventDefault();
       const newCategory = catOptionPill.getAttribute("data-value");
@@ -715,6 +852,10 @@ export function initJobEventDelegation() {
     // 5. Company Picker Opening
     const compTarget = e.target.closest(".company-editable");
     if (compTarget) {
+      if (!state.isAdmin) {
+        showToast("Unternehmen können nur von Administratoren geändert werden.", "warning");
+        return;
+      }
       if (compTarget.parentElement.querySelector(".company-picker-box")) return;
       e.stopPropagation();
       e.preventDefault();
@@ -745,6 +886,7 @@ export function initJobEventDelegation() {
     // 6. Company Option Selection
     const compOptionPill = e.target.closest(".comp-option-pill");
     if (compOptionPill) {
+      if (!state.isAdmin) return;
       e.stopPropagation();
       e.preventDefault();
       const newCompany = compOptionPill.getAttribute("data-value");
@@ -781,42 +923,62 @@ export function initJobEventDelegation() {
       document.querySelectorAll(".category-picker-box, .company-picker-box").forEach((b) => b.remove());
     }
 
-    // 8. ClickUp Transfer Button
+    // 8. ClickUp Transfer Button (Admin Only)
     const clickupBtn = e.target.closest(".btn-manual-clickup-transfer");
     if (clickupBtn) {
+      if (!state.isAdmin) {
+        showToast("ClickUp-Synchronisation ist nur für Administratoren verfügbar.", "warning");
+        return;
+      }
       const jobId = clickupBtn.getAttribute("data-job-id");
       if (jobId) transferJobToClickUp(jobId);
       return;
     }
 
-    // 9. Buchhaltung Sync Button
+    // 9. Buchhaltung Sync Button (Admin Only)
     const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync");
     if (lexofficeBtn) {
+      if (!state.isAdmin) {
+        showToast("Buchhaltungssynchronisation ist nur für Administratoren verfügbar.", "warning");
+        return;
+      }
       const jobId = lexofficeBtn.getAttribute("data-job-id");
       if (jobId) openAccountingModal(jobId);
       return;
     }
 
-    // 10. Reprocess AI
+    // 10. Reprocess AI (Admin Only)
     const reprocessBtn = e.target.closest(".btn-reprocess-ai");
     if (reprocessBtn) {
+      if (!state.isAdmin) {
+        showToast("Nur für Administratoren verfügbar.", "warning");
+        return;
+      }
       const jobId = reprocessBtn.getAttribute("data-job-id");
       if (jobId && window.retryJob) window.retryJob(jobId);
       return;
     }
 
-    // 11. Hide / Unhide
+    // 11. Hide / Unhide (Admin Only)
     const hideBtn = e.target.closest(".btn-hide-job");
     if (hideBtn) {
+      if (!state.isAdmin) {
+        showToast("Nur für Administratoren verfügbar.", "warning");
+        return;
+      }
       const jobId = hideBtn.getAttribute("data-job-id");
       const isCurrentlyHidden = hideBtn.getAttribute("data-is-hidden") === "true";
       if (jobId && window.toggleHideJob) window.toggleHideJob(jobId, !isCurrentlyHidden);
       return;
     }
 
-    // 12. Delete Job
+    // 12. Delete Job (Admin Only)
     const deleteBtn = e.target.closest(".btn-delete-job");
     if (deleteBtn) {
+      if (!state.isAdmin) {
+        showToast("Nur für Administratoren verfügbar.", "warning");
+        return;
+      }
       const jobId = deleteBtn.getAttribute("data-job-id");
       if (jobId && window.deleteJob) window.deleteJob(jobId);
       return;
@@ -832,10 +994,21 @@ export function initJobEventDelegation() {
     }
   });
 
-  // Notes Auto-Save on Blur / Change
+  // Close modal on Escape
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeDocPreview();
+    }
+  });
+
+  // Notes Auto-Save on Blur / Change (Admin Only)
   document.addEventListener("change", async (e) => {
     const textarea = e.target.closest(".job-notes-input");
     if (textarea) {
+      if (!state.isAdmin) {
+        showToast("Nur für Administratoren bearbeitbar.", "warning");
+        return;
+      }
       const jobId = textarea.getAttribute("data-job-id");
       const notes = textarea.value.trim();
       try {

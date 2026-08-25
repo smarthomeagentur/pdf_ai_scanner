@@ -39,11 +39,12 @@ async function getJobPdfBuffer(job) {
   }
 }
 
-async function checkSingleAccountingCompany(job, compKey, credentials = {}) {
-  const provider = compKey === "thewire" ? "buchhaltungsbutler" : "lexoffice";
-  const providerName = compKey === "thewire" ? "BuchhaltungsButler" : "Lexoffice";
-  const companyDisplayName =
-    compKey === "wirewire" ? "wirewire GmbH" : compKey === "thewire" ? "The Wire UG" : "Polyxo Studios GmbH";
+async function checkSingleModularAccount(job, account) {
+  const accountId = account.id || account.companyKey || "unknown";
+  const accountName = account.name || account.companyDisplayName || accountId;
+  const provider = account.provider || (accountId === "thewire" ? "buchhaltungsbutler" : "lexoffice");
+  const providerName = provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
+  const credentials = account.credentials || {};
 
   let apiValid = false;
   let apiError = null;
@@ -51,16 +52,16 @@ async function checkSingleAccountingCompany(job, compKey, credentials = {}) {
   let liveSearch = { performed: false, found: false, matches: [] };
 
   if (provider === "buchhaltungsbutler") {
-    const client = (credentials.thewireClient || credentials.client || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
-    const secret = (credentials.thewireSecret || credentials.secret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
-    const key = (credentials.thewireKey || credentials.key || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+    const client = (credentials.client || credentials.thewireClient || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+    const secret = (credentials.secret || credentials.thewireSecret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+    const key = (credentials.key || credentials.thewireKey || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
 
     if (client && secret && key) {
       try {
         const testRes = await butlerApi.testConnection({ client, secret, key });
         if (testRes.success) {
           apiValid = true;
-          organizationName = testRes.companyName || "The Wire UG";
+          organizationName = testRes.companyName || accountName;
           const invNum = job.result?.invoiceNumber && job.result?.invoiceNumber !== "none" ? job.result.invoiceNumber : "";
           const fName = job.result?.full || job.originalName || "";
           const amountCents = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : job.invoiceAmmount;
@@ -88,13 +89,11 @@ async function checkSingleAccountingCompany(job, compKey, credentials = {}) {
       }
     } else {
       apiValid = false;
-      apiError = "Keine Zugangsdaten für BuchhaltungsButler (The Wire) hinterlegt.";
+      apiError = `Keine Zugangsdaten für BuchhaltungsButler (${accountName}) hinterlegt.`;
     }
   } else {
     // Lexoffice
-    const keyProp = compKey === "wirewire" ? "wirewireApiKey" : "polyxoApiKey";
-    const apiKeySettingName = `LEXOFFICE_KEY_${compKey.toUpperCase()}`;
-    const apiKey = (credentials[keyProp] || credentials.apiKey || appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
+    const apiKey = (credentials.apiKey || credentials.wirewireApiKey || credentials.polyxoApiKey || appSettings[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] || process.env[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] || "").trim();
 
     if (apiKey) {
       try {
@@ -104,7 +103,7 @@ async function checkSingleAccountingCompany(job, compKey, credentials = {}) {
         if (apiRes.ok) {
           apiValid = true;
           const profile = await apiRes.json();
-          organizationName = profile.organizationName || companyDisplayName;
+          organizationName = profile.organizationName || accountName;
           const invNum = job.result?.invoiceNumber && job.result?.invoiceNumber !== "none" ? job.result.invoiceNumber : "";
           const fName = job.result?.full || job.originalName || "";
           const amountCents = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : job.invoiceAmmount;
@@ -133,17 +132,39 @@ async function checkSingleAccountingCompany(job, compKey, credentials = {}) {
       }
     } else {
       apiValid = false;
-      apiError = `Kein API-Key für Lexoffice (${compKey}) hinterlegt.`;
+      apiError = `Kein API-Key für Lexoffice (${accountName}) hinterlegt.`;
     }
   }
 
-  const alreadyTransferred = !!(job.lexofficeTransfers && job.lexofficeTransfers[compKey]);
-  const transferredInfo = alreadyTransferred ? job.lexofficeTransfers[compKey] : null;
+  // Check if transferred under accountId or accountName or legacy keys
+  const transfers = job.lexofficeTransfers || {};
+  let alreadyTransferred = false;
+  let transferredInfo = null;
+
+  if (transfers[accountId]) {
+    alreadyTransferred = true;
+    transferredInfo = transfers[accountId];
+  } else if (transfers[accountName]) {
+    alreadyTransferred = true;
+    transferredInfo = transfers[accountName];
+  } else if (accountId === "thewire" && transfers["thewire"]) {
+    alreadyTransferred = true;
+    transferredInfo = transfers["thewire"];
+  } else if (accountId === "wirewire" && transfers["wirewire"]) {
+    alreadyTransferred = true;
+    transferredInfo = transfers["wirewire"];
+  } else if (accountId === "polyxo" && transfers["polyxo"]) {
+    alreadyTransferred = true;
+    transferredInfo = transfers["polyxo"];
+  }
+
   const hasLiveMatch = !!(liveSearch.found && Array.isArray(liveSearch.matches) && liveSearch.matches.length > 0);
 
   return {
-    companyKey: compKey,
-    companyDisplayName,
+    accountId,
+    companyKey: accountId,
+    accountName,
+    companyDisplayName: accountName,
     provider,
     providerName,
     apiValid,
@@ -157,50 +178,104 @@ async function checkSingleAccountingCompany(job, compKey, credentials = {}) {
   };
 }
 
+router.post("/api/accounting/test-connection", requireAdmin, async (req, res) => {
+  const { provider, credentials = {} } = req.body;
+  try {
+    if (provider === "buchhaltungsbutler") {
+      const client = (credentials.client || "").trim();
+      const secret = (credentials.secret || "").trim();
+      const key = (credentials.key || "").trim();
+      if (!client || !secret || !key) {
+        return res.json({ success: false, error: "Client, Secret und Key sind erforderlich." });
+      }
+      const testRes = await butlerApi.testConnection({ client, secret, key });
+      return res.json(testRes);
+    } else {
+      // Lexoffice
+      const apiKey = (credentials.apiKey || "").trim();
+      if (!apiKey) {
+        return res.json({ success: false, error: "API-Key ist erforderlich." });
+      }
+      const apiRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/profile", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (apiRes.ok) {
+        const profile = await apiRes.json();
+        return res.json({
+          success: true,
+          companyName: profile.organizationName || "Lexoffice Organisation",
+        });
+      } else {
+        return res.json({
+          success: false,
+          error: `Lexoffice API Fehler (${apiRes.status}): Ungültiger API-Key oder fehlende Berechtigung.`,
+        });
+      }
+    }
+  } catch (err) {
+    return res.json({ success: false, error: `Verbindungsfehler: ${err.message}` });
+  }
+});
+
 router.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, async (req, res) => {
-  const { jobId, companyKey, credentials = {} } = req.body;
+  const { jobId, companyKey, accounts = [], credentials = {} } = req.body;
   const job = getJob(jobId);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
 
-  const validCompanies = ["wirewire", "thewire", "polyxo"];
-  let suggestedCompany = job.targetCompany;
-  if (!suggestedCompany && job.result && job.result.company) {
-    const c = job.result.company.toLowerCase();
-    if (c.includes("wirewire")) suggestedCompany = "wirewire";
-    else if (c.includes("the wire") || c.includes("thewire")) suggestedCompany = "thewire";
-    else if (c.includes("polyxo")) suggestedCompany = "polyxo";
-  }
-  if (!suggestedCompany || !validCompanies.includes(suggestedCompany)) {
-    suggestedCompany = "wirewire";
+  // If accounts list is provided dynamically from frontend
+  let accountsToCheck = Array.isArray(accounts) && accounts.length > 0 ? accounts : [];
+
+  // Fallback to legacy static list if no accounts were sent
+  if (accountsToCheck.length === 0) {
+    accountsToCheck = [
+      { id: "thewire", name: "The Wire UG", provider: "buchhaltungsbutler", credentials: { client: credentials.thewireClient, secret: credentials.thewireSecret, key: credentials.thewireKey } },
+      { id: "wirewire", name: "wirewire GmbH", provider: "lexoffice", credentials: { apiKey: credentials.wirewireApiKey } },
+      { id: "polyxo", name: "Polyxo Studios GmbH", provider: "lexoffice", credentials: { apiKey: credentials.polyxoApiKey } },
+    ];
   }
 
-  const targetComp = companyKey && validCompanies.includes(companyKey) ? companyKey : suggestedCompany;
   const allCompanyChecksArray = await Promise.all(
-    validCompanies.map((c) => checkSingleAccountingCompany(job, c, credentials))
+    accountsToCheck.map((acc) => checkSingleModularAccount(job, acc))
   );
 
   const allCompanyChecks = {};
   allCompanyChecksArray.forEach((cRes) => {
-    allCompanyChecks[cRes.companyKey] = cRes;
+    allCompanyChecks[cRes.accountId] = cRes;
   });
 
-  const selectedData = allCompanyChecks[targetComp] || allCompanyChecks["wirewire"];
+  // Suggest best matching account based on document AI company
+  let suggestedCompany = null;
+  const docCompany = (job.result?.company || "").toLowerCase();
+  for (const acc of accountsToCheck) {
+    const accName = (acc.name || "").toLowerCase();
+    if (docCompany && (docCompany.includes(accName) || accName.includes(docCompany))) {
+      suggestedCompany = acc.id;
+      break;
+    }
+  }
+  if (!suggestedCompany && accountsToCheck.length > 0) {
+    suggestedCompany = accountsToCheck[0].id;
+  }
+
+  const targetComp = companyKey && allCompanyChecks[companyKey] ? companyKey : suggestedCompany;
+  const selectedData = allCompanyChecks[targetComp] || (accountsToCheck.length > 0 ? allCompanyChecks[accountsToCheck[0].id] : null);
 
   res.json({
     success: true,
     jobId: job.id,
-    provider: selectedData.provider,
-    providerName: selectedData.providerName,
+    provider: selectedData?.provider || "lexoffice",
+    providerName: selectedData?.providerName || "Lexoffice",
     selectedCompany: targetComp,
     suggestedCompany,
-    apiValid: selectedData.apiValid,
-    apiError: selectedData.apiError,
-    organizationName: selectedData.organizationName,
-    alreadyTransferred: selectedData.alreadyTransferred,
-    transferredInfo: selectedData.transferredInfo,
-    liveSearch: selectedData.liveSearch,
+    apiValid: selectedData?.apiValid || false,
+    apiError: selectedData?.apiError || null,
+    organizationName: selectedData?.organizationName || null,
+    alreadyTransferred: selectedData?.alreadyTransferred || false,
+    transferredInfo: selectedData?.transferredInfo || null,
+    liveSearch: selectedData?.liveSearch || { performed: false, found: false, matches: [] },
     allCompanyChecks,
     allTransfers: job.lexofficeTransfers || {},
+    accounts: accountsToCheck,
     documentDetails: {
       title: job.result?.full || job.originalName,
       documentDate: job.result?.documentDate || "-",
@@ -216,13 +291,14 @@ router.post(["/api/accounting/check", "/api/lexoffice/check"], requireAdmin, asy
 });
 
 router.post("/api/accounting/mark-synced", requireAdmin, async (req, res) => {
-  const { jobId, companyKey, fileId } = req.body;
+  const { jobId, companyKey, accountId, fileId } = req.body;
+  const targetKey = accountId || companyKey;
   const job = getJob(jobId);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden" });
 
   if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
-  const provider = companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice";
-  job.lexofficeTransfers[companyKey] = {
+  const provider = targetKey === "thewire" ? "buchhaltungsbutler" : "lexoffice";
+  job.lexofficeTransfers[targetKey] = {
     provider,
     fileId: fileId || `manual_${Date.now()}`,
     transferredAt: new Date().toISOString(),
@@ -233,23 +309,36 @@ router.post("/api/accounting/mark-synced", requireAdmin, async (req, res) => {
 });
 
 router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmin, async (req, res) => {
-  const { jobId, companyKey, force, apiKey: reqApiKey, client: reqClient, secret: reqSecret, key: reqKey, credentials = {} } = req.body;
-  const validCompanies = ["wirewire", "thewire", "polyxo"];
-  if (!validCompanies.includes(companyKey)) {
-    return res.status(400).json({ success: false, error: "Ungültige Zielfirma." });
-  }
+  const { jobId, companyKey, account, force, apiKey: reqApiKey, client: reqClient, secret: reqSecret, key: reqKey, credentials = {} } = req.body;
+  
+  const targetAccount = account || {
+    id: companyKey || "thewire",
+    name: companyKey === "thewire" ? "The Wire UG" : (companyKey === "wirewire" ? "wirewire GmbH" : "Polyxo Studios GmbH"),
+    provider: companyKey === "thewire" ? "buchhaltungsbutler" : "lexoffice",
+    credentials: {
+      apiKey: reqApiKey || (companyKey === "wirewire" ? credentials.wirewireApiKey : credentials.polyxoApiKey) || credentials.apiKey,
+      client: reqClient || credentials.thewireClient || credentials.client,
+      secret: reqSecret || credentials.thewireSecret || credentials.secret,
+      key: reqKey || credentials.thewireKey || credentials.key,
+    },
+  };
+
+  const accountId = targetAccount.id || companyKey;
+  const accountName = targetAccount.name || accountId;
+  const provider = targetAccount.provider || (accountId === "thewire" ? "buchhaltungsbutler" : "lexoffice");
+  const creds = targetAccount.credentials || {};
 
   const job = getJob(jobId);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
 
-  if (job.lexofficeTransfers && job.lexofficeTransfers[companyKey] && !force) {
-    const existing = job.lexofficeTransfers[companyKey];
+  if (job.lexofficeTransfers && job.lexofficeTransfers[accountId] && !force) {
+    const existing = job.lexofficeTransfers[accountId];
     const pName = existing.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
     return res.json({
       success: false,
       alreadyTransferred: true,
       transferredInfo: existing,
-      error: `Dokument wurde bereits am ${new Date(existing.transferredAt).toLocaleString("de-DE")} zu ${pName} (${companyKey}) übertragen.`,
+      error: `Dokument wurde bereits am ${new Date(existing.transferredAt).toLocaleString("de-DE")} zu ${pName} (${accountName}) übertragen.`,
     });
   }
 
@@ -288,15 +377,15 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
       }
     }
 
-    if (companyKey === "thewire") {
-      const client = (reqClient || credentials.thewireClient || credentials.client || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
-      const secret = (reqSecret || credentials.thewireSecret || credentials.secret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
-      const key = (reqKey || credentials.thewireKey || credentials.key || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+    if (provider === "buchhaltungsbutler") {
+      const client = (creds.client || reqClient || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+      const secret = (creds.secret || reqSecret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+      const key = (creds.key || reqKey || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
 
       if (!client || !secret || !key) {
         return res.status(400).json({
           success: false,
-          error: "BuchhaltungsButler Zugangsdaten für The Wire fehlen.",
+          error: `BuchhaltungsButler Zugangsdaten für ${accountName} fehlen.`,
         });
       }
 
@@ -317,14 +406,15 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
       }
 
       if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
-      job.lexofficeTransfers[companyKey] = {
+      job.lexofficeTransfers[accountId] = {
         provider: "buchhaltungsbutler",
         transferredAt: butlerRes.transferredAt,
         fileId: butlerRes.fileId,
         lexofficeFileId: butlerRes.fileId,
-        company: companyKey,
+        accountId,
+        company: accountName,
       };
-      job.targetCompany = companyKey;
+      job.targetCompany = accountId;
       saveJobs();
 
       return res.json({
@@ -334,17 +424,17 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
         fileId: butlerRes.fileId,
         lexofficeFileId: butlerRes.fileId,
         transferredAt: butlerRes.transferredAt,
-        company: companyKey,
+        company: accountName,
+        accountId,
       });
     } else {
-      const keyProp = companyKey === "wirewire" ? "wirewireApiKey" : "polyxoApiKey";
-      const apiKeySettingName = `LEXOFFICE_KEY_${companyKey.toUpperCase()}`;
-      const apiKey = (reqApiKey || credentials[keyProp] || credentials.apiKey || appSettings[apiKeySettingName] || process.env[apiKeySettingName] || "").trim();
+      // Lexoffice
+      const apiKey = (creds.apiKey || reqApiKey || appSettings[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] || process.env[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] || "").trim();
 
       if (!apiKey) {
         return res.status(400).json({
           success: false,
-          error: `Kein Lexoffice API-Key für ${companyKey} angegeben.`,
+          error: `Kein Lexoffice API-Key für ${accountName} angegeben.`,
         });
       }
 
@@ -375,14 +465,15 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
 
       const lexData = await lexRes.json();
       if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
-      job.lexofficeTransfers[companyKey] = {
+      job.lexofficeTransfers[accountId] = {
         provider: "lexoffice",
         transferredAt: new Date().toISOString(),
         fileId: lexData.id,
         lexofficeFileId: lexData.id,
-        company: companyKey,
+        accountId,
+        company: accountName,
       };
-      job.targetCompany = companyKey;
+      job.targetCompany = accountId;
       saveJobs();
 
       return res.json({
@@ -391,8 +482,9 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
         providerName: "Lexoffice",
         fileId: lexData.id,
         lexofficeFileId: lexData.id,
-        transferredAt: job.lexofficeTransfers[companyKey].transferredAt,
-        company: companyKey,
+        transferredAt: job.lexofficeTransfers[accountId].transferredAt,
+        company: accountName,
+        accountId,
       });
     }
   } catch (err) {
@@ -400,7 +492,7 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
   }
 });
 
-router.get("/api/accounting/voucher-preview", async (req, res) => {
+router.get("/api/accounting/voucher-preview", requireAdmin, async (req, res) => {
   try {
     const { companyKey, voucherId } = req.query;
     let apiKey = (req.query.apiKey || "").trim();
