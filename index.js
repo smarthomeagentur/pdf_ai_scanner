@@ -44,6 +44,7 @@ let firststart = true;
 
 // Store paths
 const storeFolder = path.join(process.cwd(), "store");
+const STORE_DIR = storeFolder;
 if (!fs.existsSync(storeFolder)) fs.mkdirSync(storeFolder, { recursive: true });
 
 function getOrGenerateSecret(envVal, filename, generateFn, logMsg) {
@@ -179,6 +180,15 @@ if (fs.existsSync(SETTINGS_FILE)) {
     delete loaded.CLICKUP_LIST_ID;
     Object.assign(appSettings, loaded);
   } catch (e) { }
+}
+
+// Remove any legacy mail tokens from server disk (Mail processing is 100% client-side)
+const legacyMailFile = path.join(STORE_DIR, "gmail_accounts.json");
+if (fs.existsSync(legacyMailFile)) {
+  try {
+    fs.unlinkSync(legacyMailFile);
+    console.log("[STARTUP] Altes gmail_accounts.json gelöscht (Mail-Verarbeitung ist 100% Client-Side).");
+  } catch (e) {}
 }
 
 const clickupApi = new ClickUpAPI(
@@ -446,42 +456,56 @@ app.post("/api/auth/code", requireAdmin, async (req, res) => {
       "postmessage",
     );
     const { tokens } = await oauth2Client.getToken(req.body.code);
-    const isSecondary = req.body.isSecondary === true;
 
-    let addedAccount = null;
-    try {
-      addedAccount = await gmailApi.addAccountFromTokens(tokens, keys, isSecondary);
-      console.log(`[AUTH] Google-Konto ${addedAccount.email} (${isSecondary ? "Sekundärer Posteingang" : "Hauptkonto Drive+Gmail"}) verknüpft.`);
-    } catch (accErr) {
-      console.warn("[AUTH] Konto-Verknüpfung via Gmail API:", accErr.message);
+    let existingToken = {};
+    if (fs.existsSync(TOKEN_PATH)) {
+      try {
+        existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH, "utf8"));
+      } catch (e) {}
     }
 
-    // NUR wenn es das Hauptkonto ist, wird store/token.json (für Google Drive) geschrieben
-    if (!isSecondary) {
-      let existingToken = {};
-      if (fs.existsSync(TOKEN_PATH)) {
-        try {
-          existingToken = JSON.parse(await fs.promises.readFile(TOKEN_PATH, "utf8"));
-        } catch (e) {}
-      }
-
-      const refreshToken = tokens.refresh_token || existingToken.refresh_token;
-      const payload = JSON.stringify({
-        type: "authorized_user",
-        client_id: key.client_id,
-        client_secret: key.client_secret,
-        refresh_token: refreshToken,
-      }, null, 2);
-
-      await fs.promises.writeFile(TOKEN_PATH, payload);
-      console.log("[AUTH] Google Drive Hauptkonto-Token (token.json) erfolgreich gespeichert.");
-    } else {
-      console.log("[AUTH] Sekundärer Gmail-Posteingang gespeichert. Google Drive Hauptkonto bleibt unberührt.");
+    const refreshToken = tokens.refresh_token || existingToken.refresh_token;
+    if (!refreshToken) {
+      return res.status(400).json({ error: "Kein Refresh-Token von Google erhalten. Bitte Autorisierung wiederholen." });
     }
 
-    res.json({ success: true, account: addedAccount, isSecondary });
+    const payload = JSON.stringify({
+      type: "authorized_user",
+      client_id: key.client_id,
+      client_secret: key.client_secret,
+      refresh_token: refreshToken,
+    }, null, 2);
+
+    await fs.promises.writeFile(TOKEN_PATH, payload);
+    console.log("[AUTH] Google Drive Token (token.json) mit drive.file Scope erfolgreich gespeichert.");
+
+    // Bereinige etwaige alte Mail-Tokens vom Server
+    const legacyMailFile = path.join(STORE_DIR, "gmail_accounts.json");
+    if (fs.existsSync(legacyMailFile)) {
+      try { await fs.promises.unlink(legacyMailFile); } catch (e) {}
+    }
+
+    res.json({ success: true, message: "Google Drive erfolgreich verbunden." });
   } catch (err) {
-    console.error(err);
+    console.error("[AUTH] Fehler bei Google Auth:", err);
+    res.status(500).json({ error: err.toString() });
+  }
+});
+
+// Endpoint zum sauberen Trennen und Löschen des Google Drive Tokens
+app.post("/api/auth/disconnect", requireAdmin, async (req, res) => {
+  try {
+    if (fs.existsSync(TOKEN_PATH)) {
+      await fs.promises.unlink(TOKEN_PATH);
+      console.log("[AUTH] Google Drive Token (token.json) gelöscht.");
+    }
+    const legacyMailFile = path.join(STORE_DIR, "gmail_accounts.json");
+    if (fs.existsSync(legacyMailFile)) {
+      try { await fs.promises.unlink(legacyMailFile); } catch (e) {}
+    }
+    res.json({ success: true, message: "Google Drive getrennt und Token restlos vom Server gelöscht." });
+  } catch (err) {
+    console.error("[AUTH] Fehler beim Trennen von Google Drive:", err);
     res.status(500).json({ error: err.toString() });
   }
 });
@@ -499,6 +523,57 @@ app.get("/api/drive/folders", requireAdmin, async (req, res) => {
     });
     res.json({ success: true, folders: result.data.files });
   } catch (e) {
+    res.status(500).json({ error: e.toString() });
+  }
+});
+
+app.get("/api/drive/picker-token", requireAdmin, async (req, res) => {
+  try {
+    const authClient = await driveApi.authorize();
+    const tokenRes = await authClient.getAccessToken();
+    const token = typeof tokenRes === "string" ? tokenRes : tokenRes.token;
+    res.json({ success: true, token, clientId: googleClientId || "" });
+  } catch (e) {
+    res.status(500).json({ error: e.toString() });
+  }
+});
+
+app.post("/api/drive/resolve-folder", requireAdmin, async (req, res) => {
+  try {
+    let input = (req.body.folderIdOrUrl || "").trim();
+    if (!input) return res.status(400).json({ error: "Keine Ordner-ID oder Link angegeben." });
+    const urlMatch = input.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    const folderId = urlMatch ? urlMatch[1] : input;
+
+    const drive = await driveApi.getClient();
+    const result = await drive.files.get({ fileId: folderId, fields: "id, name, mimeType" });
+    if (result.data) {
+      res.json({ success: true, folder: result.data });
+    } else {
+      res.status(404).json({ error: "Ordner nicht gefunden." });
+    }
+  } catch (e) {
+    res.status(500).json({ error: "Ordner konnte nicht geladen werden. Bitte Zugriff prüfen." });
+  }
+});
+
+app.post("/api/drive/create-folder", requireAdmin, async (req, res) => {
+  try {
+    const { name, parentId } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: "Ordnername ist erforderlich." });
+    const drive = await driveApi.getClient();
+    const fileMetadata = {
+      name: name.trim(),
+      mimeType: "application/vnd.google-apps.folder",
+      parents: parentId && parentId !== "root" ? [parentId] : undefined,
+    };
+    const file = await drive.files.create({
+      resource: fileMetadata,
+      fields: "id, name",
+    });
+    res.json({ success: true, folder: file.data });
+  } catch (e) {
+    console.error("[DRIVE] Fehler beim Erstellen des Ordners:", e);
     res.status(500).json({ error: e.toString() });
   }
 });

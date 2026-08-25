@@ -205,6 +205,28 @@ document.getElementById("auth-btn").addEventListener("click", () => {
   if (authClientCode) authClientCode.requestCode();
 });
 
+const authDisconnectBtn = document.getElementById("auth-disconnect-btn");
+if (authDisconnectBtn) {
+  authDisconnectBtn.addEventListener("click", async () => {
+    if (!confirm("Möchtest du Google Drive wirklich trennen und das Token restlos vom Server löschen?")) return;
+    try {
+      const res = await fetch("/api/auth/disconnect", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById("auth-status").innerText = "Nicht verbunden (Token gelöscht)";
+        document.getElementById("auth-btn").innerText = "Mit Google Anmelden";
+        document.getElementById("auth-btn").style.display = "inline-block";
+        authDisconnectBtn.style.display = "none";
+        document.getElementById("raw-folder-browse").disabled = true;
+        document.getElementById("ai-folder-browse").disabled = true;
+        alert(data.message || "Google Drive erfolgreich getrennt.");
+      }
+    } catch (e) {
+      alert("Fehler beim Trennen von Google Drive.");
+    }
+  });
+}
+
 async function loadFolders() {
   document.getElementById("folder-settings-container").style.display = "block";
   document.getElementById("ai-folder-settings-container").style.display = "block";
@@ -213,9 +235,10 @@ async function loadFolders() {
     const res = await fetch("/api/drive/folders?parentId=root");
     const data = await res.json();
     if (data.success) {
-      document.getElementById("auth-status").innerText = "Google Drive verbunden";
+      document.getElementById("auth-status").innerText = "Google Drive verbunden (drive.file)";
       document.getElementById("auth-btn").innerText = "Neu Verbinden";
       document.getElementById("auth-btn").style.display = "inline-block";
+      if (authDisconnectBtn) authDisconnectBtn.style.display = "inline-block";
 
       const rawBrowseBtn = document.getElementById("raw-folder-browse");
       const aiBrowseBtn = document.getElementById("ai-folder-browse");
@@ -256,9 +279,11 @@ async function loadFolders() {
       if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
     } else {
       document.getElementById("auth-status").innerText = "Nicht authentifiziert (Google Drive).";
+      if (authDisconnectBtn) authDisconnectBtn.style.display = "none";
     }
   } catch (e) {
     document.getElementById("auth-status").innerText = "Fehler beim Laden der Ordner.";
+    if (authDisconnectBtn) authDisconnectBtn.style.display = "none";
   }
 }
 
@@ -390,6 +415,131 @@ fbSelectBtn.addEventListener("click", () => {
   }
   fbModal.style.display = "none";
 });
+
+// --- Google Picker Integration ---
+async function openGooglePicker(target) {
+  try {
+    const tokenRes = await fetch("/api/drive/picker-token");
+    const tokenData = await tokenRes.json();
+    if (!tokenData.success || !tokenData.token) {
+      alert("Fehler beim Laden des Picker-Tokens. Bitte Google Drive Verbindung prüfen.");
+      return;
+    }
+
+    if (typeof gapi === "undefined" || !gapi.load) {
+      alert("Google Picker API wird noch geladen. Bitte kurz warten und erneut versuchen.");
+      return;
+    }
+
+    gapi.load("picker", () => {
+      const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+        .setIncludeFolders(true)
+        .setSelectFolderEnabled(true)
+        .setMimeTypes("application/vnd.google-apps.folder");
+
+      const picker = new google.picker.PickerBuilder()
+        .addView(view)
+        .setOAuthToken(tokenData.token)
+        .setCallback((data) => {
+          if (data[google.picker.Response.ACTION] === google.picker.Action.PICKED) {
+            const doc = data[google.picker.Response.DOCUMENTS][0];
+            const folderId = doc[google.picker.Document.ID];
+            const folderName = doc[google.picker.Document.NAME];
+            if (target === "raw") {
+              document.getElementById("raw-folder-display").value = folderName;
+              document.getElementById("raw-folder-id").value = folderId;
+            } else if (target === "ai") {
+              document.getElementById("ai-folder-display").value = folderName;
+              document.getElementById("ai-folder-id").value = folderId;
+            }
+            fbModal.style.display = "none";
+          }
+        })
+        .build();
+      picker.setVisible(true);
+    });
+  } catch (err) {
+    console.error("Google Picker Error", err);
+    alert("Fehler beim Öffnen des Google Drive Pickers.");
+  }
+}
+
+const fbGooglePickerBtn = document.getElementById("fb-google-picker-btn");
+if (fbGooglePickerBtn) {
+  fbGooglePickerBtn.addEventListener("click", () => {
+    openGooglePicker(currentBrowserTarget);
+  });
+}
+
+// Direct Apply ID / URL
+const fbDirectApplyBtn = document.getElementById("fb-direct-apply-btn");
+const fbDirectInput = document.getElementById("fb-direct-input");
+const fbDirectStatus = document.getElementById("fb-direct-status");
+if (fbDirectApplyBtn && fbDirectInput) {
+  fbDirectApplyBtn.addEventListener("click", async () => {
+    const val = fbDirectInput.value.trim();
+    if (!val) return;
+    if (fbDirectStatus) fbDirectStatus.innerText = "Prüfe Ordner...";
+    try {
+      const res = await fetch("/api/drive/resolve-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderIdOrUrl: val }),
+      });
+      const data = await res.json();
+      if (data.success && data.folder) {
+        if (currentBrowserTarget === "raw") {
+          document.getElementById("raw-folder-display").value = data.folder.name;
+          document.getElementById("raw-folder-id").value = data.folder.id;
+        } else if (currentBrowserTarget === "ai") {
+          document.getElementById("ai-folder-display").value = data.folder.name;
+          document.getElementById("ai-folder-id").value = data.folder.id;
+        }
+        if (fbDirectStatus) fbDirectStatus.innerText = `Zugewiesen: ${data.folder.name}`;
+        setTimeout(() => { fbModal.style.display = "none"; }, 400);
+      } else {
+        if (fbDirectStatus) fbDirectStatus.innerText = data.error || "Ordner konnte nicht geladen werden.";
+      }
+    } catch (e) {
+      if (fbDirectStatus) fbDirectStatus.innerText = "Fehler beim Auflösen des Ordners.";
+    }
+  });
+}
+
+// Create New Folder
+const fbNewFolderBtn = document.getElementById("fb-new-folder-btn");
+const fbNewFolderName = document.getElementById("fb-new-folder-name");
+const fbNewFolderStatus = document.getElementById("fb-new-folder-status");
+if (fbNewFolderBtn && fbNewFolderName) {
+  fbNewFolderBtn.addEventListener("click", async () => {
+    const name = fbNewFolderName.value.trim();
+    if (!name) return;
+    if (fbNewFolderStatus) fbNewFolderStatus.innerText = "Erstelle Ordner in Google Drive...";
+    try {
+      const res = await fetch("/api/drive/create-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parentId: currentParentId }),
+      });
+      const data = await res.json();
+      if (data.success && data.folder) {
+        if (currentBrowserTarget === "raw") {
+          document.getElementById("raw-folder-display").value = data.folder.name;
+          document.getElementById("raw-folder-id").value = data.folder.id;
+        } else if (currentBrowserTarget === "ai") {
+          document.getElementById("ai-folder-display").value = data.folder.name;
+          document.getElementById("ai-folder-id").value = data.folder.id;
+        }
+        if (fbNewFolderStatus) fbNewFolderStatus.innerText = `Ordner erstellt & zugewiesen: ${data.folder.name}`;
+        setTimeout(() => { fbModal.style.display = "none"; }, 400);
+      } else {
+        if (fbNewFolderStatus) fbNewFolderStatus.innerText = data.error || "Fehler beim Erstellen.";
+      }
+    } catch (e) {
+      if (fbNewFolderStatus) fbNewFolderStatus.innerText = "Fehler beim Erstellen des Ordners.";
+    }
+  });
+}
 // --- Folder Browser Logic end ---
 
 document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
