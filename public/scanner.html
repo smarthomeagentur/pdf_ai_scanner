@@ -278,10 +278,10 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI- & OpenCV-Pipeline -->
-  <script src="/scanner.js?v=20260819_25"></script>
+  <script src="/scanner.js?v=20260825_opencv_csp_v62"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Fallback & klassischen Modus -->
-  <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
+  <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.2/dist/opencv.js';" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {

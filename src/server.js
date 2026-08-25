@@ -44,6 +44,8 @@ app.use(
           "https://accounts.google.com/gsi/client",
           "https://apis.google.com",
           "https://cdn.jsdelivr.net",
+          "https://docs.opencv.org",
+          "https://*.opencv.org",
         ],
         scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: [
@@ -56,6 +58,8 @@ app.use(
         imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
         connectSrc: [
           "'self'",
+          "data:",
+          "blob:",
           "https://*.googleapis.com",
           "https://googleapis.com",
           "https://*.google.com",
@@ -67,6 +71,8 @@ app.use(
           "https://api.buchhaltungsbutler.de",
           "https://api.clickup.com",
           "https://cdn.jsdelivr.net",
+          "https://docs.opencv.org",
+          "https://*.opencv.org",
         ],
         frameSrc: ["'self'", "blob:", "https://*.google.com", "https://accounts.google.com", "https://docs.google.com", "https://drive.google.com"],
         workerSrc: ["'self'", "blob:"],

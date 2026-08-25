@@ -108,6 +108,15 @@ async function loadJobs() {
         recoveredCount++;
       }
 
+      if (job.result && job.result.documentDate) {
+        const dateCheck = validateDocumentDate(job.result.documentDate, job.uploadDate);
+        if (dateCheck.isInvalidFuture) {
+          job.result.documentDate = dateCheck.validDateStr;
+          job.result.rawDocumentDate = dateCheck.rawDateStr;
+          job.documentDate = dateCheck.validDateStr;
+        }
+      }
+
       uploadJobs[job.id] = job;
       dbWrapper.insertOrReplaceJob(job);
     }
@@ -174,8 +183,8 @@ function validateDocumentDate(docDateStr, uploadDateStr) {
   ).getTime();
 
   let parsed = null;
-  const str = String(docDateStr).trim();
-  const deMatch = str.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  const cleanStr = String(docDateStr).replace(/\(.*?\)/g, "").trim();
+  const deMatch = cleanStr.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
   if (deMatch) {
     parsed = new Date(
       parseInt(deMatch[3], 10),
@@ -183,7 +192,7 @@ function validateDocumentDate(docDateStr, uploadDateStr) {
       parseInt(deMatch[1], 10)
     );
   } else {
-    const isoMatch = str.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+    const isoMatch = cleanStr.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
     if (isoMatch) {
       parsed = new Date(
         parseInt(isoMatch[1], 10),
@@ -200,7 +209,7 @@ function validateDocumentDate(docDateStr, uploadDateStr) {
       const year = uploadDate.getFullYear();
       const fallbackFormatted = `${day}.${month}.${year}`;
       return {
-        validDateStr: `${fallbackFormatted} (Dokumentendatum ungültig)`,
+        validDateStr: fallbackFormatted,
         rawDateStr: docDateStr,
         isInvalidFuture: true,
       };

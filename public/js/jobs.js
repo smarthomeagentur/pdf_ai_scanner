@@ -245,7 +245,7 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     const webViewLink = res.webViewLink || job.webViewLink || (job.filePath ? `/api/jobs/${job.id}/file` : "#");
     const thumbUrl = `/api/thumbnail/${job.id}?v=${job.aiPipelineCompletedAt || job.uploadDate || 1}`;
     const previewHtml = `
-      <a href="${webViewLink}" data-job-id="${job.id}" class="pdf-preview-container" title="Beleg öffnen">
+      <a href="javascript:void(0)" onclick="openDocPreview('${job.id}'); return false;" data-job-id="${job.id}" class="pdf-preview-container" title="Beleg öffnen">
         <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
       </a>`;
 
@@ -524,11 +524,36 @@ function filterAndSortJobs(jobs) {
     });
   }
 
+function parseDocTimestamp(dateStr, maxUploadDateStr) {
+  if (!dateStr || dateStr === "unknown" || dateStr === "none" || dateStr === "-") return null;
+  const clean = String(dateStr).replace(/\(.*?\)/g, "").trim();
+  let d = null;
+  const deMatch = clean.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+  if (deMatch) {
+    d = new Date(parseInt(deMatch[3], 10), parseInt(deMatch[2], 10) - 1, parseInt(deMatch[1], 10));
+  } else {
+    const isoMatch = clean.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+    if (isoMatch) {
+      d = new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
+    }
+  }
+  if (!d || isNaN(d.getTime())) return null;
+
+  // Document date must never exceed uploadDate (or now)
+  const maxMs = maxUploadDateStr ? new Date(maxUploadDateStr).getTime() : Date.now();
+  const endOfDayMax = maxMs + (24 * 60 * 60 * 1000);
+  if (d.getTime() > endOfDayMax) {
+    return maxMs;
+  }
+  return d.getTime();
+}
+
   // 5. Date Filter
   if (state.dateFilter !== "alle") {
     list = list.filter((j) => {
-      const dateVal = j.result?.documentDate ? new Date(j.result.documentDate) : (j.uploadDate ? new Date(j.uploadDate) : null);
-      if (!dateVal || isNaN(dateVal.getTime())) return true;
+      const ts = parseDocTimestamp(j.result?.documentDate, j.uploadDate) || (j.uploadDate ? new Date(j.uploadDate).getTime() : null);
+      if (!ts) return true;
+      const dateVal = new Date(ts);
       const now = new Date();
       const diffDays = (now - dateVal) / (1000 * 60 * 60 * 24);
       const year = dateVal.getFullYear();
@@ -545,7 +570,7 @@ function filterAndSortJobs(jobs) {
 
   // 6. Sorting
   list.sort((a, b) => {
-    const getDate = (j) => (j.result?.documentDate ? new Date(j.result.documentDate).getTime() : (j.uploadDate ? new Date(j.uploadDate).getTime() : 0));
+    const getDate = (j) => parseDocTimestamp(j.result?.documentDate, j.uploadDate) || (j.uploadDate ? new Date(j.uploadDate).getTime() : 0);
     const getUploadDate = (j) => (j.uploadDate ? new Date(j.uploadDate).getTime() : 0);
     const getAmt = (j) => j.result?.invoiceAmmount || j.invoiceAmmount || 0;
     const getComp = (j) => (j.result?.company || j.targetCompany || "").toLowerCase();
@@ -618,6 +643,7 @@ function renderPagination(totalItems, totalPages) {
 }
 
 export function openDocPreview(jobId) {
+  debugLog("PREVIEW", "openDocPreview called for jobId:", jobId);
   const modal = document.getElementById("doc-preview-modal");
   const iframe = document.getElementById("doc-preview-iframe");
   const title = document.getElementById("doc-preview-title");
@@ -626,30 +652,34 @@ export function openDocPreview(jobId) {
   const extBtn = document.getElementById("doc-preview-external-btn");
   const loading = document.getElementById("doc-preview-loading");
 
-  if (!modal || !iframe) return;
+  if (!modal || !iframe) {
+    console.error("[PREVIEW] Modal element or iframe not found in DOM!");
+    return;
+  }
 
-  const job = (state.jobs && state.jobs.find((j) => String(j.id) === String(jobId)));
-  if (!job) return;
+  let job = state.jobs && state.jobs.find((j) => String(j.id) === String(jobId) || String(j.rawDriveId) === String(jobId) || String(j.driveFileId) === String(jobId));
+  if (!job && state.driveOnlySearchResults) {
+    job = state.driveOnlySearchResults.find((j) => String(j.id) === String(jobId) || String(j.rawDriveId) === String(jobId));
+  }
 
-  const res = job.result || {};
-  const filename = res.full || job.originalName || job.name || "Dokument.pdf";
-  const docDate = res.documentDate || formatDateDisplay(job.uploadDate || job.date);
-  const company = res.company || job.targetCompany || "";
+  const res = job?.result || {};
+  const filename = res.full || job?.originalName || job?.name || `Dokument_${jobId}.pdf`;
+  const docDate = res.documentDate || (job?.uploadDate ? formatDateDisplay(job.uploadDate) : "");
+  const company = res.company || job?.targetCompany || "";
   const invoiceNum = res.invoiceNumber && res.invoiceNumber !== "none" ? ` • Rechnungs-Nr: ${res.invoiceNumber}` : "";
   const amountStr = res.invoiceAmmount ? ` • Betrag: ${formatCurrency(res.invoiceAmmount)}` : "";
 
   if (title) title.innerText = filename;
   if (subtitle) subtitle.innerText = `${docDate}${company ? ` • ${company}` : ""}${invoiceNum}${amountStr}`;
 
-  const isDriveOnly = job.isDriveOnly;
-  const rawDriveId = String(job.id).replace(/^gdrive_/, "");
-  const fileUrl = `/api/jobs/${job.id}/file`;
-  const downloadUrl = `/api/jobs/${job.id}/file?download=1`;
-  const extUrl = res.webViewLink || job.webViewLink || (isDriveOnly ? `https://drive.google.com/file/d/${rawDriveId}/view` : fileUrl);
+  const isDriveOnly = job?.isDriveOnly || String(jobId).startsWith("gdrive_");
+  const rawDriveId = String(job?.rawDriveId || jobId).replace(/^gdrive_/, "");
+  const fileUrl = `/api/jobs/${jobId}/file`;
+  const downloadUrl = `/api/jobs/${jobId}/file?download=1`;
+  const extUrl = res.webViewLink || job?.webViewLink || (isDriveOnly ? `https://drive.google.com/file/d/${rawDriveId}/view` : fileUrl);
 
-  // Use embeddable Google Drive preview URL if drive-only
   let previewSrc = fileUrl;
-  if (isDriveOnly && rawDriveId) {
+  if (isDriveOnly && rawDriveId && !job?.filePath) {
     previewSrc = `https://drive.google.com/file/d/${rawDriveId}/preview`;
   }
 
@@ -661,17 +691,16 @@ export function openDocPreview(jobId) {
     extBtn.href = extUrl;
   }
 
-  if (loading) loading.style.setProperty("display", "block", "important");
   modal.style.setProperty("display", "flex", "important");
+  if (loading) loading.style.setProperty("display", "block", "important");
 
   iframe.onload = () => {
     if (loading) loading.style.setProperty("display", "none", "important");
   };
 
-  // Safety timeout in case mobile browser does not fire iframe onload for PDF
   setTimeout(() => {
     if (loading) loading.style.setProperty("display", "none", "important");
-  }, 2500);
+  }, 2000);
 
   iframe.src = previewSrc;
 }
@@ -686,13 +715,15 @@ export function closeDocPreview() {
 export function initJobEventDelegation() {
   document.addEventListener("click", async (e) => {
     // 0. Thumbnail Preview Click (Mobile & Desktop)
-    const previewContainer = e.target.closest(".pdf-preview-container");
+    const previewContainer = e.target.closest(".pdf-preview-container, .pdf-preview-img, .btn-open-doc-preview");
     if (previewContainer) {
       e.preventDefault();
       e.stopPropagation();
-      const jobId = previewContainer.getAttribute("data-job-id");
-      if (jobId) openDocPreview(jobId);
-      return;
+      const jobId = previewContainer.getAttribute("data-job-id") || previewContainer.closest("[data-job-id]")?.getAttribute("data-job-id");
+      if (jobId) {
+        openDocPreview(jobId);
+        return;
+      }
     }
 
     // 0b. Document Preview Modal Close Button or Overlay Click

@@ -100,8 +100,8 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         warped = orig
     else:
         pts = np.array([float(x) for x in coords_str.split(',')]).reshape(4, 2)
-        eval_warped = auto_exposure(four_point_transform(orig, pts))
-        warped = orig
+        warped = four_point_transform(orig, pts)
+        eval_warped = auto_exposure(warped.copy())
 
     warped = auto_exposure(warped)
 
@@ -197,10 +197,35 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
     if len(ocr_image.shape) == 3 and ocr_image.shape[2] == 3:
         ocr_image = cv2.cvtColor(ocr_image, cv2.COLOR_BGR2RGB)
 
-    custom_config = r'--oem 1 --psm 3 -c preserve_interword_spaces=1'
-    pdf_bytes = pytesseract.image_to_pdf_or_hocr(ocr_image, extension='pdf', lang='deu+eng', config=custom_config)
-    with open(output_pdf_path, 'wb') as f:
-        f.write(pdf_bytes)
+    pdf_created = False
+    for test_lang in ['deu+eng', 'deu', 'eng', None]:
+        try:
+            custom_config = r'--oem 1 --psm 3 -c preserve_interword_spaces=1'
+            if test_lang:
+                pdf_bytes = pytesseract.image_to_pdf_or_hocr(ocr_image, extension='pdf', lang=test_lang, config=custom_config)
+            else:
+                pdf_bytes = pytesseract.image_to_pdf_or_hocr(ocr_image, extension='pdf', config=custom_config)
+            with open(output_pdf_path, 'wb') as f:
+                f.write(pdf_bytes)
+            pdf_created = True
+            break
+        except Exception as t_err:
+            continue
+
+    if not pdf_created:
+        try:
+            from PIL import Image
+            if len(processed.shape) == 2:
+                pil_img = Image.fromarray(processed)
+            elif processed.shape[2] == 3:
+                pil_img = Image.fromarray(cv2.cvtColor(processed, cv2.COLOR_BGR2RGB))
+            else:
+                pil_img = Image.fromarray(processed)
+            pil_img.save(output_pdf_path, "PDF", resolution=150.0)
+            pdf_created = True
+        except Exception as pil_err:
+            print(f"[SCANNER] Kritischer Fehler bei PDF-Erstellung: {pil_err}", file=sys.stderr)
+            sys.exit(1)
 
     output_jpg_path = output_pdf_path.replace('.pdf', '.jpg')
     preview_img = cv2.resize(processed, (400, int(400 * (processed.shape[0] / processed.shape[1]))))
