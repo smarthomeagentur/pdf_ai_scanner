@@ -68,7 +68,10 @@ router.get("/api/drive/sync-preview", requireAdmin, async (req, res) => {
     }
 
     const drive = await driveApi.getClient();
-    let folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+    const rawFld = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID || "";
+    const parenMatch = rawFld.match(/\(([a-zA-Z0-9_-]{10,})\)$/);
+    let folderId = parenMatch ? parenMatch[1] : rawFld.trim();
+
     if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
       folderId = await driveApi.findFolderId(folderId);
     }

@@ -59,36 +59,64 @@ export function formatCurrency(amount) {
 }
 
 /**
- * Shows a toast message at the bottom of the screen.
+ * Debounce helper for input search.
  */
-export function showToast(message, type = "info", duration = 3500) {
-  const container = document.getElementById("toast-container") || createToastContainer();
-  const toast = document.createElement("div");
-  toast.className = `toast-item toast-${type}`;
-  toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
-  container.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.add("fade-out");
-    setTimeout(() => toast.remove(), 300);
-  }, duration);
-}
-
-function createToastContainer() {
-  const cont = document.createElement("div");
-  cont.id = "toast-container";
-  cont.className = "toast-container";
-  document.body.appendChild(cont);
-  return cont;
+export function debounce(fn, delay = 300) {
+  let timeout;
+  return (...args) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => fn(...args), delay);
+  };
 }
 
 /**
- * Standard debounce utility.
+ * Displays user toasts/notifications.
  */
-export function debounce(fn, delay = 300) {
-  let timer = null;
-  return function (...args) {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
-  };
+export function showToast(message, type = "info") {
+  const toastContainer = document.getElementById("toast-container");
+  if (!toastContainer) {
+    console.log(`[TOAST:${type}] ${message}`);
+    return;
+  }
+
+  const toast = document.createElement("div");
+  toast.className = `alert alert-${type === "error" ? "danger" : type} shadow-sm`;
+  toast.innerText = message;
+  toast.style.margin = "8px 0";
+  toastContainer.appendChild(toast);
+
+  setTimeout(() => {
+    toast.remove();
+  }, 4000);
+}
+
+/**
+ * Extracts a clean Google Drive folder ID from a string that might contain name + ID or a URL.
+ */
+export function extractCleanFolderId(val) {
+  if (!val || typeof val !== "string") return "";
+  const trimmed = val.trim();
+  const parenMatch = trimmed.match(/\(([a-zA-Z0-9_-]{10,})\)$/);
+  if (parenMatch) return parenMatch[1];
+  const urlMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]{10,})/);
+  if (urlMatch) return urlMatch[1];
+  return trimmed;
+}
+
+/**
+ * Configurable Debug Logger
+ */
+export function isDebugEnabled() {
+  const val = localStorage.getItem("DEBUG_LOGS");
+  return val === null || val === "true"; // Default to enabled for easy troubleshooting
+}
+
+export function setDebugEnabled(enabled) {
+  localStorage.setItem("DEBUG_LOGS", enabled ? "true" : "false");
+}
+
+export function debugLog(moduleName, ...args) {
+  if (isDebugEnabled()) {
+    console.log(`%c[DEBUG:${moduleName}]`, "color: #0284c7; font-weight: bold; background: #e0f2fe; padding: 2px 6px; border-radius: 4px;", ...args);
+  }
 }

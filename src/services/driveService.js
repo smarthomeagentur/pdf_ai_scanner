@@ -41,6 +41,8 @@ async function getPickerToken() {
 async function resolveFolder(folderIdOrUrl) {
   let input = (folderIdOrUrl || "").trim();
   if (!input) throw new Error("Keine Ordner-ID oder Link angegeben.");
+  const parenMatch = input.match(/\(([a-zA-Z0-9_-]{10,})\)$/);
+  if (parenMatch) input = parenMatch[1];
   const urlMatch = input.match(/\/folders\/([a-zA-Z0-9_-]+)/);
   const folderId = urlMatch ? urlMatch[1] : input;
 

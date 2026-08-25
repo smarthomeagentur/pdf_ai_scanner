@@ -1,7 +1,7 @@
 /**
- * Settings Modal & Zero-Trust Secrets Management
+ * Settings Modal & Zero-Trust Secrets Management with Debug Logging
  */
-import { showToast } from "./utils.js";
+import { showToast, debugLog, extractCleanFolderId, isDebugEnabled, setDebugEnabled } from "./utils.js";
 import { apiRequest } from "./api.js";
 import { STORAGE_KEYS, getClientSecret, setClientSecret, state } from "./state.js";
 import { openGooglePicker } from "./drivePicker.js";
@@ -10,6 +10,7 @@ let googleClientId = null;
 let authClientCode = null;
 
 export async function openSettingsModal() {
+  debugLog("SETTINGS", "Opening Settings Modal...");
   const modalEl = document.getElementById("settings-modal");
   if (!modalEl) return;
 
@@ -63,6 +64,7 @@ export async function openSettingsModal() {
   // Fetch current settings from backend
   try {
     const serverSettings = await apiRequest("/api/settings");
+    debugLog("SETTINGS", "Server settings loaded:", serverSettings);
     populateSettingsForm(serverSettings);
   } catch (err) {
     console.warn("Could not fetch server settings:", err.message);
@@ -121,14 +123,17 @@ function populateSettingsForm(settings = {}) {
 
   const filterPrivCb = document.getElementById("clickup-filter-private");
   if (filterPrivCb) filterPrivCb.checked = settings.CLICKUP_FILTER_PRIVATE !== false;
+
+  const debugCb = document.getElementById("debug-logs-checkbox");
+  if (debugCb) debugCb.checked = isDebugEnabled();
 }
 
 export async function saveAllSettings() {
   try {
     const getVal = (id) => document.getElementById(id)?.value?.trim() || "";
 
-    const rawFolder = getVal("raw-folder-id") || getVal("raw-folder-display");
-    const aiFolder = getVal("ai-folder-id") || getVal("ai-folder-display");
+    const rawFolder = extractCleanFolderId(getVal("raw-folder-id") || getVal("raw-folder-display"));
+    const aiFolder = extractCleanFolderId(getVal("ai-folder-id") || getVal("ai-folder-display"));
     const categories = getVal("ai-categories-input");
     const company = getVal("ai-company-input");
     const monitorDrive = document.getElementById("monitor-drive-checkbox")?.checked || false;
@@ -136,6 +141,18 @@ export async function saveAllSettings() {
     const scanQuery = getVal("gmail-scan-query-input") || "in:inbox filename:pdf";
     const autoTask = document.getElementById("clickup-auto-task")?.checked !== false;
     const filterPrivate = document.getElementById("clickup-filter-private")?.checked !== false;
+    const debugEnabled = document.getElementById("debug-logs-checkbox")?.checked !== false;
+
+    debugLog("SETTINGS", "Saving settings to server...", {
+      rawFolder,
+      aiFolder,
+      company,
+      categories,
+      monitorDrive,
+      autoArchive,
+      scanQuery,
+      debugEnabled,
+    });
 
     // 1. Save server settings
     await apiRequest("/api/settings", {
@@ -153,7 +170,7 @@ export async function saveAllSettings() {
       }),
     });
 
-    // 2. Save client secrets in localStorage
+    // 2. Save client secrets & debug state in localStorage
     setClientSecret(STORAGE_KEYS.LEXOFFICE_WIREWIRE, getVal("lexoffice-key-wirewire"));
     setClientSecret(STORAGE_KEYS.LEXOFFICE_POLYXO, getVal("lexoffice-key-polyxo"));
     setClientSecret(STORAGE_KEYS.BUTTLER_CLIENT, getVal("butler-key-thewire-client"));
@@ -161,11 +178,13 @@ export async function saveAllSettings() {
     setClientSecret(STORAGE_KEYS.BUTTLER_KEY, getVal("butler-key-thewire-key"));
     setClientSecret(STORAGE_KEYS.CLICKUP_API_KEY, getVal("clickup-api-key"));
     setClientSecret(STORAGE_KEYS.CLICKUP_LIST_ID, getVal("clickup-list-id"));
+    setDebugEnabled(debugEnabled);
 
     showToast("Einstellungen erfolgreich gespeichert!", "success");
     const modal = document.getElementById("settings-modal");
     if (modal) modal.style.display = "none";
   } catch (err) {
+    debugLog("SETTINGS", "Failed to save settings:", err);
     showToast(`Fehler beim Speichern: ${err.message}`, "error");
   }
 }
@@ -179,6 +198,7 @@ async function initDriveAuthSection() {
 
   try {
     const authStatus = await apiRequest("/api/auth/token-status");
+    debugLog("SETTINGS", "Drive auth token status:", authStatus);
     if (authStatus.isConnected) {
       if (statusEl) statusEl.innerText = "Verbunden";
       if (authBtn) authBtn.style.display = "none";

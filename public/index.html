@@ -839,6 +839,19 @@
 
           <div
             class="setting-group"
+            style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;"
+          >
+            <label><strong>Diagnose & Entwickler-Optionen:</strong></label>
+            <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="debug-logs-checkbox" checked style="width: 18px; height: 18px;" />
+              <label for="debug-logs-checkbox" style="margin: 0; font-weight: normal; font-size: 13.5px; cursor: pointer;">
+                Ausführliche Debug-Logs in der Browser-Konsole aktivieren
+              </label>
+            </div>
+          </div>
+
+          <div
+            class="setting-group"
             style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px"
           >
             <label>Warteschlange & Bereinigung:</label>
@@ -1308,7 +1321,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260825_picker_origin_v24"></script>
+      <script type="module" src="/js/app.js?v=20260825_sync_debug_v25"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

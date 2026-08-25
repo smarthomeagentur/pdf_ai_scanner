@@ -10,7 +10,7 @@ import { initGmailGIS, requestGmailAuth, loadInboxData } from "./gmailScanner.js
 import { openSettingsModal, saveAllSettings, initSettingsEvents } from "./settings.js";
 import { openAccountingModal } from "./accounting.js";
 import { transferJobToClickUp } from "./clickup.js";
-import { openDriveSyncModal } from "./driveSync.js";
+import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
@@ -227,6 +227,7 @@ function initTabSwitching() {
 // Bootstrapping
 window.addEventListener("DOMContentLoaded", async () => {
   initSettingsEvents();
+  initDriveSyncEvents();
   initGooglePickerApi();
   initDeepSearch();
   initUploadHandlers();

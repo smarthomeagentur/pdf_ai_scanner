@@ -1,24 +1,36 @@
 /**
- * Google Drive Picker API Integration with Z-Index management
+ * Google Drive Picker API Integration with Z-Index management & Debug Logging
  */
 import { apiRequest } from "./api.js";
-import { showToast } from "./utils.js";
+import { showToast, debugLog, extractCleanFolderId } from "./utils.js";
 
 export function initGooglePickerApi() {
+  debugLog("PICKER", "Initializing Google Picker API listener...");
   if (window.gapi && window.gapi.load) {
-    window.gapi.load("picker", () => {});
+    window.gapi.load("picker", () => {
+      debugLog("PICKER", "window.gapi.load('picker') completed successfully.");
+    });
   } else {
     window.addEventListener("load", () => {
       if (window.gapi && window.gapi.load) {
-        window.gapi.load("picker", () => {});
+        window.gapi.load("picker", () => {
+          debugLog("PICKER", "window.gapi.load('picker') completed after window load.");
+        });
       }
     });
   }
 }
 
 export async function openGooglePicker(target = "raw") {
+  debugLog("PICKER", `openGooglePicker invoked for target: '${target}'`);
   try {
     const tokenData = await apiRequest("/api/drive/picker-token");
+    debugLog("PICKER", "Received picker token payload:", {
+      hasToken: !!tokenData?.token,
+      clientId: tokenData?.clientId,
+      success: tokenData?.success,
+    });
+
     if (!tokenData.success || !tokenData.token) {
       alert(tokenData.error || "Fehler beim Laden des Picker-Tokens. Bitte Google Drive Verbindung prüfen.");
       return;
@@ -26,6 +38,7 @@ export async function openGooglePicker(target = "raw") {
 
     function createAndShowPicker() {
       try {
+        debugLog("PICKER", "Constructing DocsView and PickerBuilder...");
         const view = new window.google.picker.DocsView(window.google.picker.ViewId.FOLDERS)
           .setIncludeFolders(true)
           .setSelectFolderEnabled(true);
@@ -43,10 +56,21 @@ export async function openGooglePicker(target = "raw") {
 
         const picker = builder
           .setCallback((data) => {
-            if (data[window.google.picker.Response.ACTION] === window.google.picker.Action.PICKED) {
-              const doc = data[window.google.picker.Response.DOCUMENTS][0];
-              const folderId = doc[window.google.picker.Document.ID];
-              const folderName = doc[window.google.picker.Document.NAME];
+            debugLog("PICKER", "Picker Callback received event:", data);
+            const action = data?.action || data?.[window.google?.picker?.Response?.ACTION];
+
+            if (action === "picked" || action === window.google?.picker?.Action?.PICKED) {
+              const docs = data.docs || data[window.google.picker.Response.DOCUMENTS] || [];
+              const doc = docs[0] || {};
+              const folderId = doc.id || doc[window.google.picker.Document.ID];
+              const folderName = doc.name || doc[window.google.picker.Document.NAME] || "Google Drive Ordner";
+
+              debugLog("PICKER", `Picked Folder: Name='${folderName}', ID='${folderId}' for target='${target}'`);
+
+              if (!folderId) {
+                console.error("[PICKER] Could not resolve folderId from doc:", doc);
+                return;
+              }
 
               if (target === "raw" || target === "raw-folder-display") {
                 const disp = document.getElementById("raw-folder-display");
@@ -59,12 +83,16 @@ export async function openGooglePicker(target = "raw") {
                 if (disp) disp.value = `${folderName} (${folderId})`;
                 if (idEl) idEl.value = folderId;
               }
+
               showToast(`Ordner ausgewählt: ${folderName}`, "success");
+            } else if (action === "cancel" || action === window.google?.picker?.Action?.CANCEL) {
+              debugLog("PICKER", "User cancelled folder selection dialog.");
             }
           })
           .build();
 
         picker.setVisible(true);
+        debugLog("PICKER", "Picker visibility set to true.");
 
         // Force picker dialog elements to top z-index above settings modal
         const fixPickerZIndex = () => {
@@ -89,6 +117,7 @@ export async function openGooglePicker(target = "raw") {
     if (window.google && window.google.picker) {
       createAndShowPicker();
     } else if (window.gapi && window.gapi.load) {
+      debugLog("PICKER", "Loading 'picker' library dynamically...");
       window.gapi.load("picker", { callback: createAndShowPicker });
     } else {
       alert("Google API-Bibliothek wird geladen. Bitte in wenigen Sekunden erneut versuchen.");
