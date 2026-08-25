@@ -10,9 +10,14 @@ function getDatabase() {
 
   db = new Database(DB_FILE);
 
-  // Performance Pragmas (WAL mode for concurrent fast reads & writes)
-  db.pragma("journal_mode = WAL");
+  // Performance & Resilience Pragmas (optimized for Docker / Coolify volumes)
+  try {
+    db.pragma("journal_mode = WAL");
+  } catch (walErr) {
+    db.pragma("journal_mode = DELETE");
+  }
   db.pragma("synchronous = NORMAL");
+  db.pragma("busy_timeout = 5000");
   db.pragma("temp_store = MEMORY");
 
   // Create tables

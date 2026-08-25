@@ -27,6 +27,9 @@ const { uploadLimiter } = require("./middleware/rateLimiters");
 
 const app = express();
 
+// Enable reverse proxy support (Coolify / Traefik / Caddy)
+app.set("trust proxy", 1);
+
 // HTTP Security Headers
 app.use(
   helmet({

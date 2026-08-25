@@ -11,3 +11,5 @@ downloads/
 public/vendor/
 # Sample scanner test images are not needed in production
 public/samples-scanner/
+# SQLite DB & Locks
+store/database.sqlite*
