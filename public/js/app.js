@@ -1,17 +1,17 @@
 /**
  * Main Frontend Coordinator & Bootstrapping
  */
-import { apiRequest } from "./api.js?v=20260825_v61";
-import { state } from "./state.js?v=20260825_v61";
-import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260825_v61";
-import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260825_v61";
-import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260825_v61";
-import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260825_v61";
-import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260825_v61";
-import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260825_v61";
-import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260825_v61";
-import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260825_v61";
-import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview } from "./jobs.js?v=20260825_v61";
+import { apiRequest } from "./api.js?v=20260825_v64";
+import { state } from "./state.js?v=20260825_v64";
+import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260825_v64";
+import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260825_v64";
+import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260825_v64";
+import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260825_v64";
+import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260825_v64";
+import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260825_v64";
+import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260825_v64";
+import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260825_v64";
+import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview, ensureAdminAuth } from "./jobs.js?v=20260825_v64";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
@@ -27,12 +27,15 @@ window.loadInboxData = loadInboxData;
 window.loadRechnungenView = loadRechnungenView;
 window.openDocPreview = openDocPreview;
 window.closeDocPreview = closeDocPreview;
+window.renderJobsList = renderJobsList;
+window.ensureAdminAuth = ensureAdminAuth;
 
 window.retryJob = async (jobId) => {
   try {
     const res = await apiRequest(`/api/jobs/${jobId}/retry`, { method: "POST" });
     if (res.success) {
       showToast("Verarbeitung erneut gestartet.", "info");
+      refreshStatus();
     } else {
       showToast(res.error || "Fehler beim erneuten Starten.", "error");
     }
@@ -151,15 +154,10 @@ function initTabSwitching() {
 
   uploadTab?.addEventListener("click", () => switchTab(uploadTab, viewUpload));
   rechnungenTab?.addEventListener("click", () => {
-    if (!state.isAdmin) {
-      openAdminLoginModal(() => {
-        switchTab(rechnungenTab, viewRechnungen);
-        loadRechnungenView();
-      });
-      return;
-    }
-    switchTab(rechnungenTab, viewRechnungen);
-    loadRechnungenView();
+    ensureAdminAuth(() => {
+      switchTab(rechnungenTab, viewRechnungen);
+      loadRechnungenView();
+    });
   });
   inboxTab?.addEventListener("click", () => {
     switchTab(inboxTab, viewInbox);
@@ -181,10 +179,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   initUploadHandlers();
   initTabSwitching();
 
-  // Load config & client ID for GIS
+  // Load config & verify session
   try {
-    const config = await apiRequest("/api/config");
-    state.isAdmin = !!config.isAdmin;
+    const [config, adminCheck] = await Promise.all([
+      apiRequest("/api/config").catch(() => ({})),
+      apiRequest("/api/admin-check").catch(() => ({})),
+    ]);
+    state.isAdmin = !!(config.isAdmin || adminCheck.isAdmin);
 
     const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
     const navInboxTab = document.getElementById("nav-inbox-tab");

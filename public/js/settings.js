@@ -140,6 +140,10 @@ async function handleAdminLoginSubmit(e) {
       closeAdminLoginModal();
       showToast("Admin-Login erfolgreich!", "success");
 
+      if (window.renderJobsList) {
+        window.renderJobsList(state.jobs, true);
+      }
+
       if (typeof pendingAdminAuthCallback === "function") {
         const cb = pendingAdminAuthCallback;
         pendingAdminAuthCallback = null;
