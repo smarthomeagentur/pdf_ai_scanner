@@ -17,6 +17,160 @@ import { openGooglePicker } from "./drivePicker.js";
 let googleClientId = null;
 let authClientCode = null;
 
+let adminLockoutTimer = null;
+let adminRemainingSeconds = 0;
+let pendingAdminAuthCallback = null;
+
+export function openAdminLoginModal(onSuccess = null) {
+  const modal = document.getElementById("admin-login-modal");
+  const pwdInput = document.getElementById("admin-login-password");
+  const statusBox = document.getElementById("admin-login-status");
+  const submitBtn = document.getElementById("admin-login-submit-btn");
+
+  if (!modal) return;
+  pendingAdminAuthCallback = onSuccess;
+
+  if (pwdInput && !adminLockoutTimer) {
+    pwdInput.value = "";
+    pwdInput.disabled = false;
+  }
+  if (statusBox && !adminLockoutTimer) {
+    statusBox.innerHTML = "";
+  }
+  if (submitBtn && !adminLockoutTimer) {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 16px;">lock_open</span> <span>Entsperren</span>`;
+  }
+
+  modal.style.display = "flex";
+  if (pwdInput && !adminLockoutTimer) {
+    setTimeout(() => pwdInput.focus(), 100);
+  }
+}
+
+export function closeAdminLoginModal() {
+  const modal = document.getElementById("admin-login-modal");
+  if (modal) modal.style.display = "none";
+  pendingAdminAuthCallback = null;
+}
+
+function startAdminLockoutCountdown(seconds = 60) {
+  const submitBtn = document.getElementById("admin-login-submit-btn");
+  const pwdInput = document.getElementById("admin-login-password");
+  const statusBox = document.getElementById("admin-login-status");
+
+  if (adminLockoutTimer) clearInterval(adminLockoutTimer);
+  adminRemainingSeconds = seconds;
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (pwdInput) {
+    pwdInput.disabled = true;
+    pwdInput.blur();
+  }
+
+  const updateDisplay = () => {
+    if (adminRemainingSeconds <= 0) {
+      clearInterval(adminLockoutTimer);
+      adminLockoutTimer = null;
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 16px;">lock_open</span> <span>Entsperren</span>`;
+      }
+      if (pwdInput) {
+        pwdInput.disabled = false;
+        pwdInput.focus();
+      }
+      if (statusBox) statusBox.innerHTML = "";
+      return;
+    }
+
+    if (statusBox) {
+      statusBox.innerHTML = `
+        <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-center gap-1">
+          <span class="material-symbols-outlined" style="font-size: 18px;">timer</span>
+          <span>Zu viele Fehlversuche. Bitte warte noch <strong>${adminRemainingSeconds}s</strong>...</span>
+        </div>
+      `;
+    }
+    adminRemainingSeconds--;
+  };
+
+  updateDisplay();
+  adminLockoutTimer = setInterval(updateDisplay, 1000);
+}
+
+async function handleAdminLoginSubmit(e) {
+  if (e) e.preventDefault();
+  if (adminLockoutTimer) return;
+
+  const pwdInput = document.getElementById("admin-login-password");
+  const statusBox = document.getElementById("admin-login-status");
+  const submitBtn = document.getElementById("admin-login-submit-btn");
+  const pw = pwdInput?.value?.trim() || "";
+
+  if (!pw) {
+    if (statusBox) statusBox.innerHTML = `<div class="text-danger">Bitte Passwort eingeben.</div>`;
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Prüfe...</span>`;
+  }
+  if (statusBox) statusBox.innerHTML = "";
+
+  try {
+    const loginRes = await fetch("/api/admin-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pw }),
+    });
+    const loginData = await loginRes.json().catch(() => ({}));
+
+    if (loginRes.status === 429) {
+      startAdminLockoutCountdown(loginData.retryAfter || 60);
+      return;
+    }
+
+    if (loginData.success) {
+      state.isAdmin = true;
+      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+
+      closeAdminLoginModal();
+      showToast("Admin-Login erfolgreich!", "success");
+
+      if (typeof pendingAdminAuthCallback === "function") {
+        const cb = pendingAdminAuthCallback;
+        pendingAdminAuthCallback = null;
+        cb();
+      }
+    } else {
+      if (statusBox) {
+        statusBox.innerHTML = `
+          <div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle d-flex align-items-center gap-1">
+            <span class="material-symbols-outlined" style="font-size: 16px;">error</span>
+            <span>${escapeHtml(loginData.error || "Falsches Admin-Passwort.")}</span>
+          </div>
+        `;
+      }
+      if (pwdInput) {
+        pwdInput.value = "";
+        pwdInput.focus();
+      }
+    }
+  } catch (err) {
+    if (statusBox) {
+      statusBox.innerHTML = `<div class="text-danger">Verbindungsfehler: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (!adminLockoutTimer && submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 16px;">lock_open</span> <span>Entsperren</span>`;
+    }
+  }
+}
+
 export async function openSettingsModal() {
   debugLog("SETTINGS", "Opening Settings Modal...");
   const modalEl = document.getElementById("settings-modal");
@@ -27,21 +181,8 @@ export async function openSettingsModal() {
     const adminCheckRes = await fetch("/api/admin-check");
     const checkData = await adminCheckRes.json().catch(() => ({}));
     if (!checkData.isAdmin) {
-      const pw = prompt("Bitte Admin-Passwort eingeben, um die Einstellungen zu öffnen:");
-      if (!pw) return;
-      const loginRes = await fetch("/api/admin-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pw }),
-      });
-      const loginData = await loginRes.json().catch(() => ({}));
-      if (!loginData.success) {
-        showToast("Falsches Admin-Passwort.", "error");
-        return;
-      }
-      state.isAdmin = true;
-      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
-      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+      openAdminLoginModal(() => openSettingsModal());
+      return;
     } else {
       state.isAdmin = true;
     }
@@ -494,6 +635,19 @@ export function initSettingsEvents() {
   document.getElementById("closeSettingsBtn")?.addEventListener("click", () => {
     const modal = document.getElementById("settings-modal");
     if (modal) modal.style.display = "none";
+  });
+
+  // Admin Login Modal Events
+  document.getElementById("admin-login-close-btn")?.addEventListener("click", closeAdminLoginModal);
+  document.getElementById("admin-login-cancel-btn")?.addEventListener("click", closeAdminLoginModal);
+  document.getElementById("admin-login-form")?.addEventListener("submit", handleAdminLoginSubmit);
+  document.getElementById("admin-login-toggle-pw")?.addEventListener("click", () => {
+    const input = document.getElementById("admin-login-password");
+    const icon = document.getElementById("admin-login-toggle-pw");
+    if (!input || !icon) return;
+    const isPw = input.getAttribute("type") === "password";
+    input.setAttribute("type", isPw ? "text" : "password");
+    icon.innerText = isPw ? "visibility_off" : "visibility";
   });
 
   // Settings Tab Switching (Google Developer Style)

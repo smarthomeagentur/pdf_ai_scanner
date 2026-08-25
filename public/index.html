@@ -881,6 +881,67 @@
         </div>
       </div>
 
+      <!-- Admin Login Modal (Google Dev Style) -->
+      <div id="admin-login-modal" class="modal-overlay" style="z-index: 3500; display: none;">
+        <div class="modal-content gdev-modal" style="max-width: 420px; height: auto;">
+          <div class="gdev-header">
+            <div>
+              <h3 class="gdev-title">
+                <span class="material-symbols-outlined text-primary" style="font-size: 20px;">admin_panel_settings</span>
+                <span>Admin-Authentifizierung</span>
+              </h3>
+              <div class="gdev-subtitle">Passwort erforderlich für geschützte Bereiche</div>
+            </div>
+            <button class="gdev-close-btn" id="admin-login-close-btn" title="Schließen">
+              <span class="material-symbols-outlined" style="font-size: 18px;">close</span>
+            </button>
+          </div>
+
+          <form id="admin-login-form" autocomplete="off" onsubmit="return false;">
+            <div class="gdev-body" style="padding: 20px;">
+              <p class="text-muted small mb-3" style="line-height: 1.4;">
+                Bitte gib das Administrator-Passwort ein, um Zugriff auf die Einstellungen und sensible Aktionen zu erhalten.
+              </p>
+
+              <div class="setting-group mb-3">
+                <label class="gdev-label">Admin-Passwort:</label>
+                <div style="position: relative; width: 100%; display: flex; align-items: center;">
+                  <input
+                    type="password"
+                    id="admin-login-password"
+                    class="form-control gdev-input"
+                    placeholder="Admin-Passwort"
+                    autocomplete="current-password"
+                    required
+                    style="padding-right: 36px;"
+                  />
+                  <span
+                    class="material-symbols-outlined"
+                    id="admin-login-toggle-pw"
+                    style="position: absolute; right: 10px; cursor: pointer; color: #5f6368; user-select: none; font-size: 18px;"
+                    title="Passwort anzeigen">
+                    visibility
+                  </span>
+                </div>
+              </div>
+
+              <!-- Error & Lockout Countdown Box -->
+              <div id="admin-login-status" class="small mb-1" style="min-height: 20px;"></div>
+            </div>
+
+            <div class="gdev-footer">
+              <button type="button" id="admin-login-cancel-btn" class="btn btn-sm btn-outline-secondary px-3">
+                Abbrechen
+              </button>
+              <button type="submit" id="admin-login-submit-btn" class="btn btn-sm btn-primary px-4 d-flex align-items-center gap-1">
+                <span class="material-symbols-outlined" style="font-size: 16px;">lock_open</span>
+                <span>Entsperren</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <!-- Accounting Account Create/Edit Modal (Google Dev Style) -->
       <div id="accounting-account-modal" class="modal-overlay" style="z-index: 2500; display: none;">
         <div class="modal-content gdev-modal" style="max-width: 520px; height: auto; max-height: 90vh;">
@@ -1435,7 +1496,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260825_modular_accounting_v52"></script>
+      <script type="module" src="/js/app.js?v=20260825_login_rate_limiter_v53"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

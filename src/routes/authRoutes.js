@@ -21,7 +21,7 @@ router.post("/api/admin-login", loginLimiter, (req, res) => {
   }
   const { password } = req.body;
   if (!password || password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: "Falsches Admin-Passwort." });
+    return res.status(401).json({ success: false, error: "Falsches Admin-Passwort." });
   }
 
   const token = jwt.sign({ role: "admin" }, JWT_SECRET, { expiresIn: "30d" });
@@ -41,7 +41,7 @@ router.post("/api/login", loginLimiter, (req, res) => {
   }
   const { password } = req.body;
   if (!password || (password !== APP_PASSWORD && password !== ADMIN_PASSWORD)) {
-    return res.status(401).json({ error: "Falsches Passwort." });
+    return res.status(401).json({ success: false, error: "Falsches Passwort." });
   }
 
   const role = password === ADMIN_PASSWORD ? "admin" : "user";

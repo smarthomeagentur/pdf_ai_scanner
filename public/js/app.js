@@ -7,7 +7,7 @@ import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSiz
 import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js";
 import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js";
 import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js";
-import { openSettingsModal, saveAllSettings, initSettingsEvents } from "./settings.js";
+import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js";
 import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js";
 import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js";
 import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js";
@@ -16,6 +16,7 @@ import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
 window.openSettingsModal = openSettingsModal;
+window.openAdminLoginModal = openAdminLoginModal;
 window.saveAllSettings = saveAllSettings;
 window.openAccountingModal = openAccountingModal;
 window.transferJobToClickUp = transferJobToClickUp;
@@ -29,11 +30,14 @@ window.closeDocPreview = closeDocPreview;
 
 window.retryJob = async (jobId) => {
   try {
-    await apiRequest(`/api/jobs/${jobId}/retry`, { method: "POST" });
-    showToast("KI-Erkennung wird erneut durchgeführt.", "info");
-    refreshStatus();
-  } catch (e) {
-    showToast("Fehler: " + e.message, "error");
+    const res = await apiRequest(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    if (res.success) {
+      showToast("Verarbeitung erneut gestartet.", "info");
+    } else {
+      showToast(res.error || "Fehler beim erneuten Starten.", "error");
+    }
+  } catch (err) {
+    showToast(err.message, "error");
   }
 };
 
@@ -148,7 +152,10 @@ function initTabSwitching() {
   uploadTab?.addEventListener("click", () => switchTab(uploadTab, viewUpload));
   rechnungenTab?.addEventListener("click", () => {
     if (!state.isAdmin) {
-      showToast("Das Rechnungs-Modul ist nur für Administratoren verfügbar.", "warning");
+      openAdminLoginModal(() => {
+        switchTab(rechnungenTab, viewRechnungen);
+        loadRechnungenView();
+      });
       return;
     }
     switchTab(rechnungenTab, viewRechnungen);

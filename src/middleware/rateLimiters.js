@@ -1,11 +1,19 @@
 const rateLimit = require("express-rate-limit");
 
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  message: { error: "Zu viele Login-Versuche. Bitte versuche es in 15 Minuten erneut." },
+  windowMs: 1 * 60 * 1000, // 1 Minute Fenster
+  max: 5, // Maximal 5 Fehlversuche pro Minute
+  skipSuccessfulRequests: true, // Erfolgreiche Logins zählen nicht als Fehlversuch
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    const retryAfter = Math.ceil(options.windowMs / 1000);
+    res.status(429).json({
+      success: false,
+      error: "Zu viele Fehlversuche. Bitte warte 1 Minute vor dem nächsten Versuch.",
+      retryAfter,
+    });
+  },
 });
 
 const uploadLimiter = rateLimit({
