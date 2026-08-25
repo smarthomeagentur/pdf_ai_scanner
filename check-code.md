@@ -11,15 +11,18 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 | **P0 (Kritisch)** | **SEC-01** | Sicherheit | Hardcodierte Standard-Passwörter & JWT-Secrets entfernen | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
 | **P0 (Kritisch)** | **SEC-02** | Sicherheit | XSS-Prävention im Frontend (HTML-Escaping bei dynamischem Rendering) | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js) | ✅ **Erledigt** |
 | **P0 (Kritisch)** | **SEC-03** | Sicherheit | Path-Traversal-Schutz bei Datei-Downloads & Previews | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
-| **P1 (Hoch)** | **ARCH-01** | Architektur | Modularisierung von `index.js` (Backend-Monolith in Services/Routes aufteilen) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `app/` | ⏳ Geplant |
-| **P1 (Hoch)** | **ARCH-02** | Architektur | Modularisierung von `public/index.js` (Frontend-Skript aufteilen) | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js) | ⏳ Geplant |
-| **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung (`jobs.json`) auf SQLite / Embedded DB migrieren | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `store/` | ⏳ Geplant |
-| **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `app/` | ⏳ Geplant |
-| **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ⏳ Geplant |
-| **P2 (Mittel)** | **CLEAN-01** | Bereinigung | Server-seitige Legacy-Gmail-Reste isolieren / aufräumen | [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ⏳ Geplant |
-| **P2 (Mittel)** | **AI-01** | KI / Robustheit | Ollama Timeout-Handling mit `AbortController` & Exponential Backoff | [`app/aiAgent.js`](file:///c:/WSL/adobe_cloud_downloader/app/aiAgent.js) | ⏳ Geplant |
-| **P3 (Niedrig)** | **TEST-01** | Qualitätssicherung | Automatisierte Test-Suite (Unit- & API-Integrationstests) | `test/`, `package.json` | ⏳ Geplant |
-| **P3 (Niedrig)** | **DOC-01** | Dokumentation | OpenAPI / Swagger API-Dokumentation & `.env.example` | `readme.md`, `.env.example` | ⏳ Geplant |
+| **P0 (Kritisch)** | **SEC-05** | Datenschutz / Zero-Trust | Client-Only Secrets (Lexoffice, BuchhaltungsButler, ClickUp) im Browser `localStorage` | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-06** | Datenschutz / Drive Scope | Restriktiver Google Drive Scope `drive.file` + Google Drive Picker Dialog | [`app/driveApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/driveApi.js), [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-07** | Datenschutz / Mail Zero-Trust | Gmail-Tokens clientseitig isoliert (`localStorage`), Server restlos bereinigt | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
+| **P1 (Hoch)** | **ARCH-01** | Architektur | Modularisierung von `index.js` (Backend-Monolith in Services/Routes aufteilen) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `app/` | ⏳ Bereit zur Umsetzung |
+| **P1 (Hoch)** | **ARCH-02** | Architektur | Modularisierung von `public/index.js` (Frontend-Skript aufteilen) | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js) | ⏳ Bereit zur Umsetzung |
+| **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung (`jobs.json`) auf SQLite / Embedded DB migrieren | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `store/` | ⏳ Bereit zur Umsetzung |
+| **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `app/` | ⏳ Bereit zur Umsetzung |
+| **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ⏳ Bereit zur Umsetzung |
+| **P2 (Mittel)** | **CLEAN-01** | Bereinigung | Server-seitige Legacy-Gmail-Reste isolieren / aufräumen | [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ⏳ Bereit zur Umsetzung |
+| **P2 (Mittel)** | **AI-01** | KI / Robustheit | Ollama Timeout-Handling mit `AbortController` & Exponential Backoff | [`app/aiAgent.js`](file:///c:/WSL/adobe_cloud_downloader/app/aiAgent.js) | ⏳ Bereit zur Umsetzung |
+| **P3 (Niedrig)** | **TEST-01** | Qualitätssicherung | Automatisierte Test-Suite (Unit- & Integrationstests) | `test/`, `package.json` | ⏳ Bereit zur Umsetzung |
+| **P3 (Niedrig)** | **DOC-01** | Dokumentation | OpenAPI / Swagger API-Dokumentation & `.env.example` | `readme.md`, `.env.example` | ⏳ Bereit zur Umsetzung |
 
 ---
 
@@ -79,16 +82,41 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 - **Priorität:** `P0 (Kritisch)`
 - **Kategorie:** Sicherheit
 - **Betroffene Dateien:** [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js)
-- **Aktueller Zustand:**
-  Dateizugriffe in Routen wie `/api/jobs/:id/file`, `/api/jobs/:id/preview` oder Thumbnail-Generierung greifen teils auf `job.filePath` oder Parameter zu.
-- **Lösungsvorschlag:**
-  Sicherstellen, dass alle Pfade mit `path.resolve` gegen das Basisverzeichnis (`downloads/` bzw. `store/`) validiert werden:
-  ```javascript
-  function isSafeSubpath(baseDir, targetPath) {
-    const relative = path.relative(baseDir, path.resolve(targetPath));
-    return !relative.startsWith("..") && !path.isAbsolute(relative);
-  }
-  ```
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Alle Pfade werden mit `isSafeSubpath` gegen `downloads/` und `store/` validiert. Manipulationen wie `../../` werden abgewiesen.
+
+---
+
+### Task SEC-05: Zero-Trust Client-Only Secrets (Lexoffice, BuchhaltungsButler, ClickUp)
+- **Priorität:** `P0 (Kritisch)`
+- **Kategorie:** Datenschutz & Zero-Trust
+- **Betroffene Dateien:** [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js)
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Alle API-Schlüssel für Drittanbieter (Lexoffice API-Keys, BuchhaltungsButler Credentials, ClickUp API-Keys) werden ausschließlich im Browser `localStorage` gespeichert. Der Server speichert keine Drittanbieter-Schlüssel in `settings.json`. Schlüssel werden nur flüchtig für aktive Transfers im Request mitgegeben.
+
+---
+
+### Task SEC-06: Restriktiver Google Drive Scope `drive.file` + Google Picker
+- **Priorität:** `P0 (Kritisch)`
+- **Kategorie:** Datenschutz & Google Drive Sicherheit
+- **Betroffene Dateien:** [`app/driveApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/driveApi.js), [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js)
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Der volle Drive-Scope wurde auf `https://www.googleapis.com/auth/drive.file` minimiert. Die App hat technisch keinen Zugriff auf restliche Drive-Inhalte. Die Ordnerauswahl erfolgt direkt über den sicheren, nativen Google Drive Picker Dialog.
+
+---
+
+### Task SEC-07: Zero-Trust Mail-Architektur (Client-Side GIS)
+- **Priorität:** `P0 (Kritisch)`
+- **Kategorie:** Datenschutz & E-Mail-Sicherheit
+- **Betroffene Dateien:** [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js)
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Gmail-Authentifizierung und E-Mail-Abfragen laufen zu 100 % im Browser. Keine Mail-Tokens auf dem Server. Alte Server-Dateien (`gmail_accounts.json`) wurden restlos gelöscht. Übersprungene E-Mails werden persistent synchronisiert.
+
+---
 
 ---
 
