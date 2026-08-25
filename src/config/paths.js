@@ -14,6 +14,7 @@ if (!fs.existsSync(THUMBS_DIR)) fs.mkdirSync(THUMBS_DIR, { recursive: true });
 const SETTINGS_FILE = path.join(STORE_DIR, "settings.json");
 const TOKEN_FILE = path.join(STORE_DIR, "token.json");
 const JOBS_FILE = path.join(STORE_DIR, "jobs.json");
+const DB_FILE = path.join(STORE_DIR, "database.sqlite");
 const SKIPPED_EMAILS_FILE = path.join(STORE_DIR, "skipped_emails.json");
 const CREDENTIALS_FILE = path.join(ROOT_DIR, "gdrive_secret.json");
 const SCANNER_SCRIPT = path.join(__dirname, "..", "workers", "scanner.py");
@@ -35,6 +36,7 @@ module.exports = {
   SETTINGS_FILE,
   TOKEN_FILE,
   JOBS_FILE,
+  DB_FILE,
   SKIPPED_EMAILS_FILE,
   CREDENTIALS_FILE,
   SCANNER_SCRIPT,

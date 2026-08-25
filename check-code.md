@@ -17,7 +17,7 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 | **P1 (Hoch)** | **ARCH-01** | Architektur | Modularisierung von `index.js` (Backend-Monolith in Services/Routes aufteilen) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `src/` | ✅ **Erledigt** |
 | **P1 (Hoch)** | **ARCH-02** | Architektur | Modularisierung von `public/index.js` (Frontend in native ES-Module aufgeteilt) | `public/js/`, [`public/index.html`](file:///c:/WSL/adobe_cloud_downloader/public/index.html) | ✅ **Erledigt** |
 | **P2 (Mittel)** | **CLEAN-01** | Bereinigung | Server-seitige Legacy-Gmail-Reste isolieren / aufräumen | [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), `src/` | ✅ **Erledigt** |
-| **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung (`jobs.json`) auf SQLite / Embedded DB migrieren | `src/services/jobQueueService.js`, `store/` | ⏳ Bereit zur Umsetzung |
+| **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung auf SQLite (`better-sqlite3`) & Auto-Migration | [`src/db/database.js`](file:///c:/WSL/adobe_cloud_downloader/src/db/database.js), [`src/services/jobQueueService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/jobQueueService.js) | ✅ **Erledigt** |
 | **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | [`src/services/fileRenderService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/fileRenderService.js), [`src/routes/scannerRoutes.js`](file:///c:/WSL/adobe_cloud_downloader/src/routes/scannerRoutes.js) | ✅ **Erledigt** |
 | **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | [`src/server.js`](file:///c:/WSL/adobe_cloud_downloader/src/server.js), `package.json` | ✅ **Erledigt** |
 | **P2 (Mittel)** | **AI-01** | KI / Robustheit | Ollama Timeout-Handling (6-Min-Timeout) & Exponential Backoff Retry | [`src/services/aiService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/aiService.js) | ✅ **Erledigt** |
@@ -167,19 +167,13 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 
 ---
 
-### Task PERF-01: Jobs-Speicherung (`jobs.json`) auf SQLite migrieren
+### Task PERF-01: Jobs-Speicherung auf SQLite migrieren
 - **Priorität:** `P1 (Hoch)`
 - **Kategorie:** Performance & Datenkonsistenz
-- **Betroffene Dateien:** [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `store/jobs.json`
-- **Aktueller Zustand:**
-  Alle verarbeiteten Jobs werden im Arbeitsspeicher (`uploadJobs`) gehalten und regelmäßig komplett als JSON-Datei (`jobs.json`) auf die Festplatte serialisiert.
-  - Bei hunderten/tausenden Belegen führt dies zu hohem RAM-Verbrauch und blockierenden I/O-Schreibvorgängen.
-  - Bei plötzlichem Prozessabbruch während des Schreibens besteht das Risiko von JSON-Korruption.
-- **Lösungsvorschlag:**
-  Migration auf `better-sqlite3`:
-  - Echte Transaktionen (ACID) verhindern Datenverlust.
-  - Indizierte Abfragen für Filter, Suche, Datumsbereiche und Status ohne Voll-Scan im RAM.
-  - Paging (`LIMIT / OFFSET`) für schnelle UI-Reaktionszeiten bei vielen Belegen.
+- **Betroffene Dateien:** [`src/db/database.js`](file:///c:/WSL/adobe_cloud_downloader/src/db/database.js), [`src/services/jobQueueService.js`](file:///c:/WSL/adobe_cloud_downloader/src/services/jobQueueService.js), `store/database.sqlite`
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Migration auf `better-sqlite3` mit WAL-Modus (`store/database.sqlite`) und indizierten Tabellen `jobs` und `app_state`. Vollautomatische, transaktionale Datenübernahme aus `jobs.json` mit automatischem Backup (`jobs.json.bak`). Die Service-API in `jobQueueService.js` bleibt zu 100 % rückwärtskompatibel.
 
 ---
 

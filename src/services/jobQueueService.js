@@ -3,12 +3,13 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { pipeline } = require("stream/promises");
 const aiAgent = require("./aiService");
-const { JOBS_FILE, DOWNLOADS_DIR, getPythonPath } = require("../config/paths");
+const { DOWNLOADS_DIR, getPythonPath } = require("../config/paths");
 const { appSettings } = require("../config/settings");
 const { driveApi } = require("./driveService");
 const { findDuplicatesForJob } = require("./duplicateService");
 const { renderPdfToJpeg } = require("./fileRenderService");
 const { ClickUpAPI } = require("./clickupService");
+const { getDatabase, getStatements } = require("../db/database");
 
 let uploadJobs = {};
 let uploadQueue = [];
@@ -26,94 +27,181 @@ let driveSyncState = {
   errors: [],
 };
 
-function loadJobs() {
-  if (!fs.existsSync(JOBS_FILE)) return;
+function persistJob(job) {
+  if (!job || !job.id) return;
   try {
-    const data = JSON.parse(fs.readFileSync(JOBS_FILE, "utf8"));
-    if (data.uploadJobs) uploadJobs = data.uploadJobs;
-    if (data.uploadQueue) uploadQueue = data.uploadQueue;
-    if (data.processedDriveFiles) processedDriveFiles = data.processedDriveFiles;
-    if (data.hiddenDriveFiles) hiddenDriveFiles = data.hiddenDriveFiles;
+    const stmts = getStatements();
+    const now = Date.now();
+    const originalName = job.originalName || job.result?.full || "Dokument.pdf";
+    const status = job.status || "pending";
+    const source = job.source || "upload";
+    const uploadDate = job.uploadDate || new Date(now).toISOString();
+    const documentDate = job.result?.documentDate || job.documentDate || "unknown";
+    const category = job.result?.category || job.category || "Unbekannt";
+    const company = job.result?.company || job.company || "Unbekannt";
+    const invoiceNumber = job.result?.invoiceNumber || job.invoiceNumber || "none";
+    const invoiceAmount = Number(job.result?.invoiceAmmount || job.invoiceAmmount || 0) || 0;
+    const isInvoice = (job.result?.isInvoice ?? job.isInvoice) ? 1 : 0;
+    const isHidden = job.isHidden ? 1 : 0;
+    const isPrivate = job.isPrivate ? 1 : 0;
+    const suspectedDuplicate = job.suspectedDuplicate ? 1 : 0;
+    const filePath = job.filePath || "";
+    const rawDriveId = job.rawDriveId || "";
+    const driveFileId = job.driveFileId || "";
 
-    for (const jobId in uploadJobs) {
-      const job = uploadJobs[jobId];
-      if (job.isHidden) {
-        if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
-          hiddenDriveFiles.push(job.rawDriveId);
-        }
-        if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) {
-          hiddenDriveFiles.push(job.driveFileId);
-        }
-        const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-        if (sortedId && !hiddenDriveFiles.includes(sortedId)) {
-          hiddenDriveFiles.push(sortedId);
-        }
-      }
+    stmts.insertOrReplaceJob.run({
+      id: job.id,
+      original_name: originalName,
+      status,
+      source,
+      upload_date: uploadDate,
+      document_date: documentDate,
+      category,
+      company,
+      invoice_number: invoiceNumber,
+      invoice_amount: invoiceAmount,
+      is_invoice: isInvoice,
+      is_hidden: isHidden,
+      is_private: isPrivate,
+      suspected_duplicate: suspectedDuplicate,
+      file_path: filePath,
+      raw_drive_id: rawDriveId,
+      drive_file_id: driveFileId,
+      data_json: JSON.stringify(job),
+      created_at: new Date(uploadDate).getTime() || now,
+      updated_at: now,
+    });
+  } catch (err) {
+    console.error(`[SQLITE] Fehler beim Speichern von Job ${job.id}:`, err);
+  }
+}
+
+function persistAppState() {
+  try {
+    const stmts = getStatements();
+    stmts.setAppState.run("upload_queue", JSON.stringify(uploadQueue));
+    stmts.setAppState.run("processed_drive_files", JSON.stringify(processedDriveFiles));
+    stmts.setAppState.run("hidden_drive_files", JSON.stringify(hiddenDriveFiles));
+  } catch (err) {
+    console.error("[SQLITE] Fehler beim Speichern des App-Status:", err);
+  }
+}
+
+function loadJobs() {
+  try {
+    const stmts = getStatements();
+
+    // 1. App-State laden
+    const qRow = stmts.getAppState.get("upload_queue");
+    if (qRow && qRow.value) {
+      try { uploadQueue = JSON.parse(qRow.value); } catch (e) {}
     }
 
-    let changed = false;
+    const pRow = stmts.getAppState.get("processed_drive_files");
+    if (pRow && pRow.value) {
+      try { processedDriveFiles = JSON.parse(pRow.value); } catch (e) {}
+    }
+
+    const hRow = stmts.getAppState.get("hidden_drive_files");
+    if (hRow && hRow.value) {
+      try { hiddenDriveFiles = JSON.parse(hRow.value); } catch (e) {}
+    }
+
+    // 2. Jobs aus SQLite laden
+    const allRows = stmts.getAllJobs.all();
+    uploadJobs = {};
+
     let recoveredCount = 0;
-    for (const jobId in uploadJobs) {
-      const job = uploadJobs[jobId];
-      if (job.result && job.result.localThumbnail) {
-        delete job.result.localThumbnail;
-        changed = true;
-      }
-      if (job.localThumbnail) {
-        delete job.localThumbnail;
-        changed = true;
-      }
+    for (const row of allRows) {
+      try {
+        const job = JSON.parse(row.data_json);
+        if (!job || !job.id) continue;
 
-      const wasInterrupted =
-        job.status === "processing" ||
-        job.status === "pending" ||
-        job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
-      if (wasInterrupted) {
-        job.status = "pending";
-        job.error = null;
-        job.inAiPipeline = true;
-        if (!uploadQueue.includes(jobId)) {
-          uploadQueue.push(jobId);
+        if (job.isHidden) {
+          if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
+            hiddenDriveFiles.push(job.rawDriveId);
+          }
+          if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) {
+            hiddenDriveFiles.push(job.driveFileId);
+          }
+          const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+          if (sortedId && !hiddenDriveFiles.includes(sortedId)) {
+            hiddenDriveFiles.push(sortedId);
+          }
         }
-        changed = true;
-        recoveredCount++;
+
+        if (job.result && job.result.localThumbnail) {
+          delete job.result.localThumbnail;
+        }
+        if (job.localThumbnail) {
+          delete job.localThumbnail;
+        }
+
+        const wasInterrupted =
+          job.status === "processing" ||
+          job.status === "pending" ||
+          job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
+        if (wasInterrupted) {
+          job.status = "pending";
+          job.error = null;
+          job.inAiPipeline = true;
+          if (!uploadQueue.includes(job.id)) {
+            uploadQueue.push(job.id);
+          }
+          recoveredCount++;
+        }
+
+        uploadJobs[job.id] = job;
+        persistJob(job);
+      } catch (parseErr) {
+        console.error("[SQLITE] Fehler beim Parsen von Job-JSON:", parseErr);
       }
     }
+
     uploadQueue = [...new Set(uploadQueue)].filter(
       (id) => uploadJobs[id] && uploadJobs[id].status === "pending"
     );
+
     if (recoveredCount > 0) {
       console.log(
-        `[SYSTEM] ${recoveredCount} durch Server-Neustart unterbrochene Jobs automatisch wieder in die Queue aufgenommen.`
+        `[SQLITE] ${recoveredCount} durch Server-Neustart unterbrochene Jobs automatisch wieder in die Queue aufgenommen.`
       );
     }
-    if (changed) saveJobs();
+
+    persistAppState();
+    console.log(
+      `[SQLITE] Verbunden mit store/database.sqlite (${Object.keys(uploadJobs).length} Belege geladen, WAL-Modus aktiv)`
+    );
   } catch (e) {
-    console.error("[SYSTEM] Fehler beim Laden von jobs.json:", e);
+    console.error("[SQLITE] Fehler beim Laden der Datenbank:", e);
   }
 }
 
 function saveJobs() {
   try {
+    const stmts = getStatements();
     const now = Date.now();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+    // 30 Tage Cleanup
+    stmts.cleanupOldJobs.run(now - thirtyDaysMs);
+
     for (const jobId in uploadJobs) {
       const jobTime = new Date(uploadJobs[jobId].uploadDate).getTime();
       if (now - jobTime > thirtyDaysMs) {
         delete uploadJobs[jobId];
+      } else {
+        persistJob(uploadJobs[jobId]);
       }
     }
-    fs.promises
-      .writeFile(
-        JOBS_FILE,
-        JSON.stringify({ uploadJobs, uploadQueue, processedDriveFiles, hiddenDriveFiles })
-      )
-      .catch((err) => {
-        console.error("[SYSTEM] Fehler beim Speichern von jobs.json:", err);
-      });
-  } catch (e) {}
+
+    persistAppState();
+  } catch (e) {
+    console.error("[SQLITE] Fehler beim Speichern:", e);
+  }
 }
 
+// Initialer DB-Boot
 loadJobs();
 
 function validateDocumentDate(docDateStr, uploadDateStr) {
@@ -199,7 +287,10 @@ function findMatchingJobForDriveFile(file, isAdmin = true) {
     const normFull = (job.result?.full || "").toLowerCase().replace(/\.pdf$/i, "").trim();
     const normOrig = (job.originalName || "").toLowerCase().replace(/\.pdf$/i, "").trim();
     if (fName && (fName === normFull || fName === normOrig)) {
-      if (!job.driveFileId && fId) job.driveFileId = fId;
+      if (!job.driveFileId && fId) {
+        job.driveFileId = fId;
+        persistJob(job);
+      }
       return job;
     }
   }
@@ -213,7 +304,7 @@ async function processSingleJob(jobId) {
 
   job.status = "processing";
   job.processingStartedAt = Date.now();
-  saveJobs();
+  persistJob(job);
 
   try {
     console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
@@ -228,6 +319,7 @@ async function processSingleJob(jobId) {
       if (defaultDriveFile) {
         processedDriveFiles.push(defaultDriveFile.id);
         job.rawDriveId = defaultDriveFile.id;
+        persistAppState();
       }
     }
 
@@ -258,6 +350,7 @@ async function processSingleJob(jobId) {
       tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
 
     try {
+      const { exiftool } = require("exiftool-vendored");
       await exiftool.write(job.filePath, {
         Title: sortedName.full || "Dokument",
         Author: sortedName.company || "Unbekannt",
@@ -266,7 +359,7 @@ async function processSingleJob(jobId) {
         Keywords: tagsArr,
       });
       if (fs.existsSync(job.filePath + "_original")) {
-        await fs.promises.unlink(job.filePath + "_original");
+        await fs.promises.unlink(job.filePath + "_original").catch(() => {});
       }
     } catch (metaErr) {
       console.error(`[WEB] Fehler beim Schreiben der Metadaten mit ExifTool für ${jobId}:`, metaErr);
@@ -298,6 +391,7 @@ async function processSingleJob(jobId) {
       job.driveFileId = driveFile.id;
       if (driveFile.id && !processedDriveFiles.includes(driveFile.id)) {
         processedDriveFiles.push(driveFile.id);
+        persistAppState();
       }
       sortedName.webViewLink = driveFile.webViewLink;
       sortedName.thumbnailLink = driveFile.thumbnailLink;
@@ -333,7 +427,8 @@ async function processSingleJob(jobId) {
     job.error = err.message || "Unbekannter Fehler bei der Verarbeitung";
     job.inAiPipeline = false;
   } finally {
-    saveJobs();
+    persistJob(job);
+    persistAppState();
   }
 }
 
@@ -343,9 +438,11 @@ async function processQueue() {
   while (uploadQueue.length > 0) {
     const jobId = uploadQueue.shift();
     if (jobId && uploadJobs[jobId] && uploadJobs[jobId].status === "pending") {
+      persistAppState();
       await processSingleJob(jobId);
     }
   }
+  persistAppState();
   isProcessingQueue = false;
 }
 
@@ -353,8 +450,9 @@ function addJobs(newJobs) {
   for (const job of newJobs) {
     uploadJobs[job.id] = job;
     uploadQueue.push(job.id);
+    persistJob(job);
   }
-  saveJobs();
+  persistAppState();
   processQueue();
 }
 
@@ -383,7 +481,7 @@ function getJob(id) {
 function updateJob(id, updates) {
   if (!uploadJobs[id]) return null;
   Object.assign(uploadJobs[id], updates);
-  saveJobs();
+  persistJob(uploadJobs[id]);
   return uploadJobs[id];
 }
 
@@ -393,7 +491,7 @@ function deleteJob(id) {
 
 function clearAllJobs() {
   Object.keys(uploadJobs).forEach((id) => hideJob(id));
-  saveJobs();
+  persistAppState();
 }
 
 function hideJob(jobId) {
@@ -404,7 +502,8 @@ function hideJob(jobId) {
   if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) hiddenDriveFiles.push(job.driveFileId);
   const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
   if (sortedId && !hiddenDriveFiles.includes(sortedId)) hiddenDriveFiles.push(sortedId);
-  saveJobs();
+  persistJob(job);
+  persistAppState();
   return job;
 }
 
@@ -416,7 +515,8 @@ function unhideJob(jobId) {
   if (job.driveFileId) hiddenDriveFiles = hiddenDriveFiles.filter((id) => id !== job.driveFileId);
   const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
   if (sortedId) hiddenDriveFiles = hiddenDriveFiles.filter((id) => id !== sortedId);
-  saveJobs();
+  persistJob(job);
+  persistAppState();
   return job;
 }
 
@@ -481,7 +581,8 @@ async function executeDriveSync(items) {
           uploadJobs[jobId].rawDriveId = item.id;
         }
 
-        saveJobs();
+        persistJob(uploadJobs[jobId]);
+        persistAppState();
         await processSingleJob(jobId);
         driveSyncState.processed = i + 1;
       } catch (err) {
@@ -540,7 +641,8 @@ async function importDriveFile(driveFileId, name = null) {
 
   uploadJobs[jobId] = newJob;
   uploadQueue.push(jobId);
-  saveJobs();
+  persistJob(newJob);
+  persistAppState();
   processQueue();
 
   return newJob;
