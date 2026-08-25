@@ -1,17 +1,17 @@
 /**
  * Main Frontend Coordinator & Bootstrapping
  */
-import { apiRequest } from "./api.js?v=20260825_v58";
-import { state } from "./state.js?v=20260825_v58";
-import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260825_v58";
-import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260825_v58";
-import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260825_v58";
-import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260825_v58";
-import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260825_v58";
-import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260825_v58";
-import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260825_v58";
-import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260825_v58";
-import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview } from "./jobs.js?v=20260825_v58";
+import { apiRequest } from "./api.js?v=20260825_v59";
+import { state } from "./state.js?v=20260825_v59";
+import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260825_v59";
+import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260825_v59";
+import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260825_v59";
+import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260825_v59";
+import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260825_v59";
+import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260825_v59";
+import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260825_v59";
+import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260825_v59";
+import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview } from "./jobs.js?v=20260825_v59";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;

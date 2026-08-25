@@ -1,118 +1,202 @@
-# Smart Cloud Scanner
+# Document Pipeline & Smart Cloud Scanner
 
-Eine leistungsstarke, webbasierte PWA-Scanner-Anwendung, die es Benutzern ermöglicht, Dokumente via Kamera zu erfassen, automatisch zuzuschneiden und mit KI-Unterstützung zu verarbeiten. Die Lösung nutzt Google Drive als primären Speicherort und ermöglicht eine nahtlose und passwortgeschützte Benutzung.
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
+[![Database](https://img.shields.io/badge/database-SQLite%20(WASM)-blue.svg)](https://sql.js.org/)
+[![Security](https://img.shields.io/badge/security-Zero--Trust%20Client--Side-orange.svg)]()
+[![Docker](https://img.shields.io/badge/deployment-Docker%20%7C%20Coolify-2496ED.svg)](https://coolify.io/)
 
-## ✨ Funktionen & Feature-Übersicht
-
-- **Live-Kantenerkennung & Auto-Capture:** Nutzt OpenCV.js im Browser, um A4-Dokumente in Echtzeit zu erkennen, automatisch zu fokussieren und bei Stabilität selbstständig Aufnahmen zu triggern.
-- **Progressive Web App (PWA):** Kann als native App auf Smartphones (iOS/Android) installiert werden und bietet Full-Screen-Bedienung.
-- **KI-gestützte Weiterverarbeitung:** (Z.B. via Ollama) für automatische Benennungen, OCR oder inhaltliche Beschlagwortung direkt auf dem Host-System.
-- **Erweiterte Rechnungsanalyse:** Erkennt automatisch Rechnungsnummern und Beträge und fügt diese sowohl in der UI als auch tief in den PDF-Metadaten (Exif) ein.
-- **Privat-Modus für sensible Dokumente:** Administratoren können Dateien als "Privat" markieren. Diese werden sicher mit Google Drive synchronisiert (`appProperties`) und für normale Nutzer in der Oberfläche und Suche unsichtbar gemacht.
-- **Sicherer Zugriff (JWT):** Die App lässt sich mit einem Master-Passwort und separatem Admin-Passwort absichern. Login-Sessions werden über JSON Web Tokens verwaltet.
-- **Google Drive Integration:** Gescannte und verarbeitete Dokumente / PDFs werden direkt im verknüpften Google Drive-Konto hochgeladen.
-- **Google Mail (Workmail) Inbox Scanner:** Durchsucht den Posteingang nach offenen E-Mails mit PDF-Anhängen, ermöglicht Einzel- und Batch-Verarbeitung, optionales automatisches Archivieren in Gmail und eine separate Ablage für übersprungene Mails ("Skipped Mails").
-
-## 🛠 Verwendete Technologien
-
-- **Frontend:** HTML5, CSS3 (Bootstrap 5), JavaScript (OpenCV.js für Bildverarbeitung).
-- **Backend:** Node.js, Express.js.
-- **PDF & Bildverarbeitung:** `pdf-lib`, `pdf-parse`, `pdf2pic`, `multer`.
-- **Authentifizierung:** `jsonwebtoken`, `cookie-parser`.
-- **Cloud Storage:** `googleapis` (für Google Drive API).
-- **AI / LLM:** `ollama` (lokale KI-Schnittstelle).
+A modern, high-performance document capture, AI analysis, and multi-accounting pipeline. The application provides client-side edge detection, local AI metadata extraction (via Ollama), zero-trust third-party API integration, and automated accounting synchronization for **Lexoffice** and **BuchhaltungsButler**.
 
 ---
 
-## ⚙️ Umgebungsvariablen (Environment Variables)
+## Architecture Overview
 
-Vor dem Start muss eine `.env`-Datei im Root-Verzeichnis erstellt werden. Folgende Variablen steuern das Verhalten der Anwendung:
+```
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                      Client-Side (Browser PWA)                         │
+ │                                                                        │
+ │  ┌───────────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
+ │  │ Camera Edge Detection │  │ Google GIS &    │  │ LocalStorage     │  │
+ │  │ (ONNX WebAssembly)    │  │ Drive Picker    │  │ Zero-Trust Keys  │  │
+ │  └───────────┬───────────┘  └────────┬────────┘  └────────┬─────────┘  │
+ └──────────────┼───────────────────────┼────────────────────┼────────────┘
+                │                       │                    │
+                ▼                       ▼                    ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                      Node.js / Express Backend                         │
+ │                                                                        │
+ │  ┌────────────────────────┐  ┌──────────────────────────────────────┐  │
+ │  │ Multi-Engine Renderer  │  │ Local AI Document Analysis           │  │
+ │  │ (PyMuPDF, Poppler, GS) │  │ (Ollama LLM with 6-Min Timeout)      │  │
+ │  └───────────┬────────────┘  └──────────────────┬───────────────────┘  │
+ │              │                                  │                      │
+ │              ▼                                  ▼                      │
+ │  ┌──────────────────────────────────────────────────────────────────┐  │
+ │  │ SQLite WASM Embedded Database (database.sqlite, ACID, Zero-Lock) │  │
+ │  └──────────────────────────────────────────────────────────────────┘  │
+ └────────────────────────────────────────────────────────────────────────┘
+```
 
-| Variable | Beschreibung |
+---
+
+## Key Features
+
+### 📷 Smart Document Scanner & Edge Detection
+* **Real-time Corner Detection:** Uses client-side WebAssembly models (`doc_corner_net.onnx`) for real-time document boundary detection.
+* **Auto-Cropping & Perspective Correction:** Automatically deskews and crops receipts and invoices.
+* **Multi-Page Merging:** Scan multi-page documents directly from mobile devices and merge them into a single PDF.
+
+### 🤖 Local AI Extraction & Metadata Pipeline
+* **Ollama LLM Integration:** Automatically extracts company name, category, invoice number, gross amount, and document date.
+* **Smart Duplication Scoring:** Multi-factor duplicate prevention comparing amounts, document dates, partner names, and invoice numbers.
+* **ExifTool Metadata Embedding:** Automatically writes extracted metadata into PDF Exif headers for permanent offline indexing.
+
+### 💼 Modular Accounting (Lexoffice & BuchhaltungsButler)
+* **Unlimited Tenant Accounts:** Connect any number of separate Lexoffice and BuchhaltungsButler accounts.
+* **Live Connection Test:** Test credentials and connection status directly within the configuration modal.
+* **1-Click Transfer:** Directly upload receipts and invoices to the target accounting provider with automatic duplicate checks.
+
+### 🔒 Zero-Trust Privacy & Security Architecture
+* **Client-Only Secrets:** Third-party credentials (Lexoffice API keys, BuchhaltungsButler secrets, ClickUp tokens, Gmail OAuth tokens) are stored **only in the user's browser `localStorage`**. No third-party keys are ever written to server configuration files.
+* **Least-Privilege Drive Scope:** Uses `https://www.googleapis.com/auth/drive.file` and the Google Drive Picker dialog. The app only accesses files explicitly chosen by the user.
+* **Brute-Force Protection:** Rate-limiting middleware (`express-rate-limit`) enforces a 60-second lockout after 5 incorrect login attempts.
+* **HTTP Security Headers:** Protected by `helmet` with custom Content Security Policy (CSP) allowing Google GIS, Drive Picker, and WebAssembly execution.
+
+### 💾 High-Performance SQLite Storage
+* **WASM Embedded Database:** Powered by `sql.js` (WebAssembly-based SQLite) for platform independence, zero native compilation (`node-gyp`), and crash-proof deployments.
+* **Indexed Queries:** Fast filtering by date, status, company, and category.
+* **Atomic Transactions:** Prevents file corruption during unexpected server restarts.
+
+---
+
+## Technology Stack
+
+| Layer | Technology |
 | :--- | :--- |
-| `AUTH_ENABLED` | Schaltet den Passwortschutz ein (`true`) oder aus (`false`). Standardmäßig empfohlen: `true`. |
-| `APP_PASSWORD` | Das Master-Passwort, mit dem sich Standard-Nutzer auf der Webseite einloggen müssen. |
-| `ADMIN_PASSWORD` | Das Administrator-Passwort. Admins können u.A. Einstellungen ändern, Kategorien verwalten und Dateien als Privat markieren. |
-| `JWT_SECRET` | Ein sicherer, zufälliger String (z.B. ein langer Hash), der genutzt wird, um die Login-Tokens digital zu signieren. Verhindert Manipulation der Sessions. |
-| `LOCAL_AI_HOST` | Die URL zur lokalen KI-Instanz (z. B. Ollama-Server). Beispiel: `http://localhost:11434`. Hierüber kommuniziert das Backend zur KI-Auswertung der Scans. |
+| **Frontend** | Vanilla ES Modules, Bootstrap 5, Material Symbols, Google Fonts |
+| **Image & AI Processing** | ONNX Runtime Web (WASM), OpenCV.js, Tesseract.js |
+| **Backend Runtime** | Node.js 20+ (Express 5) |
+| **Database** | SQLite (via `sql.js` WASM engine) |
+| **Document Processing** | Python 3 (PyMuPDF, OpenCV), Poppler (`pdftoppm`), Ghostscript (`gs`), ExifTool |
+| **Authentication** | JSON Web Tokens (JWT), HTTP-Only Cookies, Client GIS OAuth 2.0 |
+| **Deployment** | Docker (Debian Bookworm), Coolify |
 
 ---
 
-## 🤖 Lokale KI mit Ollama konfigurieren
+## Getting Started
 
-Die App übermittelt die gescannten Dokumente an ein lokales KI-Modell, welches in der Standardkonfiguration **Gemma (2B Parameter)** oder ähnliche kleine Modelle wie `gemma:2b` / `gemma2:2b` verwendet.
+### Prerequisites
+* **Node.js**: Version 20.0.0 or higher
+* **Python**: Version 3.10+ (for backend PDF renderers)
+* **System Utilities**: `poppler-utils`, `ghostscript`, `graphicsmagick`, `exiftool`
+* **Ollama**: Running locally or reachable over the network (e.g. `http://localhost:11434`)
 
-### Eingesetztes KI-Modell
-Wir verwenden hierbei leichtgewichtige Modelle (wie z.B. Gemma 2B), da diese **schnell in der Textverarbeitung** sind, **weniger Halluzinationen** bei reiner Datenextraktion aufweisen und den Server nicht überlasten. Der Zweck des Modells besteht darin, das rohe OCR-Gekritzel des Scans zu analysieren und ein sauberes JSON mit Kategorien, Dokumenten-Typ (Rechnung etc.) und automatischen Dateinamen zu generieren.
+### Local Setup
 
-### Ressourcen-Verbrauch
-- **RAM / VRAM**: Für Modelle der 2B-bis-4B-Klasse werden in der Regel nur **ca. 6 GB Arbeitsspeicher** (idealerweise VRAM auf einer GPU) benötigt.
-- **CPU**: Falls keine kompatible Grafikkarte vorhanden ist, laufen diese Modelle auch sehr passabel auf modernen CPUs (brauchen dann meist 1-4 Sekunden für eine Antwort).
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/smarthomeagentur/adobe_cloud_downloader.git
+   cd adobe_cloud_downloader
+   ```
 
-### Ollama im Netzwerk erreichbar machen
-Standardmäßig lauscht Ollama nur auf `localhost` (127.0.0.1). Wenn deine App im Docker/Coolify-Container auf einem Server läuft, aber Ollama auf deinem Heim-PC oder einem anderen Host betrieben wird, musst du Ollama anweisen, netzwerkweit Verbindungen anzunehmen:
-
-1. **Unter Linux / bei Systemd-Diensten:**
-   Ergänze in der Service-Datei (`systemctl edit ollama.service`) im Block `[Service]` die Umgebungsvariable:
-   `Environment="OLLAMA_HOST=0.0.0.0"`
-   Danach `systemctl daemon-reload` und `systemctl restart ollama`.
-2. **Unter Windows:**
-   Öffne die Systemumgebungsvariablen und lege eine neue Variable `OLLAMA_HOST` mit dem Wert `0.0.0.0` an. Danach Ollama (und das Terminal) neu starten.
-3. **Bei Docker-Containern (Ollama):**
-   Mappe einfach den Port: `-p 11434:11434` (Ollama lauscht im Docker-Image standardmäßig schon auf allen Interfaces).
-
-*Hinweis:* Achte darauf, dass Port 11434 in deiner Firewall freigegeben ist, wenn die beiden Systeme nicht im selben lokalen Netz liegen.
-
----
-
-## ☁️ Google API Key erstellen und einbinden
-
-Damit die App Dokumente auf Google Drive hochladen kann, benötigst du eigene Zugangsdaten.
-
-**Schritt-für-Schritt-Anleitung:**
-1. Gehe zur [Google Cloud Console](https://console.cloud.google.com/).
-2. Erstelle ein neues Projekt.
-3. Gehe zu **APIs & Dienste** > **Bibliothek** und aktiviere folgende APIs:
-   - **Google Drive API** (für Drive Uploads & Ordnerverwaltung)
-   - **Gmail API** (für den Posteingang-Scanner & E-Mail-Archivierung)
-4. Navigiere zu **APIs & Dienste** > **OAuth-Zustimmungsbildschirm** und konfiguriere ihn (Nutzerart "Extern" o. "Intern", App-Name vergeben, Testnutzer hinzufügen, falls Status "Testing").
-5. Gehe zu **Anmeldedaten** > **Anmeldedaten erstellen** > **OAuth-Client-ID**.
-6. Wähle als Anwendungstyp **Webanwendung** oder **Desktop-App** (je nach genauer Auth-Implementierung im Backend, in der Regel wird Desktop für den initialen Token-Generierungs-Flow genutzt).
-7. Lade die Datei herunter und benenne sie in `gdrive_secret.json` um. Lege sie ins Root-Verzeichnis des Projekts.
-8. Beim **allersten Start** der App wird ein Login-Flow ausgelöst (oft im Terminal per Link). Nach der Bestätigung wird eine `token.json` generiert, mit der das Backend fortan autonom Dokumente hochladen kann. *Diese Datei sicher aufbewahren!*
-
----
-
-## 🚀 Installation & lokaler Start
-
-1. Repository klonen oder herunterladen.
-2. Abhängigkeiten installieren:
+2. **Install Node.js dependencies:**
    ```bash
    npm install
    ```
-3. Umgebungsvariablen (`.env`), `gdrive_secret.json` und `token.json` (falls bereits vorhanden) im Hauptverzeichnis ablegen.
-4. Server starten:
+
+3. **Set up the Python virtual environment:**
+   ```bash
+   python3 -m venv venv
+   # On Linux / macOS / WSL:
+   source venv/bin/activate
+   pip install opencv-python-headless numpy pytesseract pymupdf
+
+   # On Windows (PowerShell):
+   .\venv\Scripts\Activate.ps1
+   pip install opencv-python-headless numpy pytesseract pymupdf
+   ```
+
+4. **Configure Environment Variables:**
+   Copy the example environment file and customize your passwords:
+   ```bash
+   cp .env.example .env
+   ```
+
+5. **Start the application:**
    ```bash
    npm start
    ```
-   *(Für Development: `npm run debug`)*
-5. Die App ist nun unter `http://localhost:3000` (oder dem in der App konfigurierten Port) erreichbar.
+   Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## 🐳 Deployment mit Coolify
+## Deployment with Docker & Coolify
 
-Dank der `docker-compose.yml` Methode und dem bereiten `Dockerfile` lässt sich die Anwendung spielend leicht mit [Coolify](https://coolify.io/) hosten. Alle erforderlichen Datenträgerpfade (Volumes) und Umgebungsvariablen (Environment Variables) werden von Coolify automatisch aus der Compose-Datei eingelesen.
+The repository includes an optimized `Dockerfile` tailored for containerized environments and [Coolify](https://coolify.io/).
 
-1. **Service in Coolify erstellen:**
-   - Wähle als Basis **Docker Compose** und verknüpfe dein GitHub/GitLab-Repository. Alternativ funktioniert auch der Standard **Dockerfile** Build (bei dem du die Storage-Pfade dann allerdings manuell eintragen musst).
-2. **Environment Variables setzen:**
-   - Gehe in das Dashboard für den konfigurierten Service zum Tab **Environment Variables**.
-   - Die in der `docker-compose.yml` definierten Variablen wie `PORT`, `LOCAL_AI_HOST`, `APP_PASSWORD`, `JWT_SECRET` und `AUTH_ENABLED` sind hier bereits vorausgefüllt. Passe die Werte entsprechend an (insbesondere das Passwort und `LOCAL_AI_HOST`).
-3. **Google Drive Credentials / Konfiguration (Persistent Storage):**
-   - Coolify scannt den Block `volumes:` mit.
-   - Da `.json`-Dateien nicht ins öffentliche Git-Repo gehören, füllst du die fehlenden Configs via **"Configuration Files"**-Tab in Coolify ab. Alternativ im **"Persistent Storage"**-Tab sicherstellen, dass `/app/token.json`, `/app/settings.json` und `/app/gdrive_secret.json` richtig zugeordnet sind.
-4. **Deploy:**
-   - Klicke auf `Deploy`. Coolify baut das Image vom `Dockerfile` und veröffentlicht die Anwendung samt automatisch eingerichtetem SSL-Zertifikat.
+### Persistent Storage Volumes
+To persist your database, settings, and downloaded files across deployments, configure the following persistent volume mounts in Coolify:
+
+| Container Path | Purpose |
+| :--- | :--- |
+| `/app/store` | SQLite database (`database.sqlite`), Google OAuth tokens |
+| `/app/downloads` | Temporary and processed PDF documents |
+
+### Coolify Configuration Notes
+* **Port:** Set the application port to `3000`.
+* **Reverse Proxy:** The server has `trust proxy` enabled out-of-the-box to work seamlessly with Traefik and Caddy.
+* **Zero C++ Compilation:** Uses WebAssembly SQLite, eliminating segmentation faults across different Linux kernel and architecture configurations.
 
 ---
+
+## Environment Configuration Reference
+
+All server-side configuration is managed via environment variables in `.env`:
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `PORT` | `number` | `3000` | Port for the HTTP server. |
+| `AUTH_ENABLED` | `boolean` | `true` | Enables or disables the password gate. |
+| `APP_PASSWORD` | `string` | - | Password required for standard user access. |
+| `ADMIN_PASSWORD` | `string` | - | Password required for administrative settings and actions. |
+| `JWT_SECRET` | `string` | - | Cryptographic secret for signing session cookies (min. 32 chars). |
+| `LOCAL_AI_HOST` | `string` | `http://localhost:11434` | URL to the Ollama AI instance. |
+| `LOCAL_AI_MODEL` | `string` | `gemma4:e2b` | Ollama model identifier for document processing. |
+| `AI_TIMEOUT_MS` | `number` | `360000` | AI inference timeout in milliseconds (6 minutes). |
+| `GOOGLE_CLIENT_ID` | `string` | - | Google OAuth Client ID for GIS authentication. |
+
+---
+
+## API Endpoints Reference
+
+### Authentication & Config
+* `POST /api/login` - Authenticate standard user session.
+* `POST /api/admin-login` - Authenticate admin session.
+* `GET /api/config` - Get public client configuration (Google Client ID, Auth status).
+
+### Document Processing & Jobs
+* `POST /api/upload` - Upload new PDF documents for processing.
+* `POST /api/scan` - Process camera-scanned images into merged PDF.
+* `POST /api/preview` - Generate image enhancement preview.
+* `GET /api/jobs` - Retrieve all processed document jobs.
+* `POST /api/jobs/:id/hide` - Hide document from active list.
+* `POST /api/jobs/:id/unhide` - Restore hidden document.
+* `GET /api/jobs/:id/file` - Download original document file.
+* `GET /api/jobs/:id/thumb` - Retrieve document thumbnail image.
+
+### Search & Google Drive
+* `GET /api/search` - Live deep search across document metadata and OCR text.
+* `GET /api/drive/sync-preview` - Preview files in Google Drive available for import.
+* `POST /api/drive/sync-execute` - Trigger batch import of selected Drive documents.
+* `POST /api/drive/import-file` - Import a single Google Drive file into the pipeline.
+
+### Accounting Integration
+* `POST /api/accounting/test-connection` - Test credentials for Lexoffice or BuchhaltungsButler.
+* `POST /api/accounting/check` - Check for duplicate invoices in the selected accounting account.
+* `POST /api/accounting/transfer` - Upload receipt/invoice to the selected accounting provider.
+
+---
+
+## License
+
+ISC License. Copyright (c) 2026 smarthomeagentur.
