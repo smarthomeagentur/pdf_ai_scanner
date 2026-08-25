@@ -75,7 +75,7 @@ router.post("/api/auth/disconnect", requireAdmin, async (req, res) => {
   }
 });
 
-router.get("/api/auth/token-status", requireAdmin, (req, res) => {
+router.get("/api/auth/token-status", (req, res) => {
   const isConnected = fs.existsSync(TOKEN_FILE);
   res.json({ isConnected });
 });

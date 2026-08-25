@@ -14,18 +14,28 @@ async function getPickerToken() {
     } catch (e) {}
   }
 
-  const authClient = await driveApi.authorize();
-  if (!authClient) {
-    throw new Error("Google Drive ist noch nicht verbunden. Bitte zuerst verbinden.");
-  }
+  try {
+    const authClient = await driveApi.authorize();
+    if (!authClient) {
+      throw new Error("Google Drive ist noch nicht verbunden. Bitte zuerst verbinden.");
+    }
 
-  const tokenRes = await authClient.getAccessToken();
-  const token = typeof tokenRes === "string" ? tokenRes : (tokenRes ? tokenRes.token : null);
-  if (!token) {
-    throw new Error("Kein gültiges Google Drive Access Token vorhanden.");
-  }
+    const tokenRes = await authClient.getAccessToken();
+    const token = typeof tokenRes === "string" ? tokenRes : (tokenRes ? tokenRes.token : null);
+    if (!token) {
+      throw new Error("Kein gültiges Google Drive Access Token vorhanden.");
+    }
 
-  return { token, clientId };
+    return { token, clientId };
+  } catch (err) {
+    if (err.message && err.message.includes("invalid_grant")) {
+      if (fs.existsSync(TOKEN_FILE)) {
+        try { fs.unlinkSync(TOKEN_FILE); } catch (e) {}
+      }
+      throw new Error("Google Drive Sitzung abgelaufen. Bitte erneut 'Mit Google Anmelden' klicken.");
+    }
+    throw err;
+  }
 }
 
 async function resolveFolder(folderIdOrUrl) {
