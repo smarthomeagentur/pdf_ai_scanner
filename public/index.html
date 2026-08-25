@@ -704,59 +704,68 @@
               <strong>Buchhaltung API-Zugänge (nur Admin):</strong>
               <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
             </label>
-            <div style="margin-top: 10px">
-              <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für wirewire GmbH:</label>
-              <input
-                type="password"
-                id="lexoffice-key-wirewire"
-                autocomplete="off"
-                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                placeholder="Lexoffice API Key..."
-              />
-            </div>
-            <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px;">
-              <div style="font-size: 0.9em; font-weight: bold; color: #333; margin-bottom: 8px;">BuchhaltungsButler Zugangsdaten für The Wire UG:</div>
-              <div style="margin-bottom: 8px;">
-                <label style="font-size: 0.85em; color: #555">API Client (z. B. the_wire_ug):</label>
-                <input
-                  type="text"
-                  id="butler-key-thewire-client"
-                  autocomplete="off"
-                  style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="the_wire_ug"
-                />
-              </div>
-              <div style="margin-bottom: 8px;">
-                <label style="font-size: 0.85em; color: #555">API Secret:</label>
+            <form id="lexoffice-form-wirewire" autocomplete="off" onsubmit="return false;">
+              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
+              <div style="margin-top: 10px">
+                <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für wirewire GmbH:</label>
                 <input
                   type="password"
-                  id="butler-key-thewire-secret"
-                  autocomplete="off"
-                  style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="BuchhaltungsButler Secret..."
+                  id="lexoffice-key-wirewire"
+                  autocomplete="new-password"
+                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                  placeholder="Lexoffice API Key..."
                 />
               </div>
-              <div>
-                <label style="font-size: 0.85em; color: #555">API Key:</label>
+            </form>
+            <form id="butler-form-thewire" autocomplete="off" onsubmit="return false;">
+              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
+              <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px;">
+                <div style="font-size: 0.9em; font-weight: bold; color: #333; margin-bottom: 8px;">BuchhaltungsButler Zugangsdaten für The Wire UG:</div>
+                <div style="margin-bottom: 8px;">
+                  <label style="font-size: 0.85em; color: #555">API Client (z. B. the_wire_ug):</label>
+                  <input
+                    type="text"
+                    id="butler-key-thewire-client"
+                    autocomplete="off"
+                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
+                    placeholder="the_wire_ug"
+                  />
+                </div>
+                <div style="margin-bottom: 8px;">
+                  <label style="font-size: 0.85em; color: #555">API Secret:</label>
+                  <input
+                    type="password"
+                    id="butler-key-thewire-secret"
+                    autocomplete="new-password"
+                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
+                    placeholder="BuchhaltungsButler Secret..."
+                  />
+                </div>
+                <div>
+                  <label style="font-size: 0.85em; color: #555">API Key:</label>
+                  <input
+                    type="password"
+                    id="butler-key-thewire-key"
+                    autocomplete="new-password"
+                    style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
+                    placeholder="BuchhaltungsButler Key..."
+                  />
+                </div>
+              </div>
+            </form>
+            <form id="lexoffice-form-polyxo" autocomplete="off" onsubmit="return false;">
+              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
+              <div style="margin-top: 10px">
+                <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für Polyxo Studios GmbH:</label>
                 <input
                   type="password"
-                  id="butler-key-thewire-key"
-                  autocomplete="off"
-                  style="width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px;"
-                  placeholder="BuchhaltungsButler Key..."
+                  id="lexoffice-key-polyxo"
+                  autocomplete="new-password"
+                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                  placeholder="Lexoffice API Key..."
                 />
               </div>
-            </div>
-            <div style="margin-top: 10px">
-              <label style="font-size: 0.9em; color: #555">Lexoffice API-Key für Polyxo Studios GmbH:</label>
-              <input
-                type="password"
-                id="lexoffice-key-polyxo"
-                autocomplete="off"
-                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                placeholder="Lexoffice API Key..."
-              />
-            </div>
+            </form>
           </div>
 
           <div
@@ -768,25 +777,28 @@
               <strong>ClickUp Integration (nur Admin):</strong>
               <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
             </label>
-            <div style="margin-top: 10px">
-              <label style="font-size: 0.9em; color: #555">ClickUp API Key (Personal Token):</label>
-              <input
-                type="password"
-                id="clickup-api-key"
-                autocomplete="off"
-                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                placeholder="pk_..."
-              />
-            </div>
-            <div style="margin-top: 10px">
-              <label style="font-size: 0.9em; color: #555">Zielliste ID (z.B. Inbox):</label>
-              <input
-                type="text"
-                id="clickup-list-id"
-                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
-                placeholder="901510878865"
-              />
-            </div>
+            <form id="clickup-form" autocomplete="off" onsubmit="return false;">
+              <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
+              <div style="margin-top: 10px">
+                <label style="font-size: 0.9em; color: #555">ClickUp API Key (Personal Token):</label>
+                <input
+                  type="password"
+                  id="clickup-api-key"
+                  autocomplete="new-password"
+                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                  placeholder="pk_..."
+                />
+              </div>
+              <div style="margin-top: 10px">
+                <label style="font-size: 0.9em; color: #555">Zielliste ID (z.B. Inbox):</label>
+                <input
+                  type="text"
+                  id="clickup-list-id"
+                  style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 5px;"
+                  placeholder="901510878865"
+                />
+              </div>
+            </form>
             <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
               <label style="font-size: 0.9em; color: #333; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" id="clickup-auto-task" style="width: 18px; height: 18px;" />
@@ -1296,7 +1308,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260825_skipped_sync_v18"></script>
+      <script type="module" src="/js/app.js?v=20260825_picker_origin_v24"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

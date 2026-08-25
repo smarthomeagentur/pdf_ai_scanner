@@ -7,19 +7,19 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 ## 1. Priorisierte Task-Übersicht
 
 | Priorität | ID | Kategorie | Aufgabe | Betroffene Dateien | Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **P0 (Kritisch)** | **SEC-01** | Sicherheit | Hardcodierte Standard-Passwörter & JWT-Secrets entfernen | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
-| **P0 (Kritisch)** | **SEC-02** | Sicherheit | XSS-Prävention im Frontend (HTML-Escaping bei dynamischem Rendering) | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js) | ✅ **Erledigt** |
-| **P0 (Kritisch)** | **SEC-03** | Sicherheit | Path-Traversal-Schutz bei Datei-Downloads & Previews | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
-| **P0 (Kritisch)** | **SEC-05** | Datenschutz / Zero-Trust | Client-Only Secrets (Lexoffice, BuchhaltungsButler, ClickUp) im Browser `localStorage` | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
-| **P0 (Kritisch)** | **SEC-06** | Datenschutz / Drive Scope | Restriktiver Google Drive Scope `drive.file` + Google Drive Picker Dialog | [`app/driveApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/driveApi.js), [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
-| **P0 (Kritisch)** | **SEC-07** | Datenschutz / Mail Zero-Trust | Gmail-Tokens clientseitig isoliert (`localStorage`), Server restlos bereinigt | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ✅ **Erledigt** |
-| **P1 (Hoch)** | **ARCH-01** | Architektur | Modularisierung von `index.js` (Backend-Monolith in Services/Routes aufteilen) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `app/` | ⏳ Bereit zur Umsetzung |
-| **P1 (Hoch)** | **ARCH-02** | Architektur | Modularisierung von `public/index.js` (Frontend-Skript aufteilen) | [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js) | ⏳ Bereit zur Umsetzung |
-| **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung (`jobs.json`) auf SQLite / Embedded DB migrieren | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `store/` | ⏳ Bereit zur Umsetzung |
-| **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `app/` | ⏳ Bereit zur Umsetzung |
-| **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ⏳ Bereit zur Umsetzung |
-| **P2 (Mittel)** | **CLEAN-01** | Bereinigung | Server-seitige Legacy-Gmail-Reste isolieren / aufräumen | [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) | ⏳ Bereit zur Umsetzung |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| **P0 (Kritisch)** | **SEC-01** | Sicherheit | Hardcodierte Standard-Passwörter & JWT-Secrets entfernen | [`src/config/secrets.js`](file:///c:/WSL/adobe_cloud_downloader/src/config/secrets.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-02** | Sicherheit | XSS-Prävention im Frontend (HTML-Escaping bei dynamischem Rendering) | [`public/js/utils.js`](file:///c:/WSL/adobe_cloud_downloader/public/js/utils.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-03** | Sicherheit | Path-Traversal-Schutz bei Datei-Downloads & Previews | [`src/middleware/security.js`](file:///c:/WSL/adobe_cloud_downloader/src/middleware/security.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-05** | Datenschutz / Zero-Trust | Client-Only Secrets (Lexoffice, BuchhaltungsButler, ClickUp) im Browser `localStorage` | [`public/js/state.js`](file:///c:/WSL/adobe_cloud_downloader/public/js/state.js), [`src/config/settings.js`](file:///c:/WSL/adobe_cloud_downloader/src/config/settings.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-06** | Datenschutz / Drive Scope | Restriktiver Google Drive Scope `drive.file` + Google Drive Picker Dialog | [`app/driveApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/driveApi.js), [`public/js/drivePicker.js`](file:///c:/WSL/adobe_cloud_downloader/public/js/drivePicker.js) | ✅ **Erledigt** |
+| **P0 (Kritisch)** | **SEC-07** | Datenschutz / Mail Zero-Trust | Gmail-Tokens clientseitig isoliert (`localStorage`), Server restlos bereinigt | [`public/js/gmailScanner.js`](file:///c:/WSL/adobe_cloud_downloader/public/js/gmailScanner.js), [`src/routes/inboxRoutes.js`](file:///c:/WSL/adobe_cloud_downloader/src/routes/inboxRoutes.js) | ✅ **Erledigt** |
+| **P1 (Hoch)** | **ARCH-01** | Architektur | Modularisierung von `index.js` (Backend-Monolith in Services/Routes aufteilen) | [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `src/` | ✅ **Erledigt** |
+| **P1 (Hoch)** | **ARCH-02** | Architektur | Modularisierung von `public/index.js` (Frontend in native ES-Module aufgeteilt) | `public/js/`, [`public/index.html`](file:///c:/WSL/adobe_cloud_downloader/public/index.html) | ✅ **Erledigt** |
+| **P2 (Mittel)** | **CLEAN-01** | Bereinigung | Server-seitige Legacy-Gmail-Reste isolieren / aufräumen | [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), `src/` | ✅ **Erledigt** |
+| **P1 (Hoch)** | **PERF-01** | Datenhaltung | Jobs-Speicherung (`jobs.json`) auf SQLite / Embedded DB migrieren | `src/services/jobQueueService.js`, `store/` | ⏳ Bereit zur Umsetzung |
+| **P1 (Hoch)** | **STAB-01** | Stabilität | Subprocess-Timeouts & Zombie-Process-Handling (Python/Ghostscript/Exiftool) | `src/services/fileRenderService.js`, `app/` | ⏳ Bereit zur Umsetzung |
+| **P2 (Mittel)** | **SEC-04** | Sicherheit | HTTP-Security-Header via `helmet` & globales Rate-Limiting | `src/server.js` | ⏳ Bereit zur Umsetzung |
 | **P2 (Mittel)** | **AI-01** | KI / Robustheit | Ollama Timeout-Handling mit `AbortController` & Exponential Backoff | [`app/aiAgent.js`](file:///c:/WSL/adobe_cloud_downloader/app/aiAgent.js) | ⏳ Bereit zur Umsetzung |
 | **P3 (Niedrig)** | **TEST-01** | Qualitätssicherung | Automatisierte Test-Suite (Unit- & Integrationstests) | `test/`, `package.json` | ⏳ Bereit zur Umsetzung |
 | **P3 (Niedrig)** | **DOC-01** | Dokumentation | OpenAPI / Swagger API-Dokumentation & `.env.example` | `readme.md`, `.env.example` | ⏳ Bereit zur Umsetzung |
@@ -120,35 +120,50 @@ Dieses Dokument enthält eine umfassende Code-Review und Architekturanalyse des 
 
 ---
 
-### Task ARCH-01: Backend-Modularisierung (`index.js` aufteilen)
+### Task ARCH-01: Backend-Modularisierung (`index.js` aufgeteilt)
 - **Priorität:** `P1 (Hoch)`
 - **Kategorie:** Architektur & Wartbarkeit
-- **Betroffene Dateien:** [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js) (aktuell ~3.940 Zeilen)
-- **Aktueller Zustand:**
-  `index.js` enthält alle Express-Routen, WebSocket/SSE-Handler, Queue-Verarbeitung, Drive-Sync-Cron, Lexoffice-Integration, OCR-Pipeline, ClickUp-Logik und Fehlerbehandlung in einer einzigen Datei. Dies erschwert Tests, Refactorings und Fehlerbehebungen erheblich.
-- **Lösungsvorschlag:**
-  Aufteilung in eine saubere Ordnerstruktur:
-  - `src/routes/` (`auth.js`, `jobs.js`, `drive.js`, `settings.js`, `admin.js`)
-  - `src/services/` (`jobQueueService.js`, `ocrService.js`, `metadataService.js`, `driveSyncService.js`)
-  - `src/middleware/` (`authMiddleware.js`, `errorHandler.js`, `rateLimiters.js`)
-  - `src/config/` (`settings.js`, `constants.js`)
-  - `index.js` dient nur noch als schlanker Bootstrap-Einstiegspunkt (< 100 Zeilen).
+- **Betroffene Dateien:** [`index.js`](file:///c:/WSL/adobe_cloud_downloader/index.js), `src/`
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  `index.js` wurde vollständig entflochten (< 100 Zeilen Bootstrap-Code). Die Logik ist sauber unterteilt:
+  - `src/config/`: `paths.js`, `secrets.js`, `settings.js`
+  - `src/middleware/`: `auth.js`, `security.js`, `rateLimiters.js`, `upload.js`
+  - `src/services/`: `driveService.js`, `jobQueueService.js`, `deepSearchService.js`, `duplicateService.js`, `accountingService.js`, `clickupService.js`, `backupService.js`, `inboxService.js`, `fileRenderService.js`
+  - `src/routes/`: `authRoutes.js`, `settingsRoutes.js`, `driveRoutes.js`, `jobRoutes.js`, `searchRoutes.js`, `accountingRoutes.js`, `clickupRoutes.js`, `inboxRoutes.js`, `adminRoutes.js`, `scannerRoutes.js`
+  - `src/server.js`: Express-App Initialisierung und Middleware-Setup.
 
 ---
 
-### Task ARCH-02: Frontend-Modularisierung (`public/index.js` aufteilen)
+### Task ARCH-02: Frontend-Modularisierung (`public/js/` native ES-Module)
 - **Priorität:** `P1 (Hoch)`
 - **Kategorie:** Architektur & Frontend
-- **Betroffene Dateien:** [`public/index.js`](file:///c:/WSL/adobe_cloud_downloader/public/index.js) (aktuell ~5.500 Zeilen)
-- **Aktueller Zustand:**
-  Die gesamte Frontend-Logik (Kamera-Scanner, Bildverarbeitung/Cropping, Drive-Sync-UI, Gmail-Client-Scanner, Job-Details, Einstellungen, Filterung) liegt in einer einzigen JS-Datei ohne Modulsystem.
-- **Lösungsvorschlag:**
-  Nutzung von nativen ES-Modulen (`<script type="module">`) oder einem leichtgewichtigen Bundler (Vite / ESBuild):
-  - `public/js/scanner.js` (Kamera & Bildbeschneidung)
-  - `public/js/gmailClient.js` (GIS Auth, Direct Gmail API Scanner, LocalStorage)
-  - `public/js/jobsList.js` (Job-Karten, Details, Aktionen, Retry, Hide)
-  - `public/js/settings.js` (Settings Modal & Secrets Management)
-  - `public/js/app.js` (Main Coordinator)
+- **Betroffene Dateien:** `public/js/`, [`public/index.html`](file:///c:/WSL/adobe_cloud_downloader/public/index.html)
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Das Frontend nutzt native ES-Module (`<script type="module" src="/js/app.js">`):
+  - `public/js/utils.js`: XSS-Escaping, Formatierungshelfer, Toasts, Debounce
+  - `public/js/state.js`: LocalStorage Zero-Trust Secrets & Status-Manager
+  - `public/js/api.js`: REST-Client mit Secret-Injection
+  - `public/js/drivePicker.js`: Google Drive Picker Integration
+  - `public/js/jobs.js`: Beleg-Raster, Filterung, Aktionen & Detailansicht
+  - `public/js/deepSearch.js`: Live-Volltext- & Metadatensuche
+  - `public/js/accounting.js`: Lexoffice & BuchhaltungsButler Modal & Sync
+  - `public/js/clickup.js`: ClickUp Tasks & Sync
+  - `public/js/driveSync.js`: Google Drive Import & Synchronisation
+  - `public/js/gmailScanner.js`: Client-Side GIS Scanner & Posteingang-Tab
+  - `public/js/settings.js`: Einstellungs-Dialog
+  - `public/js/app.js`: Einstiegspunkt & Bootstrapping
+
+---
+
+### Task CLEAN-01: Server-seitige Legacy-Gmail-Reste bereinigt
+- **Priorität:** `P2 (Mittel)`
+- **Kategorie:** Bereinigung & Hygiene
+- **Betroffene Dateien:** [`app/gmailApi.js`](file:///c:/WSL/adobe_cloud_downloader/app/gmailApi.js), `src/`
+- **Status:** ✅ **Erledigt**
+- **Umsetzung:**
+  Nicht mehr genutzte Server-Routen (`/api/gmail/*`) wurden restlos entfernt. Die Datei `app/gmailApi.js` wurde als Legacy-Stub markiert. Alle Gmail-Vorgänge laufen zu 100 % im Client.
 
 ---
 
