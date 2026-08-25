@@ -100,8 +100,8 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         warped = orig
     else:
         pts = np.array([float(x) for x in coords_str.split(',')]).reshape(4, 2)
-        eval_warped = auto_exposure(four_point_transform(orig, pts))
-        warped = orig
+        warped = four_point_transform(orig, pts)
+        eval_warped = auto_exposure(warped.copy())
 
     warped = auto_exposure(warped)
 

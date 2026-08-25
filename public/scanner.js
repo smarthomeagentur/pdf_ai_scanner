@@ -1353,33 +1353,26 @@ captureBtn.addEventListener("click", async () => {
     document.getElementById("previewLoadingText").style.display = "block";
   }
 
-  // --- RESCAN AUF DEM FERTIGEN HOCHAUFLÖSENDEN FOTO ---
-  // Standardmäßig (currentEngine === "onnx") wird ONNX verwendet.
-  // OpenCV dient als Fallback (wenn ONNX nichts findet oder noch lädt) bzw. als primäre Engine bei Button-Auswahl.
-  try {
-    let postScanCorners = null;
-
-    if (currentEngine === "onnx") {
-      if (onnxReady) {
-        // Gesamtes Foto übergeben (sx=0, sy=0, volle Abmessungen)
+  // Falls im Live-Stream keine Kanten erfasst wurden, versuche Post-Scan auf dem Rohfoto
+  if (!hasRealCorners) {
+    try {
+      let postScanCorners = null;
+      if (currentEngine === "onnx" && onnxReady) {
         postScanCorners = await detectCornersOnnx(
           canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height
         );
-      }
-    } else {
-      // Reiner OpenCV Modus (nur wenn per Button aktiv)
-      if (openCvReady) {
+      } else if (openCvReady) {
         postScanCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
       }
-    }
 
-    if (postScanCorners && postScanCorners.length === 4) {
-      frozenCorners = sortAndOrderCorners(postScanCorners);
-      hasRealCorners = true;
-      console.log("Erfolgreicher Post-Scan auf Rohfoto!");
+      if (postScanCorners && postScanCorners.length === 4) {
+        frozenCorners = sortAndOrderCorners(postScanCorners);
+        hasRealCorners = true;
+        console.log("Erfolgreicher Post-Scan auf Rohfoto!");
+      }
+    } catch (e) {
+      console.error("Post-Scan fehlgeschlagen:", e);
     }
-  } catch (e) {
-    console.error("Post-Scan fehlgeschlagen, arbeite mit Video-Koordinaten weiter:", e);
   }
 
   // Wenn am Ende immer noch keine gültigen Ecken vorliegen
