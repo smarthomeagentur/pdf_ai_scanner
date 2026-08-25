@@ -21,11 +21,22 @@ const SCANNER_SCRIPT = path.join(__dirname, "..", "workers", "scanner.py");
 const COMPRESS_SCRIPT = path.join(__dirname, "..", "workers", "compress_pdf.py");
 
 function getPythonPath() {
+  if (process.env.PYTHON_PATH) return process.env.PYTHON_PATH;
+
+  const isWindows = process.platform === "win32";
   const venvWin = path.join(ROOT_DIR, "venv", "Scripts", "python.exe");
   const venvUnix = path.join(ROOT_DIR, "venv", "bin", "python");
-  if (fs.existsSync(venvWin)) return venvWin;
+  const dotVenvUnix = path.join(ROOT_DIR, ".venv", "bin", "python");
+
+  if (isWindows) {
+    if (fs.existsSync(venvWin)) return venvWin;
+    return "python";
+  }
+
+  // Linux / WSL / Docker / macOS
   if (fs.existsSync(venvUnix)) return venvUnix;
-  return "python";
+  if (fs.existsSync(dotVenvUnix)) return dotVenvUnix;
+  return "python3";
 }
 
 module.exports = {
