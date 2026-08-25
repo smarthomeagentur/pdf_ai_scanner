@@ -647,6 +647,12 @@ export function openDocPreview(jobId) {
   const downloadUrl = `/api/jobs/${job.id}/file?download=1`;
   const extUrl = res.webViewLink || job.webViewLink || (isDriveOnly ? `https://drive.google.com/file/d/${rawDriveId}/view` : fileUrl);
 
+  // Use embeddable Google Drive preview URL if drive-only
+  let previewSrc = fileUrl;
+  if (isDriveOnly && rawDriveId) {
+    previewSrc = `https://drive.google.com/file/d/${rawDriveId}/preview`;
+  }
+
   if (downloadBtn) {
     downloadBtn.href = downloadUrl;
     downloadBtn.setAttribute("download", filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
@@ -661,7 +667,13 @@ export function openDocPreview(jobId) {
   iframe.onload = () => {
     if (loading) loading.style.setProperty("display", "none", "important");
   };
-  iframe.src = fileUrl;
+
+  // Safety timeout in case mobile browser does not fire iframe onload for PDF
+  setTimeout(() => {
+    if (loading) loading.style.setProperty("display", "none", "important");
+  }, 2500);
+
+  iframe.src = previewSrc;
 }
 
 export function closeDocPreview() {
