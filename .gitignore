@@ -24,3 +24,5 @@ jobs.json
 edge*.jpg
 # ONNX Runtime WASM files - auto-generated from node_modules in Dockerfile
 /public/vendor/
+scratch/**
+/scratch

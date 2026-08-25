@@ -36,7 +36,6 @@ def four_point_transform(image, pts):
     return warped
 
 def auto_exposure(img):
-    # Sanfterer Belichtungsausgleich, um helle Farben (Briefköpfe etc.) nicht auszuwaschen
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     min_val = np.percentile(gray, 1)
     max_val = np.percentile(gray, 99)
@@ -47,13 +46,9 @@ def auto_exposure(img):
     return img
 
 def is_color_document(img):
-    # Auf Vorschaugröße skalieren für Performance
     small = cv2.resize(img, (400, int(400 * img.shape[0] / img.shape[1])))
-    
-    # Rauschen glätten, da Bildrauschen in dunkleren Bereichen oft fälschlicherweise als Farbe (Sättigung) erkannt wird
     small = cv2.GaussianBlur(small, (5, 5), 0)
     
-    # Schneller Beleuchtungsausgleich, um z.B. gelbliches Fotolicht nicht als "Bild-Farbe" zu werten
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
     bg = cv2.morphologyEx(small, cv2.MORPH_DILATE, kernel)
     diff = cv2.divide(small.astype(np.float32), bg.astype(np.float32), scale=255.0)
@@ -62,17 +57,11 @@ def is_color_document(img):
     hsv = cv2.cvtColor(diff, cv2.COLOR_BGR2HSV)
     _, s, v = cv2.split(hsv)
     
-    # Zähle Pixel, die signifikant bunt sind. 
-    # Schwelle für Sättigung deutlich erhöht (s > 50), um Rauschen auf grauem Papier zu ignorieren.
-    # Wir kappen auch oben (v < 220) strenger ab, damit das unregelmäßige Grauweiß nicht mitzählt.
     color_mask = (s > 50) & (v < 220) & (v > 30)
     color_ratio = np.sum(color_mask) / (small.shape[0] * small.shape[1])
-    
-    # Ab ca. 1% echter bunter Farbfläche gilt es als Farbdokument
     return color_ratio > 0.01
 
 def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
-    # 1. Bild laden...
     image = cv2.imread(image_path)
     if image is None:
         print("Fehler: Konnte Bild nicht laden.", file=sys.stderr)
@@ -81,13 +70,7 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
     orig = image.copy()
     eval_warped = None
 
-    # Die perspektivische Korrektur (Entzerrung + Zuschneiden) haben wir 
-    # bereits im Frontend in 1920x1080 (bzw hochauflösend) vorgenommen!
-    # Daher ist 'orig' von nun an das bereinigte Rechteck und wir müssen keine
-    # "coords" Fallbacks mehr durchführen - außer das System hat im Frontend nicht getriggert.
-
     if not coords_str or coords_str == "skip": 
-        # Optional: Falls jemand ohne Kantenfindung geklickt hat..
         ratio = image.shape[0] / 500.0
         try:
             image_small = cv2.resize(image, (int(image.shape[1] / ratio), 500))
@@ -114,139 +97,94 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         else:
             warped = four_point_transform(orig, screenCnt.reshape(4, 2) * ratio)
     elif coords_str == "frontend_cropped":
-        # Die Datei ist bereits der absolut sauber beschnittene Bereich aus dem Frontend Final-Upload
         warped = orig
     else:
-        # Für die Vorschau übergibt das Frontend hier optional die 4 Koordinaten (polygonrahmen)
-        # So kann die Farb-Detektion NUR den Inhalt INNERHALB des Rahmens testen.
-        # Wir geben trotzdem das volle Bild (orig) zurück, damit das UI im Edit-Modus nicht kaputt geht!
         pts = np.array([float(x) for x in coords_str.split(',')]).reshape(4, 2)
         eval_warped = auto_exposure(four_point_transform(orig, pts))
         warped = orig
 
-    # Initial die Belichtung korrigieren (Spreizung des Kontrasts, Ausgleich der Kamera-Schwankungen)
     warped = auto_exposure(warped)
 
     if algorithm == "auto":
-        # Wenn wir Koordinaten bekamen (Vorschau), prüfen wir NUR das ausgeschnittene Blatt (eval_warped)
         if eval_warped is not None:
             algorithm = "color_enhanced" if is_color_document(eval_warped) else "white_paper"
         else:
             algorithm = "color_enhanced" if is_color_document(warped) else "white_paper"
         print(f"Auto-Detect: Nutze Filter '{algorithm}'")
 
-    # 5. Bild für Textoptimierung aufbereiten
     warped_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
     
     if algorithm == "white_paper":
-        # 5.1 Schattenrechnung "Weißes Papier" Scanner-Effekt (Background Normalization)
-        # Erstellt ein Hintergrundbild (Morphologische Dilatation verwischt alle schwarzen Buchstaben komplett 
-        # und behält nur das gräuliche Hintergrundpapier inklusive Schatten).
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
         background = cv2.morphologyEx(warped_gray, cv2.MORPH_DILATE, kernel)
-        
-        # Teilen wir nun das originale Grau-Bild durch das berechnete Hintergrund-Papier:
-        # -> Wo das Papier grau mit Schatten war, ist (grau / grau) = 1 (Also Weiß im Zielbild)
-        # -> Wo Text war (dunkel / hell) = Ein Bereich nahe 0 (bleibt Schwarzbruch)
         diff = cv2.divide(warped_gray, background, scale=255)
         
-        # 5.2 Lineare Kontrast-Streckung (Weißpunkt / Schwarzpunkt)
         black_point = 150
         white_point = 200
-        
         processed = np.clip((diff.astype(np.float32) - black_point) * (255.0 / (white_point - black_point)), 0, 255).astype(np.uint8)
 
     elif algorithm == "color_enhanced":
-        # 1. Flatfield Correction (Entfernung von ungleichmäßiger Ausleuchtung)
         h_orig, w_orig = warped.shape[:2]
-        
-        # Auf kleine Größe skalieren für Performance bei der Morphologie
         scale = 300.0 / max(h_orig, w_orig)
         small = cv2.resize(warped, (0, 0), fx=scale, fy=scale)
         
-        # Morphologische Dilatation verwischt dunklen Text/Inhalt und behält das helle Papier + den echten Schattenverlauf!
-        # Damit Farbfotos/Logos nicht als dunkle Löcher im Licht fungieren, nehmen wir einen extrem großen Kernel.
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
         bg_estimate = cv2.morphologyEx(small, cv2.MORPH_DILATE, kernel)
         
-        # Starkes Weichzeichnen (Blur) für einen perfekten, stufenlosen Schatten-Verlauf ohne harte Kanten
         bg_smooth = cv2.GaussianBlur(bg_estimate, (51, 51), 0)
         bg_illumination = cv2.resize(bg_smooth, (w_orig, h_orig), interpolation=cv2.INTER_CUBIC)
         
-        # 2. Division: Neutralisiert Raumlicht und Schatten; drückt Papier sauber gegen Weiß!
-        # Durch die Trennung bleiben die Kontraste von eingebetteten Farbfotos 100% original.
         bg_illumination_f = bg_illumination.astype(np.float32)
-        bg_illumination_f[bg_illumination_f == 0] = 1.0 # Division durch Null verhindern
+        bg_illumination_f[bg_illumination_f == 0] = 1.0
         normalized = cv2.divide(warped.astype(np.float32), bg_illumination_f, scale=255.0)
         out = np.clip(normalized, 0, 255).astype(np.uint8)
         
-        # 3. Lebhafter Kontrast & Farberhalt im farbsicheren LAB-Farbraum
         lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         
-        # L-Kanal: Deutlich härteres Clipping für lupenreines Weiß!
         l_float = l.astype(np.float32)
-        black_p = 15   # Text und Schattenpunkte bleiben tiefschwarz
-        white_p = 210  # WICHTIG: Von 245 auf 210 gesenkt! Alles was auch nur leicht grau ist (z.B. Verläufe links), wäscht jetzt 100% weiß aus.
+        black_p = 15
+        white_p = 210
         l_float = np.clip((l_float - black_p) * (255.0 / (white_p - black_p)), 0, 255)
         l = l_float.astype(np.uint8)
         
-        # Sättigung anheben auf a/b-Kanälen (Neutralpunkt = 128) - schützt das Farbspektrum
         a_f = (a.astype(np.float32) - 128.0) * 1.1 + 128.0
         b_f = (b.astype(np.float32) - 128.0) * 1.1 + 128.0
         a = np.clip(a_f, 0, 255).astype(np.uint8)
         b = np.clip(b_f, 0, 255).astype(np.uint8)
         
-        # 4. Radikaler Anti-Fleck für reines Papier (ohne Bildbereiche zu verwaschen)
-        # Sättigung im LAB-Raum berechnen: Abstand vom neutralen Grau/Weiß (128, 128)
         chroma = np.sqrt((a.astype(np.float32) - 128) ** 2 + (b.astype(np.float32) - 128) ** 2)
-        is_color = chroma > 18  # Pixel mit nennenswerter Sättigung sind bunt
+        is_color = chroma > 18
 
-
-        # Nachdem wir `l` am Whitepoint massiv gepusht haben, ist fast alles Papier ohnehin schon nah an 255.
-        # Wir bleichen nur Pixel aus, die eine geringe Sättigung haben (reines Papier).
         paper_mask_final = (l > 230) & (~is_color)
-        a[paper_mask_final] = 128  # Neutral / Keine Farbe (beseitigt rosa/grünes Rauschen im weißen Papier)
-        b[paper_mask_final] = 128  # Neutral / Keine Farbe
-        l[paper_mask_final] = 255  # Maximales LED-Weiß
-
+        a[paper_mask_final] = 128
+        b[paper_mask_final] = 128
+        l[paper_mask_final] = 255
         
         lab = cv2.merge([l, a, b])
         processed = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
         
-        # 5. Behutsame Unschärfe-Maske für crispe Buchstaben-Kanten
         blur_for_sharp = cv2.GaussianBlur(processed, (0, 0), 1.5)
         processed = cv2.addWeighted(processed, 1.2, blur_for_sharp, -0.2, 0)
 
     elif algorithm == "bw_adaptive":
-
-        # Herkömmlicher hart-schwarz-weiß-Modus (gut für sehr schwacht gedruckte Bons)
-        #blurred = cv2.GaussianBlur(warped_gray, (5, 5), 0)
         processed = cv2.adaptiveThreshold(warped_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 15)
 
     elif algorithm == "grayscale":
-        # Einfach Graustufen ohne Filter, optimal für Bilder 
         processed = warped_gray
         
     elif algorithm == "color":
-        # Originalfarbe beibehalten (für Farbdokumente)
         processed = warped
         
     else:
-        # Fallback
         processed = warped_gray
 
-    # Falls nur eine einfache Vorschau (JPG) statt OCR PDF gewünscht ist
     output_ext = os.path.splitext(output_pdf_path)[1].lower()
     if output_ext in ['.jpg', '.jpeg', '.png']:
         cv2.imwrite(output_pdf_path, processed)
         print(f"Preview gespeichert in: {output_pdf_path}")
         return
 
-    # 6. OCR mit Tesseract und als durchsuchbares PDF speichern
-    # Maximale OCR-Qualität bei humaner Dateigröße:
-    # Statt pauschal hochzuskalieren (was 12MP Smartphone-Bilder auf unnötige 48MP pumpte = ~20MB PDFs),
-    # deckeln wir das Bild auf 300 DPI für A4 (~2500x3500 Pixel) bis maximal 3500px an der längsten Kante.
     max_dim = 2500.0
     h, w = processed.shape[:2]
     
@@ -255,13 +193,7 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         ocr_image = cv2.resize(processed, None, fx=scale_factor, fy=scale_factor, interpolation=cv2.INTER_AREA)
     else:
         ocr_image = processed.copy()
-        
-    # --oem 1: Nutzt die moderne LSTM-Engine von Tesseract.
-    # --psm 3: Pseudosmartes Dokument-Layout (Spaltenerkennung).
-    # preserve_interword_spaces=1: Leerzeichen bleiben erhalten.
-    
-    # PyTesseract konvertiert Numpy arrays per default als RGB, d.h. wenn wir ihm BGR übergeben, 
-    # sind Rot und Blau vertauscht, und bei sehr dunklen Flächen gehen Mischfarben verloren / wirken entsättigt.
+
     if len(ocr_image.shape) == 3 and ocr_image.shape[2] == 3:
         ocr_image = cv2.cvtColor(ocr_image, cv2.COLOR_BGR2RGB)
 
@@ -270,8 +202,6 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
     with open(output_pdf_path, 'wb') as f:
         f.write(pdf_bytes)
 
-    # Preview-Bild (Thumbnail) für das Frontend-Menü generieren
-    # .pdf zu .jpg machen und Bild schreiben
     output_jpg_path = output_pdf_path.replace('.pdf', '.jpg')
     preview_img = cv2.resize(processed, (400, int(400 * (processed.shape[0] / processed.shape[1]))))
     cv2.imwrite(output_jpg_path, preview_img)

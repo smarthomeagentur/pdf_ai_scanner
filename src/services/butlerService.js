@@ -1,4 +1,4 @@
-// app/butlerApi.js
+// src/services/butlerService.js
 // BuchhaltungsButler (buchhaltungsbutler.de) REST API Integration
 
 const BUTLER_API_BASE = "https://api.buchhaltungsbutler.de/v1";
@@ -189,32 +189,47 @@ async function searchReceipts({ client, secret, key, invoiceNumber, fileName, am
       const rDate = receipt.date || receipt.receipt_date || receipt.created_at || "";
       const rPartner = (receipt.customer_name || receipt.partner || receipt.comment || "").toLowerCase();
 
+      let hasInvMatch = false;
+      let hasFileMatch = false;
+      let hasAmountMatch = false;
+      let hasDateMatch = false;
+      let hasCompanyMatch = false;
+
       // 1. Invoice Number Match
       if (cleanInvNum && rNum && (rNum.includes(cleanInvNum) || cleanInvNum.includes(rNum))) {
         matchReasons.push(`Rechnungsnummer stimmt überein (${receipt.invoice_number || receipt.number})`);
+        hasInvMatch = true;
       }
 
       // 2. Filename Match
       if (cleanFileName && rFile && (rFile.includes(cleanFileName) || cleanFileName.includes(rFile))) {
         matchReasons.push(`Dateiname stimmt überein (${receipt.file_name})`);
+        hasFileMatch = true;
       }
 
       // 3. Amount Match
       if (targetAmountEuro !== null && rAmount > 0 && Math.abs(rAmount - targetAmountEuro) < 0.02) {
         matchReasons.push(`Betrag stimmt überein (${rAmount.toFixed(2).replace(".", ",")} €)`);
+        hasAmountMatch = true;
       }
 
       // 4. Date Match
       if (documentDate && documentDate !== "-" && documentDate !== "unknown" && rDate.startsWith(documentDate)) {
         matchReasons.push(`Belegdatum stimmt überein (${documentDate})`);
+        hasDateMatch = true;
       }
 
       // 5. Company Match
       if (cleanCompany && rPartner && (rPartner.includes(cleanCompany) || cleanCompany.includes(rPartner))) {
         matchReasons.push(`Unternehmen / Partner stimmt überein (${receipt.customer_name || receipt.partner || cleanCompany})`);
+        hasCompanyMatch = true;
       }
 
-      if (matchReasons.length > 0) {
+      // High confidence criteria for duplicate detection
+      const isConfidentMatch = hasInvMatch || hasFileMatch || (hasAmountMatch && (hasDateMatch || hasCompanyMatch));
+
+      if (isConfidentMatch && matchReasons.length > 0) {
+        const score = (hasInvMatch ? 4 : 0) + (hasFileMatch ? 3 : 0) + (hasAmountMatch ? 3 : 0) + (hasDateMatch ? 2 : 0) + (hasCompanyMatch ? 1 : 0);
         matches.push({
           id: rId,
           fileName: receipt.file_name || "Unbekannt",
@@ -223,7 +238,7 @@ async function searchReceipts({ client, secret, key, invoiceNumber, fileName, am
           date: rDate || "-",
           partner: receipt.customer_name || receipt.partner || "-",
           matchReasons,
-          score: matchReasons.length,
+          score,
         });
       }
     }

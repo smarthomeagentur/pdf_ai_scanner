@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
+const { appSettings } = require("../config/settings");
 dotenv.config();
 
 class ClickUpAPI {
@@ -14,7 +15,6 @@ class ClickUpAPI {
     this.apiKey = apiKey ? apiKey.trim() : (process.env.CLICKUP_API_KEY || "").trim();
     this.defaultListId = defaultListId ? defaultListId.trim() : (process.env.CLICKUP_LIST_ID || "").trim();
     
-    // Support either a single company field id string (legacy) or an object with all custom fields
     const cfObj = typeof customFields === "string" ? { company: customFields } : (customFields || {});
     this.customFields = {
       company: cfObj.company || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID || "f20f5692-fcce-4f62-9c63-1521d68f33f4",
@@ -68,22 +68,52 @@ class ClickUpAPI {
     return headers;
   }
 
-  /**
-   * Verify token & list accessibility
-   */
   async verifyConnection(listId = this.defaultListId) {
     if (!this.apiKey) {
       return { success: false, error: "Kein ClickUp API-Key hinterlegt." };
     }
     try {
-      const res = await fetch(`${this.baseUrl}/list/${listId}`, {
+      // 1. Verify User / Teams first
+      const userRes = await fetch(`${this.baseUrl}/user`, {
         method: "GET",
         headers: this.getHeaders(),
       });
-      if (!res.ok) {
-        const errText = await res.text();
-        return { success: false, status: res.status, error: `ClickUp Fehler (${res.status}): ${errText}` };
+
+      if (!userRes.ok) {
+        const errText = await userRes.text();
+        return { success: false, status: userRes.status, error: `ClickUp API-Key ungültig (${userRes.status}): ${errText}` };
       }
+
+      const userData = await userRes.json();
+      const userName = userData.user?.username || userData.user?.email || "ClickUp User";
+
+      if (!listId) {
+        return {
+          success: true,
+          listName: "Keine Liste angegeben (API-Key gültig)",
+          spaceName: userName,
+        };
+      }
+
+      // 2. Verify List ID if provided
+      const cleanListId = listId.replace(/[^a-zA-Z0-9_-]/g, "");
+      const res = await fetch(`${this.baseUrl}/list/${cleanListId}`, {
+        method: "GET",
+        headers: this.getHeaders(),
+      });
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          return {
+            success: false,
+            status: 404,
+            error: `ClickUp API-Key ist gültig (${userName}), aber die List-ID '${listId}' wurde nicht gefunden oder ist nicht freigeschaltet.`,
+          };
+        }
+        const errText = await res.text();
+        return { success: false, status: res.status, error: `ClickUp Listen-Fehler (${res.status}): ${errText}` };
+      }
+
       const data = await res.json();
       return {
         success: true,
@@ -97,9 +127,6 @@ class ClickUpAPI {
     }
   }
 
-  /**
-   * Fetch all tasks from a list (with pagination)
-   */
   async fetchListTasks(listId = this.defaultListId) {
     if (!this.apiKey) return [];
     let page = 0;
@@ -116,7 +143,6 @@ class ClickUpAPI {
         allTasks.push(...data.tasks);
         if (data.last_page) break;
         page++;
-        // Safety cap to avoid infinite loops
         if (page > 50) break;
       } catch (err) {
         console.error("[CLICKUP] Fehler beim Abrufen der Tasks:", err);
@@ -127,17 +153,11 @@ class ClickUpAPI {
     return allTasks;
   }
 
-  /**
-   * Format amount into EUR
-   */
   formatAmount(amountInCents) {
     if (!amountInCents || amountInCents <= 0) return "";
     return (amountInCents / 100).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
   }
 
-  /**
-   * Convert DD.MM.YYYY or similar to Unix epoch milliseconds
-   */
   parseDocumentDateToMs(dateStr) {
     if (!dateStr || dateStr === "unknown") return null;
     const match = dateStr.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
@@ -150,9 +170,6 @@ class ClickUpAPI {
     return isNaN(date.getTime()) ? null : date.getTime();
   }
 
-  /**
-   * Build Rich Markdown Description & Metadata
-   */
   generateMarkdownDescription(aiResult, fileName, driveLink = "") {
     const company = aiResult.company || "Unbekannt";
     const category = aiResult.category || "Dokument";
@@ -204,9 +221,6 @@ class ClickUpAPI {
     return md;
   }
 
-  /**
-   * Generate optimal task name matching make.com blueprint format: `(Kategorie) Beschreibung`
-   */
   generateTaskName(aiResult) {
     const category = aiResult.category || "Dokument";
     let desc = "";
@@ -214,7 +228,6 @@ class ClickUpAPI {
     if (Array.isArray(aiResult.tags) && aiResult.tags.length > 0 && aiResult.tags[0] !== "none") {
       desc = aiResult.tags.slice(0, 3).join(" ");
     } else if (aiResult.full) {
-      // Fallback: extract description from formatted filename
       const match = aiResult.full.match(/-\s*([^()-]+(?:\s[^()-]+)*)\s*\(/);
       if (match) desc = match[1].trim();
     }
@@ -223,9 +236,6 @@ class ClickUpAPI {
     return `(${category}) ${desc}`;
   }
 
-  /**
-   * Create task in ClickUp list
-   */
   async createTask(listId, payload) {
     const res = await fetch(`${this.baseUrl}/list/${listId}/task`, {
       method: "POST",
@@ -241,9 +251,6 @@ class ClickUpAPI {
     return await res.json();
   }
 
-  /**
-   * Update existing task in ClickUp
-   */
   async updateTask(taskId, payload) {
     const res = await fetch(`${this.baseUrl}/task/${taskId}`, {
       method: "PUT",
@@ -259,9 +266,6 @@ class ClickUpAPI {
     return await res.json();
   }
 
-  /**
-   * Set custom field on task
-   */
   async setCustomField(taskId, fieldId, value) {
     if (!fieldId || value === undefined || value === null) return;
     try {
@@ -277,9 +281,6 @@ class ClickUpAPI {
     }
   }
 
-  /**
-   * Add tag to task
-   */
   async addTag(taskId, tagName) {
     if (!tagName) return;
     const cleanTag = encodeURIComponent(tagName.trim());
@@ -295,9 +296,6 @@ class ClickUpAPI {
     }
   }
 
-  /**
-   * Upload PDF attachment to task
-   */
   async uploadAttachment(taskId, fileBuffer, fileName) {
     if (!fileBuffer || !taskId) return null;
     try {
@@ -327,13 +325,9 @@ class ClickUpAPI {
     }
   }
 
-  /**
-   * Check if a job/document matches an existing task
-   */
   findMatchingTask(job, clickupTasks = []) {
     if (!clickupTasks || clickupTasks.length === 0) return null;
 
-    // 1. Direct match by stored ClickUp Task ID
     if (job.clickup && job.clickup.taskId) {
       const directMatch = clickupTasks.find((t) => t.id === job.clickup.taskId);
       if (directMatch) return directMatch;
@@ -342,19 +336,15 @@ class ClickUpAPI {
     const aiResult = job.result || {};
     const fullFileName = (aiResult.full || job.originalName || "").toLowerCase().trim();
     const cleanFull = fullFileName.replace(/\.pdf$/i, "").trim();
-
-    // Expected task name
     const expectedTaskName = this.generateTaskName(aiResult).toLowerCase().trim();
 
     for (const task of clickupTasks) {
       const taskName = (task.name || "").toLowerCase().trim();
 
-      // 2. Exact or very close task name match
       if (taskName === expectedTaskName && expectedTaskName.length > 5) {
         return task;
       }
 
-      // 3. Match by Google Drive Web View Link or ID in task description
       if (aiResult.webViewLink && task.description && task.description.includes(aiResult.webViewLink)) {
         return task;
       }
@@ -362,7 +352,6 @@ class ClickUpAPI {
         return task;
       }
 
-      // 4. Match by attachment title in ClickUp task
       if (task.attachments && Array.isArray(task.attachments)) {
         const hasMatchingAttachment = task.attachments.some((att) => {
           const attName = (att.title || att.name || "").toLowerCase().trim().replace(/\.pdf$/i, "");
@@ -375,13 +364,9 @@ class ClickUpAPI {
     return null;
   }
 
-  /**
-   * Check if a matching ClickUp task is already up-to-date with the job's AI data
-   */
   isTaskUpToDate(job, matchingTask) {
     if (!job || !matchingTask) return false;
 
-    // 1. If job was already transferred to this task and no new AI analysis ran since
     if (job.clickup && job.clickup.taskId === matchingTask.id && job.clickup.transferredAt) {
       if (job.aiPipelineCompletedAt) {
         const transferredTime = new Date(job.clickup.transferredAt).getTime();
@@ -394,29 +379,24 @@ class ClickUpAPI {
       }
     }
 
-    // 2. If task is already closed / done / bezahlt / erledigt
     const statusStr = (matchingTask.status?.status || "").toLowerCase();
     if (matchingTask.status?.type === "closed" || ["closed", "erledigt", "bezahlt", "done", "abgeschlossen"].includes(statusStr)) {
       return true;
     }
 
     const aiResult = job.result || {};
-
-    // 3. Name check
     const expectedName = this.generateTaskName(aiResult).toLowerCase().trim();
     const currentName = (matchingTask.name || "").toLowerCase().trim();
     if (expectedName && currentName && expectedName !== currentName && expectedName !== "(dokument) dokument") {
       return false;
     }
 
-    // 4. Custom fields check (if custom fields are returned in task)
     if (matchingTask.custom_fields && Array.isArray(matchingTask.custom_fields)) {
       const getFieldValue = (fieldId) => {
         const f = matchingTask.custom_fields.find((cf) => cf.id === fieldId);
         return f ? f.value : null;
       };
 
-      // Check invoice number
       if (aiResult.invoiceNumber && aiResult.invoiceNumber !== "none") {
         const currInv = getFieldValue(this.customFields.invoiceNumber);
         if (currInv && String(currInv).trim() !== String(aiResult.invoiceNumber).trim()) {
@@ -424,7 +404,6 @@ class ClickUpAPI {
         }
       }
 
-      // Check invoice amount
       if (aiResult.invoiceAmmount && aiResult.invoiceAmmount > 0) {
         const currAmount = getFieldValue(this.customFields.invoiceAmount);
         const expectedFloat = aiResult.invoiceAmmount / 100;
@@ -436,7 +415,6 @@ class ClickUpAPI {
         }
       }
 
-      // Check company
       if (aiResult.company && aiResult.company !== "Unbekannt") {
         const currComp = getFieldValue(this.customFields.company);
         if (currComp && String(currComp).trim().toLowerCase() !== String(aiResult.company).trim().toLowerCase()) {
@@ -445,7 +423,6 @@ class ClickUpAPI {
       }
     }
 
-    // If matchingTask already exists, has matching name and no conflicting fields
     if (currentName && expectedName && (currentName === expectedName || currentName.includes(expectedName) || expectedName.includes(currentName))) {
       return true;
     }
@@ -453,9 +430,6 @@ class ClickUpAPI {
     return false;
   }
 
-  /**
-   * Build array of custom field values for task creation/update
-   */
   buildCustomFieldsPayload(aiResult = {}, driveLink = "") {
     const fields = [];
     const addField = (fieldId, value) => {
@@ -464,30 +438,24 @@ class ClickUpAPI {
       }
     };
 
-    // 1. Firma (short_text)
     if (aiResult.company && aiResult.company !== "Unbekannt") {
       addField(this.customFields.company, aiResult.company);
     }
-    // 2. Kategorie (short_text)
     if (aiResult.category && aiResult.category !== "unknown") {
       addField(this.customFields.category, aiResult.category);
     }
-    // 3. Belegdatum (short_text)
     if (aiResult.documentDate && aiResult.documentDate !== "unknown") {
       addField(this.customFields.documentDate, aiResult.documentDate);
     }
-    // 4. Schlagworte (short_text)
     if (aiResult.tags) {
       const tagsStr = Array.isArray(aiResult.tags)
         ? aiResult.tags.filter((t) => t && t !== "none").join(", ")
         : String(aiResult.tags);
       if (tagsStr) addField(this.customFields.tags, tagsStr);
     }
-    // 5. Rechnungsnummer (short_text)
     if (aiResult.invoiceNumber && aiResult.invoiceNumber !== "none") {
       addField(this.customFields.invoiceNumber, aiResult.invoiceNumber);
     }
-    // 6. Rechnungsbetrag (currency / number float e.g. 19.99)
     if (aiResult.invoiceAmmount !== undefined && aiResult.invoiceAmmount !== null && aiResult.invoiceAmmount > 0) {
       const amountFloat =
         typeof aiResult.invoiceAmmount === "number"
@@ -497,7 +465,6 @@ class ClickUpAPI {
         addField(this.customFields.invoiceAmount, amountFloat);
       }
     }
-    // 7. Google Drive Link (url)
     if (driveLink) {
       addField(this.customFields.driveLink, driveLink);
     }
@@ -505,9 +472,6 @@ class ClickUpAPI {
     return fields;
   }
 
-  /**
-   * High-level method: Create or update document task in ClickUp
-   */
   async createOrUpdateDocumentTask({
     fileBuffer,
     fileName,
@@ -532,7 +496,6 @@ class ClickUpAPI {
     let isUpdated = false;
 
     if (existingTaskId) {
-      // UPDATE existing task
       const updatePayload = {
         name: taskName,
         markdown_description: markdownDesc,
@@ -543,7 +506,6 @@ class ClickUpAPI {
       task = await this.updateTask(existingTaskId, updatePayload);
       isUpdated = true;
     } else {
-      // CREATE new task
       const createPayload = {
         name: taskName,
         markdown_description: markdownDesc,
@@ -559,14 +521,12 @@ class ClickUpAPI {
 
     const taskId = task.id || existingTaskId;
 
-    // Set / update all Custom Fields if task was updated
     if (isUpdated && customFieldsPayload.length > 0) {
       for (const cf of customFieldsPayload) {
         await this.setCustomField(taskId, cf.id, cf.value);
       }
     }
 
-    // Upload attachment if buffer provided
     let attachmentData = null;
     if (uploadAttachment && fileBuffer && taskId) {
       attachmentData = await this.uploadAttachment(taskId, fileBuffer, fileName || "Dokument.pdf");
@@ -586,4 +546,19 @@ class ClickUpAPI {
   }
 }
 
-module.exports = ClickUpAPI;
+function getClickUpClient(clientApiKey = "", clientListId = "") {
+  const apiKey = clientApiKey || appSettings.CLICKUP_API_KEY || process.env.CLICKUP_API_KEY || "";
+  const listId = clientListId || appSettings.CLICKUP_LIST_ID || process.env.CLICKUP_LIST_ID || "";
+  return new ClickUpAPI(
+    apiKey,
+    listId,
+    appSettings.CLICKUP_CUSTOM_FIELD_COMPANY_ID || process.env.CLICKUP_CUSTOM_FIELD_COMPANY_ID,
+    appSettings.CLICKUP_STATUS_INVOICE || process.env.CLICKUP_STATUS_INVOICE,
+    appSettings.CLICKUP_STATUS_DEFAULT || process.env.CLICKUP_STATUS_DEFAULT
+  );
+}
+
+module.exports = {
+  ClickUpAPI,
+  getClickUpClient,
+};

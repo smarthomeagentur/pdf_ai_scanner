@@ -5,23 +5,53 @@ const pdf = require("pdf-parse");
 const { fromPath } = require("pdf2pic");
 const { Ollama } = require("ollama");
 const dotenv = require("dotenv");
+const { getPythonPath } = require("../config/paths");
 dotenv.config();
 
 let debug = false;
 const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
+const AI_TIMEOUT_MS = parseInt(process.env.AI_TIMEOUT_MS, 10) || 360000; // 6 Minuten Timeout
 
 let globalTesseractWorker = null;
 
-// Custom fetch to retry on timeout, which happens often on slow machines or when model cold-starts
-const customFetch = async (url, options) => {
-  try {
-    return await fetch(url, options);
-  } catch (error) {
-    if (error.cause && error.cause.code === "UND_ERR_HEADERS_TIMEOUT") {
-      console.log("[AI] Headers Timeout Error (Modell lädt eventuell noch). Zweiter Versuch...");
-      return await fetch(url, options);
+// Custom fetch with 6-minute timeout & retry backoff for Ollama cold-starts/long inference
+const customFetch = async (url, options = {}) => {
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let timeoutId = null;
+    try {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+
+      const res = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (res.status === 503 || res.status === 429) {
+        if (attempt < maxRetries) {
+          const waitTime = (attempt + 1) * 2000;
+          console.log(`[AI] Ollama Server ausgelastet (${res.status}). Warte ${waitTime}ms (Versuch ${attempt + 1}/${maxRetries})...`);
+          await new Promise((r) => setTimeout(r, waitTime));
+          continue;
+        }
+      }
+      return res;
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      const isTimeout = error.name === "AbortError" || (error.cause && error.cause.code === "UND_ERR_HEADERS_TIMEOUT");
+      if (attempt < maxRetries && !isTimeout) {
+        const waitTime = (attempt + 1) * 2000;
+        console.log(`[AI] Verbindungsfehler (${error.message}). Starte Neuversuch in ${waitTime}ms...`);
+        await new Promise((r) => setTimeout(r, waitTime));
+        continue;
+      }
+      if (error.name === "AbortError") {
+        throw new Error(`Ollama KI-Anfrage nach ${AI_TIMEOUT_MS / 1000}s wegen Timeout abgebrochen.`);
+      }
+      throw error;
     }
-    throw error;
   }
 };
 
@@ -185,14 +215,6 @@ function checkFileDate(text) {
   return "unknown";
 }
 
-function getPythonPath() {
-  const venvWin = path.join(__dirname, "..", "venv", "Scripts", "python.exe");
-  const venvUnix = path.join(__dirname, "..", "venv", "bin", "python");
-  if (fs.existsSync(venvWin)) return venvWin;
-  if (fs.existsSync(venvUnix)) return venvUnix;
-  return "python";
-}
-
 async function getPdfImageBuffer(pdfPath) {
   try {
     const uniqueId = Date.now() + "-" + Math.random().toString(36).substring(2, 9);
@@ -203,7 +225,10 @@ async function getPdfImageBuffer(pdfPath) {
       const util = require("util");
       const execFileAsync = util.promisify(execFile);
       const prefix = path.join(os.tmpdir(), `pdfPic_${uniqueId}`);
-      await execFileAsync("pdftoppm", ["-png", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix]);
+      await execFileAsync("pdftoppm", ["-png", "-r", "150", "-f", "1", "-l", "1", "-singlefile", pdfPath, prefix], {
+        timeout: 45000,
+        killSignal: "SIGKILL",
+      });
       const pngFile = `${prefix}.png`;
       if (fs.existsSync(pngFile)) {
         const buf = await fs.promises.readFile(pngFile);
@@ -225,7 +250,10 @@ async function getPdfImageBuffer(pdfPath) {
         "import sys, fitz; doc=fitz.open(sys.argv[1]); pix=doc[0].get_pixmap(dpi=150); pix.save(sys.argv[2]); doc.close()",
         pdfPath,
         outPng,
-      ]);
+      ], {
+        timeout: 45000,
+        killSignal: "SIGKILL",
+      });
       if (fs.existsSync(outPng)) {
         const buf = await fs.promises.readFile(outPng);
         await fs.promises.unlink(outPng).catch(() => {});
@@ -273,7 +301,10 @@ async function performOcr(base64Image, originalFilePath) {
     // VERSUCH 1: OCRmyPDF
     if (originalFilePath && originalFilePath.toLowerCase().endsWith(".pdf")) {
       try {
-        await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath]);
+        await execFileAsync("ocrmypdf", ["-l", "deu", "--force-ocr", originalFilePath, originalFilePath], {
+          timeout: 60000,
+          killSignal: "SIGKILL",
+        });
         console.log("[AI] ocrmypdf erfolgreich! PDF ist nun durchsuchbar.");
         const reReadText = await extractTextFromPdf(originalFilePath);
         if (reReadText && reReadText.trim().length > 20) {
