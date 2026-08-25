@@ -6,6 +6,7 @@ import { apiRequest } from "./api.js";
 import { state } from "./state.js";
 import { openAccountingModal } from "./accounting.js";
 import { transferJobToClickUp } from "./clickup.js";
+import { openAdminLoginModal } from "./settings.js";
 
 const START_PAGE_SIZE = 50;
 let currentPage = 1;
@@ -54,6 +55,7 @@ export function renderJobsList(jobs = state.jobs, force = false) {
   // Avoid visual flicker: check if page data or filters actually changed
   const currentSignature = JSON.stringify({
     page: currentPage,
+    isAdmin: state.isAdmin,
     filter: state.activeFilter,
     search: state.searchQuery,
     comp: state.companyFilter,
@@ -712,6 +714,31 @@ export function closeDocPreview() {
   if (iframe) iframe.src = "";
 }
 
+export async function ensureAdminAuth(actionCallback) {
+  if (state.isAdmin) {
+    if (typeof actionCallback === "function") actionCallback();
+    return true;
+  }
+  // Try server check in case cookie is already present
+  try {
+    const res = await apiRequest("/api/admin-check");
+    if (res && res.isAdmin) {
+      state.isAdmin = true;
+      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+      renderJobsList(state.jobs, true);
+      if (typeof actionCallback === "function") actionCallback();
+      return true;
+    }
+  } catch (e) {}
+
+  // If not authenticated, open login modal
+  openAdminLoginModal(() => {
+    if (typeof actionCallback === "function") actionCallback();
+  });
+  return false;
+}
+
 export function initJobEventDelegation() {
   document.addEventListener("click", async (e) => {
     // 0. Thumbnail Preview Click (Mobile & Desktop)
@@ -738,7 +765,7 @@ export function initJobEventDelegation() {
     const importDriveBtn = e.target.closest(".btn-import-drive-file");
     if (importDriveBtn) {
       if (!state.isAdmin) {
-        showToast("Importieren ist nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => importDriveBtn.click());
         return;
       }
       const driveId = importDriveBtn.getAttribute("data-drive-id");
@@ -796,7 +823,7 @@ export function initJobEventDelegation() {
     const privatePill = e.target.closest(".toggle-private-pill");
     if (privatePill) {
       if (!state.isAdmin) {
-        showToast("Nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => privatePill.click());
         return;
       }
       const jobId = privatePill.getAttribute("data-job-id");
@@ -818,7 +845,7 @@ export function initJobEventDelegation() {
     const catTarget = e.target.closest(".category-editable");
     if (catTarget) {
       if (!state.isAdmin) {
-        showToast("Kategorien können nur von Administratoren geändert werden.", "warning");
+        ensureAdminAuth(() => catTarget.click());
         return;
       }
       if (catTarget.parentElement.querySelector(".category-picker-box")) return;
@@ -848,13 +875,13 @@ export function initJobEventDelegation() {
         .map((c) => {
           const isSelected = c.toLowerCase() === currentCat.toLowerCase();
           const bg = isSelected ? "#6750a4" : "#f3e8ff";
-          const color = isSelected ? "#ffffff" : "#6b21a8";
-          return `<span class="cat-option-pill" data-value="${c}" style="cursor: pointer; padding: 5px 12px; border-radius: 16px; background: ${bg}; color: ${color}; font-size: 12.5px; font-weight: 500; white-space: nowrap;">${c}</span>`;
+          const color = isSelected ? "#ffffff" : "#49454f";
+          return `<span class="cat-option-pill" data-value="${c}" style="cursor: pointer; padding: 4px 10px; border-radius: 16px; background: ${bg}; color: ${color}; font-size: 12px; font-weight: 500; white-space: nowrap;">${c}</span>`;
         })
         .join("");
 
       const pickerBoxHtml = `
-        <div class="category-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); border: 1px solid #e0e0e0; z-index: 1000; width: 300px; display: flex; flex-wrap: wrap; gap: 6px;">
+        <div class="category-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); border: 1px solid #e0e0e0; z-index: 1000; width: 320px; display: flex; flex-wrap: wrap; gap: 6px;">
           <div style="width: 100%; font-size: 11.5px; color: #666; font-weight: 600; margin-bottom: 2px;">Kategorie auswählen:</div>
           ${pillsHtml}
         </div>`;
@@ -896,7 +923,7 @@ export function initJobEventDelegation() {
     const compTarget = e.target.closest(".company-editable");
     if (compTarget) {
       if (!state.isAdmin) {
-        showToast("Unternehmen können nur von Administratoren geändert werden.", "warning");
+        ensureAdminAuth(() => compTarget.click());
         return;
       }
       if (compTarget.parentElement.querySelector(".company-picker-box")) return;
@@ -970,7 +997,7 @@ export function initJobEventDelegation() {
     const clickupBtn = e.target.closest(".btn-manual-clickup-transfer");
     if (clickupBtn) {
       if (!state.isAdmin) {
-        showToast("ClickUp-Synchronisation ist nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => clickupBtn.click());
         return;
       }
       const jobId = clickupBtn.getAttribute("data-job-id");
@@ -982,7 +1009,7 @@ export function initJobEventDelegation() {
     const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync");
     if (lexofficeBtn) {
       if (!state.isAdmin) {
-        showToast("Buchhaltungssynchronisation ist nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => lexofficeBtn.click());
         return;
       }
       const jobId = lexofficeBtn.getAttribute("data-job-id");
@@ -994,7 +1021,7 @@ export function initJobEventDelegation() {
     const reprocessBtn = e.target.closest(".btn-reprocess-ai");
     if (reprocessBtn) {
       if (!state.isAdmin) {
-        showToast("Nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => reprocessBtn.click());
         return;
       }
       const jobId = reprocessBtn.getAttribute("data-job-id");
@@ -1006,7 +1033,7 @@ export function initJobEventDelegation() {
     const hideBtn = e.target.closest(".btn-hide-job");
     if (hideBtn) {
       if (!state.isAdmin) {
-        showToast("Nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => hideBtn.click());
         return;
       }
       const jobId = hideBtn.getAttribute("data-job-id");
@@ -1019,7 +1046,7 @@ export function initJobEventDelegation() {
     const deleteBtn = e.target.closest(".btn-delete-job");
     if (deleteBtn) {
       if (!state.isAdmin) {
-        showToast("Nur für Administratoren verfügbar.", "warning");
+        ensureAdminAuth(() => deleteBtn.click());
         return;
       }
       const jobId = deleteBtn.getAttribute("data-job-id");
