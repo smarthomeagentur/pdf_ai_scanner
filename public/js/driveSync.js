@@ -3,13 +3,15 @@
  */
 import { escapeHtml, formatFileSize, formatDateDisplay, showToast, debugLog } from "./utils.js";
 import { apiRequest } from "./api.js";
+import { state } from "./state.js";
+import { openAdminLoginModal } from "./settings.js";
 
 let syncDataCache = null;
 let currentFilter = "all";
 
 export async function openDriveSyncModal() {
   if (!state.isAdmin) {
-    showToast("Google Drive Synchronisation ist nur für Administratoren verfügbar.", "warning");
+    openAdminLoginModal(() => openDriveSyncModal());
     return;
   }
   debugLog("DRIVE_SYNC", "Opening Google Drive Sync Modal...");
