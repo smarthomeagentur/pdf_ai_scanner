@@ -1,27 +1,38 @@
 const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
+const initSqlJs = require("sql.js");
 const { DB_FILE, JOBS_FILE } = require("../config/paths");
 
+let SQL = null;
 let db = null;
+let isInitialized = false;
 
-function getDatabase() {
-  if (db) return db;
+/**
+ * Initializes the SQLite (WASM) database.
+ * 100% portable: Zero native C++ compilation, zero segmentation faults across Coolify, Docker, Linux, Windows.
+ */
+async function initDatabase() {
+  if (isInitialized && db) return db;
 
-  db = new Database(DB_FILE);
-
-  // Performance & Resilience Pragmas (optimized for Docker / Coolify volumes)
-  try {
-    db.pragma("journal_mode = WAL");
-  } catch (walErr) {
-    db.pragma("journal_mode = DELETE");
+  if (!SQL) {
+    SQL = await initSqlJs();
   }
-  db.pragma("synchronous = NORMAL");
-  db.pragma("busy_timeout = 5000");
-  db.pragma("temp_store = MEMORY");
 
-  // Create tables
-  db.exec(`
+  // If existing database.sqlite exists on disk, load its binary buffer
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      const fileBuffer = fs.readFileSync(DB_FILE);
+      db = new SQL.Database(fileBuffer);
+    } catch (readErr) {
+      console.error("[SQLITE] Fehler beim Lesen von database.sqlite, erstelle neue Datenbank:", readErr);
+      db = new SQL.Database();
+    }
+  } else {
+    db = new SQL.Database();
+  }
+
+  // Create tables and indexes
+  db.run(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
       original_name TEXT NOT NULL,
@@ -60,34 +71,57 @@ function getDatabase() {
   `);
 
   runAutoMigration(db);
+  saveDatabaseToDisk();
 
+  isInitialized = true;
   return db;
 }
 
 /**
- * Automatically migrates existing jobs from store/jobs.json into SQLite on initial run.
+ * Persists the binary SQLite database to disk atomically to prevent corruption.
+ */
+function saveDatabaseToDisk() {
+  if (!db) return;
+  try {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    const tmpFile = `${DB_FILE}.tmp_${Date.now()}`;
+    fs.writeFileSync(tmpFile, buffer);
+    fs.renameSync(tmpFile, DB_FILE);
+  } catch (err) {
+    console.error("[SQLITE] Fehler beim Speichern von database.sqlite auf Festplatte:", err);
+  }
+}
+
+/**
+ * Automatically migrates existing jobs from store/jobs.json or jobs.json.migrated if DB is empty.
  */
 function runAutoMigration(database) {
   try {
-    const migrationState = database.prepare("SELECT value FROM app_state WHERE key = 'migration_done'").get();
-    if (migrationState && migrationState.value === "true") {
+    const stmt = database.prepare("SELECT value FROM app_state WHERE key = 'migration_done'");
+    let migrationDone = false;
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      migrationDone = row.value === "true";
+    }
+    stmt.free();
+
+    if (migrationDone) return;
+
+    const sourceFile = fs.existsSync(JOBS_FILE)
+      ? JOBS_FILE
+      : fs.existsSync(`${JOBS_FILE}.migrated`)
+      ? `${JOBS_FILE}.migrated`
+      : null;
+
+    if (!sourceFile) {
+      database.run("INSERT OR REPLACE INTO app_state (key, value) VALUES ('migration_done', 'true')");
       return;
     }
 
-    if (!fs.existsSync(JOBS_FILE)) {
-      database.prepare("INSERT OR REPLACE INTO app_state (key, value) VALUES ('migration_done', 'true')").run();
-      return;
-    }
+    console.log(`[SQLITE] Starte automatische Migration von ${path.basename(sourceFile)} nach database.sqlite...`);
 
-    console.log("[SQLITE] Starte automatische Migration von jobs.json nach database.sqlite...");
-
-    // 1. Sicherheitskopie erstellen
-    const backupFile = `${JOBS_FILE}.bak`;
-    fs.copyFileSync(JOBS_FILE, backupFile);
-    console.log(`[SQLITE] Backup erstellt: ${backupFile}`);
-
-    // 2. Daten einlesen
-    const rawData = fs.readFileSync(JOBS_FILE, "utf8");
+    const rawData = fs.readFileSync(sourceFile, "utf8");
     const parsed = JSON.parse(rawData);
 
     const uploadJobs = parsed.uploadJobs || {};
@@ -95,143 +129,202 @@ function runAutoMigration(database) {
     const processedDriveFiles = parsed.processedDriveFiles || [];
     const hiddenDriveFiles = parsed.hiddenDriveFiles || [];
 
-    const insertJobStmt = database.prepare(`
-      INSERT OR REPLACE INTO jobs (
-        id, original_name, status, source, upload_date, document_date,
-        category, company, invoice_number, invoice_amount, is_invoice,
-        is_hidden, is_private, suspected_duplicate, file_path,
-        raw_drive_id, drive_file_id, data_json, created_at, updated_at
-      ) VALUES (
-        @id, @original_name, @status, @source, @upload_date, @document_date,
-        @category, @company, @invoice_number, @invoice_amount, @is_invoice,
-        @is_hidden, @is_private, @suspected_duplicate, @file_path,
-        @raw_drive_id, @drive_file_id, @data_json, @created_at, @updated_at
-      )
-    `);
+    let count = 0;
+    const now = Date.now();
 
-    const setAppStateStmt = database.prepare("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)");
+    for (const jobId in uploadJobs) {
+      const job = uploadJobs[jobId];
+      if (!job || !job.id) continue;
 
-    const migrateTx = database.transaction(() => {
-      let count = 0;
-      const now = Date.now();
+      const originalName = job.originalName || job.result?.full || "Dokument.pdf";
+      const status = job.status || "completed";
+      const source = job.source || "upload";
+      const uploadDate = job.uploadDate || new Date(now).toISOString();
+      const documentDate = job.result?.documentDate || job.documentDate || "unknown";
+      const category = job.result?.category || job.category || "Unbekannt";
+      const company = job.result?.company || job.company || "Unbekannt";
+      const invoiceNumber = job.result?.invoiceNumber || job.invoiceNumber || "none";
+      const invoiceAmount = Number(job.result?.invoiceAmmount || job.invoiceAmmount || 0) || 0;
+      const isInvoice = (job.result?.isInvoice ?? job.isInvoice) ? 1 : 0;
+      const isHidden = job.isHidden ? 1 : 0;
+      const isPrivate = job.isPrivate ? 1 : 0;
+      const suspectedDuplicate = job.suspectedDuplicate ? 1 : 0;
+      const filePath = job.filePath || "";
+      const rawDriveId = job.rawDriveId || "";
+      const driveFileId = job.driveFileId || "";
 
-      for (const jobId in uploadJobs) {
-        const job = uploadJobs[jobId];
-        if (!job || !job.id) continue;
-
-        // Metadaten sauber extrahieren
-        const originalName = job.originalName || job.result?.full || "Dokument.pdf";
-        const status = job.status || "completed";
-        const source = job.source || "upload";
-        const uploadDate = job.uploadDate || new Date(now).toISOString();
-        const documentDate = job.result?.documentDate || job.documentDate || "unknown";
-        const category = job.result?.category || job.category || "Unbekannt";
-        const company = job.result?.company || job.company || "Unbekannt";
-        const invoiceNumber = job.result?.invoiceNumber || job.invoiceNumber || "none";
-        const invoiceAmount = Number(job.result?.invoiceAmmount || job.invoiceAmmount || 0) || 0;
-        const isInvoice = (job.result?.isInvoice ?? job.isInvoice) ? 1 : 0;
-        const isHidden = job.isHidden ? 1 : 0;
-        const isPrivate = job.isPrivate ? 1 : 0;
-        const suspectedDuplicate = job.suspectedDuplicate ? 1 : 0;
-        const filePath = job.filePath || "";
-        const rawDriveId = job.rawDriveId || "";
-        const driveFileId = job.driveFileId || "";
-
-        insertJobStmt.run({
-          id: job.id,
-          original_name: originalName,
+      database.run(
+        `INSERT OR REPLACE INTO jobs (
+          id, original_name, status, source, upload_date, document_date,
+          category, company, invoice_number, invoice_amount, is_invoice,
+          is_hidden, is_private, suspected_duplicate, file_path,
+          raw_drive_id, drive_file_id, data_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          job.id,
+          originalName,
           status,
           source,
-          upload_date: uploadDate,
-          document_date: documentDate,
+          uploadDate,
+          documentDate,
           category,
           company,
-          invoice_number: invoiceNumber,
-          invoice_amount: invoiceAmount,
-          is_invoice: isInvoice,
-          is_hidden: isHidden,
-          is_private: isPrivate,
-          suspected_duplicate: suspectedDuplicate,
-          file_path: filePath,
-          raw_drive_id: rawDriveId,
-          drive_file_id: driveFileId,
-          data_json: JSON.stringify(job),
-          created_at: new Date(uploadDate).getTime() || now,
-          updated_at: now,
-        });
-        count++;
-      }
-
-      setAppStateStmt.run("upload_queue", JSON.stringify(uploadQueue));
-      setAppStateStmt.run("processed_drive_files", JSON.stringify(processedDriveFiles));
-      setAppStateStmt.run("hidden_drive_files", JSON.stringify(hiddenDriveFiles));
-      setAppStateStmt.run("migration_done", "true");
-
-      console.log(`[SQLITE] Migration erfolgreich! ${count} Belege/Jobs in SQLite importiert.`);
-    });
-
-    migrateTx();
-
-    // 3. jobs.json umbenennen, um Verwirrung zu vermeiden
-    if (fs.existsSync(JOBS_FILE)) {
-      const migratedFile = `${JOBS_FILE}.migrated`;
-      try {
-        fs.renameSync(JOBS_FILE, migratedFile);
-        console.log(`[SQLITE] jobs.json erfolgreich in jobs.json.migrated umbenannt.`);
-      } catch (renameErr) {
-        console.error(`[SQLITE] Fehler beim Umbenennen von jobs.json:`, renameErr);
-      }
+          invoiceNumber,
+          invoiceAmount,
+          isInvoice,
+          isHidden,
+          isPrivate,
+          suspectedDuplicate,
+          filePath,
+          rawDriveId,
+          driveFileId,
+          JSON.stringify(job),
+          new Date(uploadDate).getTime() || now,
+          now,
+        ]
+      );
+      count++;
     }
+
+    database.run("INSERT OR REPLACE INTO app_state (key, value) VALUES ('upload_queue', ?)", [JSON.stringify(uploadQueue)]);
+    database.run("INSERT OR REPLACE INTO app_state (key, value) VALUES ('processed_drive_files', ?)", [JSON.stringify(processedDriveFiles)]);
+    database.run("INSERT OR REPLACE INTO app_state (key, value) VALUES ('hidden_drive_files', ?)", [JSON.stringify(hiddenDriveFiles)]);
+    database.run("INSERT OR REPLACE INTO app_state (key, value) VALUES ('migration_done', 'true')");
+
+    if (fs.existsSync(JOBS_FILE)) {
+      try {
+        fs.renameSync(JOBS_FILE, `${JOBS_FILE}.migrated`);
+      } catch (e) {}
+    }
+
+    console.log(`[SQLITE] Migration erfolgreich! ${count} Belege/Jobs in SQLite importiert.`);
   } catch (err) {
     console.error("[SQLITE] Fehler bei der Migration von jobs.json:", err);
   }
 }
 
-// Prepared Statements Cache
-let statements = null;
+const dbWrapper = {
+  initDatabase,
+  saveDatabaseToDisk,
 
-function getStatements() {
-  if (statements) return statements;
-  const d = getDatabase();
+  insertOrReplaceJob(job) {
+    if (!db || !job || !job.id) return;
+    const now = Date.now();
+    const originalName = job.originalName || job.result?.full || "Dokument.pdf";
+    const status = job.status || "pending";
+    const source = job.source || "upload";
+    const uploadDate = job.uploadDate || new Date(now).toISOString();
+    const documentDate = job.result?.documentDate || job.documentDate || "unknown";
+    const category = job.result?.category || job.category || "Unbekannt";
+    const company = job.result?.company || job.company || "Unbekannt";
+    const invoiceNumber = job.result?.invoiceNumber || job.invoiceNumber || "none";
+    const invoiceAmount = Number(job.result?.invoiceAmmount || job.invoiceAmmount || 0) || 0;
+    const isInvoice = (job.result?.isInvoice ?? job.isInvoice) ? 1 : 0;
+    const isHidden = job.isHidden ? 1 : 0;
+    const isPrivate = job.isPrivate ? 1 : 0;
+    const suspectedDuplicate = job.suspectedDuplicate ? 1 : 0;
+    const filePath = job.filePath || "";
+    const rawDriveId = job.rawDriveId || "";
+    const driveFileId = job.driveFileId || "";
 
-  statements = {
-    insertOrReplaceJob: d.prepare(`
-      INSERT OR REPLACE INTO jobs (
+    db.run(
+      `INSERT OR REPLACE INTO jobs (
         id, original_name, status, source, upload_date, document_date,
         category, company, invoice_number, invoice_amount, is_invoice,
         is_hidden, is_private, suspected_duplicate, file_path,
         raw_drive_id, drive_file_id, data_json, created_at, updated_at
-      ) VALUES (
-        @id, @original_name, @status, @source, @upload_date, @document_date,
-        @category, @company, @invoice_number, @invoice_amount, @is_invoice,
-        @is_hidden, @is_private, @suspected_duplicate, @file_path,
-        @raw_drive_id, @drive_file_id, @data_json, @created_at, @updated_at
-      )
-    `),
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        job.id,
+        originalName,
+        status,
+        source,
+        uploadDate,
+        documentDate,
+        category,
+        company,
+        invoiceNumber,
+        invoiceAmount,
+        isInvoice,
+        isHidden,
+        isPrivate,
+        suspectedDuplicate,
+        filePath,
+        rawDriveId,
+        driveFileId,
+        JSON.stringify(job),
+        new Date(uploadDate).getTime() || now,
+        now,
+      ]
+    );
+    saveDatabaseToDisk();
+  },
 
-    getJobById: d.prepare("SELECT data_json FROM jobs WHERE id = ?"),
+  getAllJobs() {
+    if (!db) return [];
+    const results = [];
+    const stmt = db.prepare("SELECT data_json FROM jobs ORDER BY upload_date DESC");
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      try {
+        results.push(JSON.parse(row.data_json));
+      } catch (e) {}
+    }
+    stmt.free();
+    return results;
+  },
 
-    getAllJobs: d.prepare("SELECT data_json FROM jobs ORDER BY upload_date DESC"),
+  getJobById(id) {
+    if (!db || !id) return null;
+    const stmt = db.prepare("SELECT data_json FROM jobs WHERE id = ?");
+    stmt.bind([id]);
+    let result = null;
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      try {
+        result = JSON.parse(row.data_json);
+      } catch (e) {}
+    }
+    stmt.free();
+    return result;
+  },
 
-    getVisibleJobs: d.prepare("SELECT data_json FROM jobs WHERE is_hidden = 0 ORDER BY upload_date DESC"),
+  deleteJobById(id) {
+    if (!db || !id) return;
+    db.run("DELETE FROM jobs WHERE id = ?", [id]);
+    saveDatabaseToDisk();
+  },
 
-    deleteJobById: d.prepare("DELETE FROM jobs WHERE id = ?"),
+  clearAllJobs() {
+    if (!db) return;
+    db.run("DELETE FROM jobs");
+    saveDatabaseToDisk();
+  },
 
-    clearAllJobs: d.prepare("DELETE FROM jobs"),
+  getAppState(key) {
+    if (!db || !key) return null;
+    const stmt = db.prepare("SELECT value FROM app_state WHERE key = ?");
+    stmt.bind([key]);
+    let result = null;
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      result = row.value;
+    }
+    stmt.free();
+    return result;
+  },
 
-    updateJobHidden: d.prepare("UPDATE jobs SET is_hidden = ?, updated_at = ? WHERE id = ?"),
+  setAppState(key, value) {
+    if (!db || !key) return;
+    db.run("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)", [key, String(value)]);
+    saveDatabaseToDisk();
+  },
 
-    getAppState: d.prepare("SELECT value FROM app_state WHERE key = ?"),
-
-    setAppState: d.prepare("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)"),
-
-    cleanupOldJobs: d.prepare("DELETE FROM jobs WHERE created_at < ?"),
-  };
-
-  return statements;
-}
-
-module.exports = {
-  getDatabase,
-  getStatements,
+  cleanupOldJobs(maxAgeTimestamp) {
+    if (!db || !maxAgeTimestamp) return;
+    db.run("DELETE FROM jobs WHERE created_at < ?", [maxAgeTimestamp]);
+    saveDatabaseToDisk();
+  },
 };
+
+module.exports = dbWrapper;

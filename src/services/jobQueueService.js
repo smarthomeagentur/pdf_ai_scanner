@@ -9,7 +9,7 @@ const { driveApi } = require("./driveService");
 const { findDuplicatesForJob } = require("./duplicateService");
 const { renderPdfToJpeg } = require("./fileRenderService");
 const { ClickUpAPI } = require("./clickupService");
-const { getDatabase, getStatements } = require("../db/database");
+const dbWrapper = require("../db/database");
 
 let uploadJobs = {};
 let uploadQueue = [];
@@ -30,47 +30,7 @@ let driveSyncState = {
 function persistJob(job) {
   if (!job || !job.id) return;
   try {
-    const stmts = getStatements();
-    const now = Date.now();
-    const originalName = job.originalName || job.result?.full || "Dokument.pdf";
-    const status = job.status || "pending";
-    const source = job.source || "upload";
-    const uploadDate = job.uploadDate || new Date(now).toISOString();
-    const documentDate = job.result?.documentDate || job.documentDate || "unknown";
-    const category = job.result?.category || job.category || "Unbekannt";
-    const company = job.result?.company || job.company || "Unbekannt";
-    const invoiceNumber = job.result?.invoiceNumber || job.invoiceNumber || "none";
-    const invoiceAmount = Number(job.result?.invoiceAmmount || job.invoiceAmmount || 0) || 0;
-    const isInvoice = (job.result?.isInvoice ?? job.isInvoice) ? 1 : 0;
-    const isHidden = job.isHidden ? 1 : 0;
-    const isPrivate = job.isPrivate ? 1 : 0;
-    const suspectedDuplicate = job.suspectedDuplicate ? 1 : 0;
-    const filePath = job.filePath || "";
-    const rawDriveId = job.rawDriveId || "";
-    const driveFileId = job.driveFileId || "";
-
-    stmts.insertOrReplaceJob.run({
-      id: job.id,
-      original_name: originalName,
-      status,
-      source,
-      upload_date: uploadDate,
-      document_date: documentDate,
-      category,
-      company,
-      invoice_number: invoiceNumber,
-      invoice_amount: invoiceAmount,
-      is_invoice: isInvoice,
-      is_hidden: isHidden,
-      is_private: isPrivate,
-      suspected_duplicate: suspectedDuplicate,
-      file_path: filePath,
-      raw_drive_id: rawDriveId,
-      drive_file_id: driveFileId,
-      data_json: JSON.stringify(job),
-      created_at: new Date(uploadDate).getTime() || now,
-      updated_at: now,
-    });
+    dbWrapper.insertOrReplaceJob(job);
   } catch (err) {
     console.error(`[SQLITE] Fehler beim Speichern von Job ${job.id}:`, err);
   }
@@ -78,84 +38,78 @@ function persistJob(job) {
 
 function persistAppState() {
   try {
-    const stmts = getStatements();
-    stmts.setAppState.run("upload_queue", JSON.stringify(uploadQueue));
-    stmts.setAppState.run("processed_drive_files", JSON.stringify(processedDriveFiles));
-    stmts.setAppState.run("hidden_drive_files", JSON.stringify(hiddenDriveFiles));
+    dbWrapper.setAppState("upload_queue", JSON.stringify(uploadQueue));
+    dbWrapper.setAppState("processed_drive_files", JSON.stringify(processedDriveFiles));
+    dbWrapper.setAppState("hidden_drive_files", JSON.stringify(hiddenDriveFiles));
   } catch (err) {
     console.error("[SQLITE] Fehler beim Speichern des App-Status:", err);
   }
 }
 
-function loadJobs() {
+async function loadJobs() {
   try {
-    const stmts = getStatements();
+    await dbWrapper.initDatabase();
 
     // 1. App-State laden
-    const qRow = stmts.getAppState.get("upload_queue");
-    if (qRow && qRow.value) {
-      try { uploadQueue = JSON.parse(qRow.value); } catch (e) {}
+    const qStr = dbWrapper.getAppState("upload_queue");
+    if (qStr) {
+      try { uploadQueue = JSON.parse(qStr); } catch (e) {}
     }
 
-    const pRow = stmts.getAppState.get("processed_drive_files");
-    if (pRow && pRow.value) {
-      try { processedDriveFiles = JSON.parse(pRow.value); } catch (e) {}
+    const pStr = dbWrapper.getAppState("processed_drive_files");
+    if (pStr) {
+      try { processedDriveFiles = JSON.parse(pStr); } catch (e) {}
     }
 
-    const hRow = stmts.getAppState.get("hidden_drive_files");
-    if (hRow && hRow.value) {
-      try { hiddenDriveFiles = JSON.parse(hRow.value); } catch (e) {}
+    const hStr = dbWrapper.getAppState("hidden_drive_files");
+    if (hStr) {
+      try { hiddenDriveFiles = JSON.parse(hStr); } catch (e) {}
     }
 
     // 2. Jobs aus SQLite laden
-    const allRows = stmts.getAllJobs.all();
+    const allJobs = dbWrapper.getAllJobs();
     uploadJobs = {};
 
     let recoveredCount = 0;
-    for (const row of allRows) {
-      try {
-        const job = JSON.parse(row.data_json);
-        if (!job || !job.id) continue;
+    for (const job of allJobs) {
+      if (!job || !job.id) continue;
 
-        if (job.isHidden) {
-          if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
-            hiddenDriveFiles.push(job.rawDriveId);
-          }
-          if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) {
-            hiddenDriveFiles.push(job.driveFileId);
-          }
-          const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-          if (sortedId && !hiddenDriveFiles.includes(sortedId)) {
-            hiddenDriveFiles.push(sortedId);
-          }
+      if (job.isHidden) {
+        if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
+          hiddenDriveFiles.push(job.rawDriveId);
         }
-
-        if (job.result && job.result.localThumbnail) {
-          delete job.result.localThumbnail;
+        if (job.driveFileId && !hiddenDriveFiles.includes(job.driveFileId)) {
+          hiddenDriveFiles.push(job.driveFileId);
         }
-        if (job.localThumbnail) {
-          delete job.localThumbnail;
+        const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+        if (sortedId && !hiddenDriveFiles.includes(sortedId)) {
+          hiddenDriveFiles.push(sortedId);
         }
-
-        const wasInterrupted =
-          job.status === "processing" ||
-          job.status === "pending" ||
-          job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
-        if (wasInterrupted) {
-          job.status = "pending";
-          job.error = null;
-          job.inAiPipeline = true;
-          if (!uploadQueue.includes(job.id)) {
-            uploadQueue.push(job.id);
-          }
-          recoveredCount++;
-        }
-
-        uploadJobs[job.id] = job;
-        persistJob(job);
-      } catch (parseErr) {
-        console.error("[SQLITE] Fehler beim Parsen von Job-JSON:", parseErr);
       }
+
+      if (job.result && job.result.localThumbnail) {
+        delete job.result.localThumbnail;
+      }
+      if (job.localThumbnail) {
+        delete job.localThumbnail;
+      }
+
+      const wasInterrupted =
+        job.status === "processing" ||
+        job.status === "pending" ||
+        job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
+      if (wasInterrupted) {
+        job.status = "pending";
+        job.error = null;
+        job.inAiPipeline = true;
+        if (!uploadQueue.includes(job.id)) {
+          uploadQueue.push(job.id);
+        }
+        recoveredCount++;
+      }
+
+      uploadJobs[job.id] = job;
+      dbWrapper.insertOrReplaceJob(job);
     }
 
     uploadQueue = [...new Set(uploadQueue)].filter(
@@ -170,7 +124,7 @@ function loadJobs() {
 
     persistAppState();
     console.log(
-      `[SQLITE] Verbunden mit store/database.sqlite (${Object.keys(uploadJobs).length} Belege geladen, WAL-Modus aktiv)`
+      `[SQLITE] Verbunden mit store/database.sqlite (${Object.keys(uploadJobs).length} Belege geladen)`
     );
   } catch (e) {
     console.error("[SQLITE] Fehler beim Laden der Datenbank:", e);
@@ -179,17 +133,17 @@ function loadJobs() {
 
 function saveJobs() {
   try {
-    const stmts = getStatements();
     const now = Date.now();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
 
     // 30 Tage Cleanup
-    stmts.cleanupOldJobs.run(now - thirtyDaysMs);
+    dbWrapper.cleanupOldJobs(now - thirtyDaysMs);
 
     for (const jobId in uploadJobs) {
       const jobTime = new Date(uploadJobs[jobId].uploadDate).getTime();
       if (now - jobTime > thirtyDaysMs) {
         delete uploadJobs[jobId];
+        dbWrapper.deleteJobById(jobId);
       } else {
         persistJob(uploadJobs[jobId]);
       }
@@ -201,7 +155,7 @@ function saveJobs() {
   }
 }
 
-// Initialer DB-Boot
+// Initialer Boot
 loadJobs();
 
 function validateDocumentDate(docDateStr, uploadDateStr) {

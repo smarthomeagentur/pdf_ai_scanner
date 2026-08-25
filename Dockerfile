@@ -28,9 +28,9 @@ WORKDIR /app
 RUN python3 -m venv ./venv && \
     ./venv/bin/pip install --no-cache-dir opencv-python-headless numpy pytesseract pymupdf
 
-# Copy package files and install dependencies with native rebuild
+# Copy package files and install dependencies
 COPY package*.json ./
-RUN npm install && npm rebuild better-sqlite3 --build-from-source
+RUN npm install
 
 # Copy ONNX Runtime WASM files from node_modules into the public vendor directory
 # so the browser can load them without an external CDN dependency.
