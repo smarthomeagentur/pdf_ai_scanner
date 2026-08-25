@@ -301,136 +301,10 @@ async function loadFolders() {
   }
 }
 
-// --- Folder Browser Logic begin ---
-const fbModal = document.getElementById("folder-browser-modal");
-const fbList = document.getElementById("fb-list");
-const fbBreadcrumbs = document.getElementById("fb-breadcrumbs");
-const fbSelectBtn = document.getElementById("fb-select-btn");
-const fbCurrentSelection = document.getElementById("fb-current-selection");
+// --- Google Drive Folder Selection (Google Drive Picker API) ---
+document.getElementById("raw-folder-browse").addEventListener("click", () => openGooglePicker("raw"));
+document.getElementById("ai-folder-browse").addEventListener("click", () => openGooglePicker("ai"));
 
-document.getElementById("raw-folder-browse").addEventListener("click", () => openFolderBrowser("raw"));
-document.getElementById("ai-folder-browse").addEventListener("click", () => openFolderBrowser("ai"));
-document.getElementById("closeFolderBrowserBtn").addEventListener("click", () => (fbModal.style.display = "none"));
-
-function openFolderBrowser(target) {
-  currentBrowserTarget = target;
-  currentParentId = "root";
-  currentBreadcrumbs = [{ id: "root", name: "Meine Ablage" }];
-  selectedFbId = null;
-  selectedFbName = null;
-  fbCurrentSelection.innerText = "Kein Ordner";
-  fbSelectBtn.disabled = true;
-  renderFolderBrowser();
-  fbModal.style.display = "flex";
-}
-
-async function renderFolderBrowser() {
-  fbList.innerHTML = '<div style="padding: 10px; color: #777;">Lade Ordner...</div>';
-  fbBreadcrumbs.innerHTML = "";
-  currentBreadcrumbs.forEach((bc, idx) => {
-    const span = document.createElement("span");
-    span.className = "fb-breadcrumb-item";
-    span.innerText = bc.name;
-    span.onclick = () => {
-      // Navigate back
-      currentBreadcrumbs = currentBreadcrumbs.slice(0, idx + 1);
-      currentParentId = bc.id;
-      renderFolderBrowser();
-    };
-    fbBreadcrumbs.appendChild(span);
-    if (idx < currentBreadcrumbs.length - 1) {
-      fbBreadcrumbs.appendChild(document.createTextNode(" > "));
-    }
-  });
-
-  try {
-    const res = await fetch("/api/drive/folders?parentId=" + currentParentId);
-    const data = await res.json();
-    fbList.innerHTML = "";
-
-    let displayFolders = data.success && data.folders ? data.folders : [];
-
-    if (displayFolders.length === 0) {
-      fbList.innerHTML = '<div style="padding: 10px; color: #777;">Dieser Ordner ist leer.</div>';
-    }
-
-    displayFolders.forEach((folder) => {
-      const div = document.createElement("div");
-      div.className = "fb-item";
-      div.style.justifyContent = "space-between";
-      if (folder.id === selectedFbId) div.classList.add("active");
-
-      const leftGroup = document.createElement("div");
-      leftGroup.style.display = "flex";
-      leftGroup.style.alignItems = "center";
-      leftGroup.style.gap = "10px";
-      leftGroup.style.flexGrow = "1";
-
-      const icon = document.createElement("span");
-      icon.innerText = "📁";
-      const nameSpan = document.createElement("span");
-      nameSpan.innerText = folder.name;
-
-      leftGroup.appendChild(icon);
-      leftGroup.appendChild(nameSpan);
-
-      const rightGroup = document.createElement("button");
-      rightGroup.innerText = "Öffnen";
-      rightGroup.style.padding = "4px 8px";
-      rightGroup.style.margin = "0";
-      rightGroup.style.fontSize = "12px";
-      rightGroup.style.backgroundColor = "#6c757d";
-
-      div.appendChild(leftGroup);
-      div.appendChild(rightGroup);
-
-      // Click on row to select
-      leftGroup.addEventListener("click", () => {
-        document.querySelectorAll(".fb-item").forEach((el) => el.classList.remove("active"));
-        div.classList.add("active");
-        selectedFbId = folder.id;
-        selectedFbName = folder.name;
-        fbCurrentSelection.innerText = folder.name;
-        fbSelectBtn.disabled = false;
-      });
-
-      // Click on "Öffnen" navs into folder
-      rightGroup.addEventListener("click", (e) => {
-        e.stopPropagation();
-        currentParentId = folder.id;
-        currentBreadcrumbs.push({ id: folder.id, name: folder.name });
-        selectedFbId = null;
-        selectedFbName = null;
-        fbCurrentSelection.innerText = "Kein Ordner";
-        fbSelectBtn.disabled = true;
-        renderFolderBrowser();
-      });
-
-      // Keep double click for convenience
-      div.addEventListener("dblclick", () => {
-        rightGroup.click();
-      });
-
-      fbList.appendChild(div);
-    });
-  } catch (err) {
-    fbList.innerHTML = '<div style="padding: 10px; color: red;">Fehler beim Laden.</div>';
-  }
-}
-
-fbSelectBtn.addEventListener("click", () => {
-  if (!selectedFbId) return;
-  if (currentBrowserTarget === "raw") {
-    document.getElementById("raw-folder-display").value = selectedFbName;
-    document.getElementById("raw-folder-id").value = selectedFbId;
-  } else if (currentBrowserTarget === "ai") {
-    document.getElementById("ai-folder-display").value = selectedFbName;
-    document.getElementById("ai-folder-id").value = selectedFbId;
-  }
-  fbModal.style.display = "none";
-});
-
-// --- Google Picker Integration ---
 async function openGooglePicker(target) {
   try {
     const tokenRes = await fetch("/api/drive/picker-token");
@@ -468,7 +342,6 @@ async function openGooglePicker(target) {
                 document.getElementById("ai-folder-display").value = `${folderName} (${folderId})`;
                 document.getElementById("ai-folder-id").value = folderId;
               }
-              fbModal.style.display = "none";
             }
           })
           .build();
@@ -491,84 +364,7 @@ async function openGooglePicker(target) {
     alert("Fehler beim Öffnen des Google Drive Pickers: " + err.message);
   }
 }
-
-const fbGooglePickerBtn = document.getElementById("fb-google-picker-btn");
-if (fbGooglePickerBtn) {
-  fbGooglePickerBtn.addEventListener("click", () => {
-    openGooglePicker(currentBrowserTarget);
-  });
-}
-
-// Direct Apply ID / URL
-const fbDirectApplyBtn = document.getElementById("fb-direct-apply-btn");
-const fbDirectInput = document.getElementById("fb-direct-input");
-const fbDirectStatus = document.getElementById("fb-direct-status");
-if (fbDirectApplyBtn && fbDirectInput) {
-  fbDirectApplyBtn.addEventListener("click", async () => {
-    const val = fbDirectInput.value.trim();
-    if (!val) return;
-    if (fbDirectStatus) fbDirectStatus.innerText = "Prüfe Ordner...";
-    try {
-      const res = await fetch("/api/drive/resolve-folder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderIdOrUrl: val }),
-      });
-      const data = await res.json();
-      if (data.success && data.folder) {
-        if (currentBrowserTarget === "raw") {
-          document.getElementById("raw-folder-display").value = data.folder.name;
-          document.getElementById("raw-folder-id").value = data.folder.id;
-        } else if (currentBrowserTarget === "ai") {
-          document.getElementById("ai-folder-display").value = data.folder.name;
-          document.getElementById("ai-folder-id").value = data.folder.id;
-        }
-        if (fbDirectStatus) fbDirectStatus.innerText = `Zugewiesen: ${data.folder.name}`;
-        setTimeout(() => { fbModal.style.display = "none"; }, 400);
-      } else {
-        if (fbDirectStatus) fbDirectStatus.innerText = data.error || "Ordner konnte nicht geladen werden.";
-      }
-    } catch (e) {
-      if (fbDirectStatus) fbDirectStatus.innerText = "Fehler beim Auflösen des Ordners.";
-    }
-  });
-}
-
-// Create New Folder
-const fbNewFolderBtn = document.getElementById("fb-new-folder-btn");
-const fbNewFolderName = document.getElementById("fb-new-folder-name");
-const fbNewFolderStatus = document.getElementById("fb-new-folder-status");
-if (fbNewFolderBtn && fbNewFolderName) {
-  fbNewFolderBtn.addEventListener("click", async () => {
-    const name = fbNewFolderName.value.trim();
-    if (!name) return;
-    if (fbNewFolderStatus) fbNewFolderStatus.innerText = "Erstelle Ordner in Google Drive...";
-    try {
-      const res = await fetch("/api/drive/create-folder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, parentId: currentParentId }),
-      });
-      const data = await res.json();
-      if (data.success && data.folder) {
-        if (currentBrowserTarget === "raw") {
-          document.getElementById("raw-folder-display").value = data.folder.name;
-          document.getElementById("raw-folder-id").value = data.folder.id;
-        } else if (currentBrowserTarget === "ai") {
-          document.getElementById("ai-folder-display").value = data.folder.name;
-          document.getElementById("ai-folder-id").value = data.folder.id;
-        }
-        if (fbNewFolderStatus) fbNewFolderStatus.innerText = `Ordner erstellt & zugewiesen: ${data.folder.name}`;
-        setTimeout(() => { fbModal.style.display = "none"; }, 400);
-      } else {
-        if (fbNewFolderStatus) fbNewFolderStatus.innerText = data.error || "Fehler beim Erstellen.";
-      }
-    } catch (e) {
-      if (fbNewFolderStatus) fbNewFolderStatus.innerText = "Fehler beim Erstellen des Ordners.";
-    }
-  });
-}
-// --- Folder Browser Logic end ---
+// --- Folder Selection Logic end ---
 
 document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
   const rawFolderId = document.getElementById("raw-folder-id").value;

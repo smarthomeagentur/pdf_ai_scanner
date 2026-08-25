@@ -1284,89 +1284,6 @@
         </div>
       </div>
 
-      <!-- Folder Browser Modal -->
-      <div id="folder-browser-modal" class="modal-overlay" style="z-index: 2010">
-        <div class="modal-content" style="display: flex; flex-direction: column; height: 88vh; max-height: 700px; width: 95%; max-width: 580px; padding: 20px;">
-          <div class="modal-header d-flex justify-content-between align-items-center mb-3">
-            <h5 class="m-0 fw-bold">Google Drive Ordner auswählen</h5>
-            <button class="modal-close d-flex align-items-center justify-content-center" id="closeFolderBrowserBtn">
-              <span class="material-symbols-outlined">close</span>
-            </button>
-          </div>
-
-          <!-- Official Google Picker Button -->
-          <div class="p-3 mb-3 bg-light rounded-3 border">
-            <div class="small fw-bold text-dark mb-1">Option 1: Über Google Picker Dialog auswählen (Empfohlen)</div>
-            <div class="small text-muted mb-2" style="font-size: 12px;">Öffnet das offizielle Google Drive Auswahlfenster mit allen deinen Ordnern.</div>
-            <button id="fb-google-picker-btn" type="button" class="btn btn-primary btn-sm d-flex align-items-center gap-2 w-100 justify-content-center" style="border-radius: 8px; font-weight: 500; padding: 8px 12px;">
-              <span class="material-symbols-outlined" style="font-size: 18px;">cloud_sync</span>
-              <span>Google Drive Picker öffnen</span>
-            </button>
-          </div>
-
-          <!-- Direct Link / ID Input -->
-          <div class="p-3 mb-3 border rounded-3" style="background: #fafafa;">
-            <div class="small fw-bold text-dark mb-1">Option 2: Ordner-Link oder Ordner-ID einfügen</div>
-            <div class="input-group input-group-sm mb-1">
-              <input type="text" id="fb-direct-input" class="form-control" placeholder="https://drive.google.com/drive/folders/... oder ID" />
-              <button id="fb-direct-apply-btn" class="btn btn-outline-primary px-3" type="button">Zuweisen</button>
-            </div>
-            <div id="fb-direct-status" class="small text-muted" style="font-size: 11px;"></div>
-          </div>
-
-          <!-- Create New Folder -->
-          <div class="p-3 mb-3 border rounded-3" style="background: #fafafa;">
-            <div class="small fw-bold text-dark mb-1">Option 3: Neuen Ordner in Google Drive anlegen</div>
-            <div class="input-group input-group-sm mb-1">
-              <input type="text" id="fb-new-folder-name" class="form-control" placeholder="z. B. AI Rechnungen 2026" />
-              <button id="fb-new-folder-btn" class="btn btn-outline-success px-3" type="button">+ Anlegen</button>
-            </div>
-            <div id="fb-new-folder-status" class="small text-muted" style="font-size: 11px;"></div>
-          </div>
-
-          <!-- App Created Folders Tree -->
-          <div class="small fw-bold text-secondary mb-1">Bereits durch App erstellte Ordner:</div>
-          <div
-            id="fb-breadcrumbs"
-            style="
-              font-size: 13px;
-              margin-bottom: 6px;
-              color: #0d6efd;
-              overflow-x: auto;
-              white-space: nowrap;
-              padding-bottom: 2px;
-            "
-          >
-            <!-- Drive / Folder -->
-          </div>
-          <div
-            id="fb-list"
-            style="flex-grow: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 6px; min-height: 80px; max-height: 140px;"
-          >
-            <!-- .fb-item elements -->
-          </div>
-          <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center">
-            <div
-              id="fb-current-selection"
-              style="
-                font-size: 13px;
-                font-weight: bold;
-                color: #333;
-                max-width: 60%;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-              "
-            >
-              Kein Ordner
-            </div>
-            <button id="fb-select-btn" class="action-button" style="margin: 0; padding: 8px 15px; background: #28a745">
-              Auswählen
-            </button>
-          </div>
-        </div>
-      </div>
-
       <!-- PWA Install Banner -->
       <div id="pwa-install-banner">
         <div class="pwa-text">
@@ -1379,7 +1296,7 @@
         </div>
       </div>
 
-      <script src="/index.js?v=20260825_picker_fix_v15"></script>
+      <script src="/index.js?v=20260825_picker_only_v16"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {
