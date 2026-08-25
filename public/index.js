@@ -346,6 +346,17 @@ async function openGooglePicker(target) {
           })
           .build();
         picker.setVisible(true);
+
+        // Force picker dialog elements to top z-index above settings modal
+        const fixPickerZIndex = () => {
+          document.querySelectorAll(".picker-dialog, .picker-dialog-bg, .picker-modal-dialog, .picker-modal-dialog-bg, div[class*='picker-dialog'], div[class*='picker-modal']").forEach((el) => {
+            el.style.setProperty("z-index", "99999", "important");
+          });
+        };
+        fixPickerZIndex();
+        setTimeout(fixPickerZIndex, 50);
+        setTimeout(fixPickerZIndex, 200);
+        setTimeout(fixPickerZIndex, 500);
       } catch (pickerErr) {
         console.error("PickerBuilder error:", pickerErr);
         alert("Google Picker Dialog konnte nicht initialisiert werden: " + pickerErr.message);
@@ -5656,12 +5667,24 @@ async function loadInboxData(silent = false) {
   if (!window.isAdmin) return;
   const inboxPermissionCard = document.getElementById("inbox-permission-card");
 
-  const accounts = getClientGmailAccounts();
-  const skippedMap = getClientGmailSkipped();
+  let localSkipped = getClientGmailSkipped();
+  try {
+    const skipRes = await fetch("/api/inbox/skipped");
+    if (skipRes.ok) {
+      const skipData = await skipRes.json();
+      if (skipData.success && skipData.skipped) {
+        localSkipped = { ...skipData.skipped, ...localSkipped };
+        saveClientGmailSkipped(localSkipped);
+      }
+    }
+  } catch (e) {}
+
+  const skippedMap = localSkipped;
   inboxSkippedEmails = Object.values(skippedMap).sort(
     (a, b) => new Date(b.skippedAt || b.date) - new Date(a.skippedAt || a.date)
   );
 
+  const accounts = getClientGmailAccounts();
   updateAccountsDropdown(accounts);
 
   if (!silent) {
@@ -6253,11 +6276,28 @@ async function processBatchSelectedEmails() {
 
 function skipInboxEmail(mail) {
   const skipped = getClientGmailSkipped();
-  skipped[mail.id] = {
-    ...mail,
+  const mailToSave = {
+    id: mail.id,
+    accountId: mail.accountId,
+    accountEmail: mail.accountEmail,
+    subject: mail.subject,
+    fromName: mail.fromName,
+    fromEmail: mail.fromEmail,
+    date: mail.date,
+    snippet: mail.snippet,
+    attachments: (mail.attachments || []).map((a) => ({ filename: a.filename, size: a.size })),
+    isDetected: mail.isDetected,
     skippedAt: new Date().toISOString(),
   };
+  skipped[mail.id] = mailToSave;
   saveClientGmailSkipped(skipped);
+
+  // Sync to server store/skipped_emails.json
+  fetch("/api/inbox/skipped", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: mail.id, mail: mailToSave }),
+  }).catch((e) => {});
 
   inboxActiveEmails = inboxActiveEmails.filter((m) => m.id !== mail.id);
   inboxSkippedEmails = Object.values(skipped).sort(
@@ -6285,6 +6325,12 @@ function unskipInboxEmail(messageId) {
     delete skipped[messageId];
     saveClientGmailSkipped(skipped);
   }
+
+  // Delete from server store/skipped_emails.json
+  fetch("/api/inbox/skipped/" + encodeURIComponent(messageId), {
+    method: "DELETE",
+  }).catch((e) => {});
+
   loadInboxData(false);
 }
 

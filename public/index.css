@@ -140,6 +140,17 @@ body {
   transition: width 0.5s linear;
 }
 
+/* Ensure Google Picker appears on top of all modals */
+.picker-dialog,
+.picker-dialog-bg,
+.picker-modal-dialog,
+.picker-modal-dialog-bg,
+div[class*="picker-dialog"],
+div[class*="picker-modal"],
+iframe[src*="docs.google.com/picker"] {
+  z-index: 99999 !important;
+}
+
 /* Modal Styles */
 .modal-overlay {
   display: none;

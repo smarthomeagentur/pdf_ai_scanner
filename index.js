@@ -603,6 +603,37 @@ app.get("/api/drive/folder/:id", requireAdmin, async (req, res) => {
   }
 });
 
+// --- Inbox Skipped Emails Endpoints ---
+app.get("/api/inbox/skipped", requireAdmin, (req, res) => {
+  res.json({ success: true, skipped: skippedEmails });
+});
+
+app.post("/api/inbox/skipped", requireAdmin, (req, res) => {
+  try {
+    const { id, mail } = req.body;
+    const mailId = id || (mail && mail.id);
+    if (!mailId) return res.status(400).json({ error: "Keine Mail-ID angegeben." });
+    skippedEmails[mailId] = mail || { id: mailId, skippedAt: new Date().toISOString() };
+    saveSkippedEmails();
+    res.json({ success: true, skipped: skippedEmails });
+  } catch (e) {
+    res.status(500).json({ error: e.toString() });
+  }
+});
+
+app.delete("/api/inbox/skipped/:id", requireAdmin, (req, res) => {
+  try {
+    const mailId = req.params.id;
+    if (mailId && skippedEmails[mailId]) {
+      delete skippedEmails[mailId];
+      saveSkippedEmails();
+    }
+    res.json({ success: true, skipped: skippedEmails });
+  } catch (e) {
+    res.status(500).json({ error: e.toString() });
+  }
+});
+
 // Local & Drive PDF Text Cache for Deep Search
 const localPdfTextCache = new Map();
 const drivePdfTextCache = new Map();
