@@ -399,8 +399,11 @@ export async function transferJobToClickUp(jobId, force = false, btn = null) {
   const docInv = document.getElementById("confirm-clickup-doc-inv");
   const docAmt = document.getElementById("confirm-clickup-doc-amt");
 
-  if (docTitle) docTitle.innerText = res.full || targetJob.originalName || "Dokument.pdf";
-  if (docDate) docDate.innerText = `📅 ${res.documentDate || "-"}`;
+  const rawClickupDate = res.documentDate || targetJob.documentDate;
+  const clickupDateDisplay = (rawClickupDate && rawClickupDate !== "unknown" && rawClickupDate !== "none" && rawClickupDate !== "-")
+    ? rawClickupDate
+    : (targetJob.uploadDate ? formatDateDisplay(targetJob.uploadDate) : "-");
+  if (docDate) docDate.innerText = `📅 ${clickupDateDisplay}`;
   if (docComp) docComp.innerText = `🏢 ${res.company || "Unbekannt"}`;
   if (docCat) docCat.innerText = `📁 ${res.category || "-"}`;
   if (docInv) docInv.innerText = `Rechnung: ${res.invoiceNumber && res.invoiceNumber !== "none" ? res.invoiceNumber : "-"}`;

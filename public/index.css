@@ -676,6 +676,29 @@ iframe[src*="docs.google.com/picker"] {
   border-color: #fca5a5 !important;
 }
 
+.job-action-btn.btn-import-drive {
+  background-color: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border: 1px solid #3b82f6 !important;
+  font-weight: 500 !important;
+}
+.job-action-btn.btn-import-drive:hover {
+  background-color: #dbeafe !important;
+  color: #1e40af !important;
+  border-color: #2563eb !important;
+}
+
+.job-action-btn.btn-open-gdrive {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+.job-action-btn.btn-open-gdrive:hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
+}
+
 .job-result .job-action-btn {
   flex: 0 0 auto !important;
   font-size: 12px !important;

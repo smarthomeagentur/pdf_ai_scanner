@@ -1245,8 +1245,10 @@ async function processVideo() {
 captureBtn.addEventListener("click", async () => {
   if (!streaming) return;
 
-  document.getElementById("algorithmSelect").value = "auto";
-  document.getElementById("previewAlgorithmSelect").value = "auto";
+  const algSelect = document.getElementById("algorithmSelect");
+  if (algSelect) algSelect.value = "auto";
+  const prevAlgSelect = document.getElementById("previewAlgorithmSelect");
+  if (prevAlgSelect) prevAlgSelect.value = "auto";
 
   cancelAutoCountdown();
 
@@ -1579,8 +1581,24 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
     y: c.y * highResCanvas.height - reviewState.cropY,
   }));
 
-  // Sync preview combo box with global config
-  document.getElementById("previewAlgorithmSelect").value = document.getElementById("algorithmSelect").value;
+  // Sync preview combo box if present
+  const prevAlgSel = document.getElementById("previewAlgorithmSelect");
+  const algVal = document.getElementById("algorithmSelect")?.value || "auto";
+  if (prevAlgSel) {
+    prevAlgSel.value = algVal;
+  }
+
+  // Sync filter preset buttons
+  document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
+    const fType = btn.getAttribute("data-filter");
+    if ((algVal === "color" && fType === "original") ||
+        ((algVal === "color_enhanced" || algVal === "white_paper" || algVal === "auto") && fType === "clean") ||
+        (algVal === "bw_adaptive" && fType === "bw")) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
 
   fitReviewCanvas();
   requestAnimationFrame(() => {
@@ -1891,6 +1909,70 @@ if (finishScanBtn) {
     finishScanProcess(true);
   });
 }
+
+const discardScanBtn = document.getElementById("discardScanBtn");
+if (discardScanBtn) discardScanBtn.addEventListener("click", closeReviewPanel);
+
+function rotateReviewImage(clockwise = true) {
+  if (!reviewState.highResCanvas) return;
+  const oldCanvas = reviewState.highResCanvas;
+  const oldW = oldCanvas.width;
+  const oldH = oldCanvas.height;
+
+  const newCanvas = document.createElement("canvas");
+  newCanvas.width = oldH;
+  newCanvas.height = oldW;
+  const ctx = newCanvas.getContext("2d");
+
+  ctx.translate(newCanvas.width / 2, newCanvas.height / 2);
+  ctx.rotate((clockwise ? 90 : -90) * (Math.PI / 180));
+  ctx.drawImage(oldCanvas, -oldW / 2, -oldH / 2);
+
+  let absCorners = reviewState.corners.map((c) => {
+    let absX = c.x + reviewState.cropX;
+    let absY = c.y + reviewState.cropY;
+    if (clockwise) {
+      return { x: oldH - absY, y: absX };
+    } else {
+      return { x: absY, y: oldW - absX };
+    }
+  });
+
+  absCorners = sortAndOrderCorners(absCorners);
+
+  const relCorners = absCorners.map((c) => ({
+    x: c.x / newCanvas.width,
+    y: c.y / newCanvas.height,
+  }));
+
+  showManualReview(newCanvas, relCorners, true);
+}
+
+const rotateLeftBtn = document.getElementById("rotateReviewLeftBtn");
+if (rotateLeftBtn) rotateLeftBtn.addEventListener("click", () => rotateReviewImage(false));
+
+const rotateRightBtn = document.getElementById("rotateReviewRightBtn");
+if (rotateRightBtn) rotateRightBtn.addEventListener("click", () => rotateReviewImage(true));
+
+document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".filter-preset-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    const filterType = btn.getAttribute("data-filter");
+    const algInput = document.getElementById("algorithmSelect");
+    if (algInput) {
+      if (filterType === "original") {
+        algInput.value = "color";
+      } else if (filterType === "clean") {
+        algInput.value = "auto";
+      } else if (filterType === "bw") {
+        algInput.value = "bw_adaptive";
+      }
+    }
+    updatePreviewFilter();
+  });
+});
 
 const stripFinishBtn = document.getElementById("stripFinishBtn");
 if (stripFinishBtn) {

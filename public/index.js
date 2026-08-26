@@ -1484,9 +1484,9 @@ function renderJobs() {
               </div>
             ` : ""
           }
-          <div class="d-flex align-items-center gap-2 pt-1 flex-wrap">
-            ${job.webViewLink ? `<a href="${job.webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 12px; font-size: 12px; padding: 2px 10px;"><span class="material-symbols-outlined" style="font-size: 14px;">open_in_new</span> In Google Drive öffnen</a>` : ""}
-            ${job.downloadLink ? `<a href="${job.downloadLink}" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 12px; font-size: 12px; padding: 2px 10px;"><span class="material-symbols-outlined" style="font-size: 14px;">download</span> Herunterladen</a>` : ""}
+          <div class="job-action-bar d-flex align-items-center gap-2 pt-1 flex-wrap">
+            ${job.webViewLink ? `<a href="${job.webViewLink}" target="_blank" class="job-action-btn btn-open-gdrive" title="Dokument in Google Drive öffnen"><span class="material-symbols-outlined">open_in_new</span> In Google Drive öffnen</a>` : ""}
+            ${job.downloadLink ? `<a href="${job.downloadLink}" class="job-action-btn btn-details" title="Herunterladen"><span class="material-symbols-outlined">download</span> Herunterladen</a>` : ""}
           </div>
         </div>
         <a href="${job.webViewLink || '#'}" target="_blank" class="pdf-preview-container" title="Beleg in Google Drive öffnen">
@@ -5799,7 +5799,7 @@ function formatFileSize(bytes) {
 }
 
 function formatDateDisplay(isoString) {
-  if (!isoString) return "-";
+  if (!isoString || isoString === "unknown" || isoString === "none" || isoString === "-") return "-";
   try {
     const d = new Date(isoString);
     const now = new Date();

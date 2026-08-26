@@ -108,13 +108,16 @@ async function loadJobs() {
         recoveredCount++;
       }
 
-      if (job.result && job.result.documentDate) {
+      if (job.result) {
         const dateCheck = validateDocumentDate(job.result.documentDate, job.uploadDate);
-        if (dateCheck.isInvalidFuture) {
+        if (dateCheck.isInvalidFuture || dateCheck.isFallback || !job.result.documentDate || job.result.documentDate === "unknown") {
           job.result.documentDate = dateCheck.validDateStr;
-          job.result.rawDocumentDate = dateCheck.rawDateStr;
+          if (dateCheck.rawDateStr) job.result.rawDocumentDate = dateCheck.rawDateStr;
           job.documentDate = dateCheck.validDateStr;
         }
+      } else if (!job.documentDate || job.documentDate === "unknown" || job.documentDate === "none" || job.documentDate === "-") {
+        const dateCheck = validateDocumentDate(job.documentDate, job.uploadDate);
+        job.documentDate = dateCheck.validDateStr;
       }
 
       uploadJobs[job.id] = job;
@@ -173,10 +176,21 @@ function saveJobs() {
 loadJobs();
 
 function validateDocumentDate(docDateStr, uploadDateStr) {
-  if (!docDateStr || docDateStr === "unknown" || docDateStr === "none" || docDateStr === "-") {
-    return { validDateStr: "unknown", isInvalidFuture: false };
-  }
   const uploadDate = uploadDateStr ? new Date(uploadDateStr) : new Date();
+  const day = String(uploadDate.getDate()).padStart(2, "0");
+  const month = String(uploadDate.getMonth() + 1).padStart(2, "0");
+  const year = uploadDate.getFullYear();
+  const fallbackFormatted = `${day}.${month}.${year}`;
+
+  if (!docDateStr || docDateStr === "unknown" || docDateStr === "none" || docDateStr === "-") {
+    return {
+      validDateStr: fallbackFormatted,
+      rawDateStr: "unknown",
+      isFallback: true,
+      isInvalidFuture: false,
+    };
+  }
+
   const maxAllowed = new Date(
     uploadDate.getFullYear(),
     uploadDate.getMonth(),
@@ -209,18 +223,21 @@ function validateDocumentDate(docDateStr, uploadDateStr) {
 
   if (parsed && !isNaN(parsed.getTime())) {
     if (parsed.getTime() > maxAllowed) {
-      const day = String(uploadDate.getDate()).padStart(2, "0");
-      const month = String(uploadDate.getMonth() + 1).padStart(2, "0");
-      const year = uploadDate.getFullYear();
-      const fallbackFormatted = `${day}.${month}.${year}`;
       return {
         validDateStr: fallbackFormatted,
         rawDateStr: docDateStr,
         isInvalidFuture: true,
       };
     }
+    return { validDateStr: docDateStr, isInvalidFuture: false };
   }
-  return { validDateStr: docDateStr, isInvalidFuture: false };
+
+  return {
+    validDateStr: fallbackFormatted,
+    rawDateStr: docDateStr,
+    isFallback: true,
+    isInvalidFuture: false,
+  };
 }
 
 function checkJobNeedsEnrichment(job) {
@@ -320,13 +337,12 @@ async function processSingleJob(jobId) {
       throw new Error(sortedName.error || "KI-Verarbeitung fehlgeschlagen.");
     }
 
-    if (sortedName.documentDate && sortedName.documentDate !== "unknown") {
-      const dateCheck = validateDocumentDate(sortedName.documentDate, job.uploadDate);
-      if (dateCheck.isInvalidFuture) {
-        sortedName.documentDate = dateCheck.validDateStr;
-        sortedName.rawDocumentDate = dateCheck.rawDateStr;
-      }
+    const dateCheck = validateDocumentDate(sortedName.documentDate, job.uploadDate);
+    sortedName.documentDate = dateCheck.validDateStr;
+    if (dateCheck.rawDateStr) {
+      sortedName.rawDocumentDate = dateCheck.rawDateStr;
     }
+    job.documentDate = dateCheck.validDateStr;
 
     // Clean real content tags for UI & search
     const cleanUserTags = (Array.isArray(sortedName.tags) ? sortedName.tags : [])

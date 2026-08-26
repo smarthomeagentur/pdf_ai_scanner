@@ -22,6 +22,8 @@ export function initDeepSearch() {
       state.searchQuery = e.target.value.trim();
       if (clearBtn) clearBtn.style.display = state.searchQuery ? "inline-flex" : "none";
 
+      updateResetFiltersVisibility();
+
       // 1. Instant in-memory filter
       renderJobsList();
 
@@ -34,7 +36,9 @@ export function initDeepSearch() {
         }, 300);
       } else {
         state.deepSearchSnippets.clear();
+        state.driveOnlySearchResults = [];
         setSearchIconSpinning(false);
+        updateResetFiltersVisibility();
         renderJobsList();
       }
     });
@@ -55,8 +59,10 @@ export function initDeepSearch() {
       if (searchInput) searchInput.value = "";
       state.searchQuery = "";
       state.deepSearchSnippets.clear();
+      state.driveOnlySearchResults = [];
       clearBtn.style.display = "none";
       setSearchIconSpinning(false);
+      updateAllFilterCounts();
       renderJobsList();
     });
   }
@@ -64,6 +70,7 @@ export function initDeepSearch() {
   if (dateFilter) {
     dateFilter.addEventListener("change", (e) => {
       state.dateFilter = e.target.value;
+      updateAllFilterCounts();
       renderJobsList();
     });
   }
@@ -71,6 +78,7 @@ export function initDeepSearch() {
   if (companyFilter) {
     companyFilter.addEventListener("change", (e) => {
       state.companyFilter = e.target.value;
+      updateAllFilterCounts();
       renderJobsList();
     });
   }
@@ -78,6 +86,7 @@ export function initDeepSearch() {
   if (sortSelect) {
     sortSelect.addEventListener("change", (e) => {
       state.sortOrder = e.target.value;
+      updateAllFilterCounts();
       renderJobsList();
     });
   }
@@ -90,6 +99,7 @@ export function initDeepSearch() {
       state.sortOrder = "docdate_desc";
       state.selectedCategories.clear();
       state.deepSearchSnippets.clear();
+      state.driveOnlySearchResults = [];
 
       if (searchInput) searchInput.value = "";
       if (clearBtn) clearBtn.style.display = "none";
@@ -98,6 +108,7 @@ export function initDeepSearch() {
       if (sortSelect) sortSelect.value = "docdate_desc";
 
       setSearchIconSpinning(false);
+      updateAllFilterCounts();
       renderJobsList();
     });
   }
@@ -261,14 +272,28 @@ export function updateResetFiltersVisibility() {
     if (summaryEl) {
       const activeFilters = [];
       if (hasSearch) activeFilters.push(`Suche: "${state.searchQuery}"`);
-      if (hasDate) activeFilters.push(`Zeitraum: ${state.dateFilter}`);
-      if (hasComp) activeFilters.push(`Unternehmen: ${state.companyFilter}`);
-      if (hasCats) activeFilters.push(`${state.selectedCategories.size} Kategorie(n)`);
-      if (hasCustomSort) activeFilters.push(`Sortierung: ${state.sortOrder}`);
+      if (hasDate) {
+        const dateOpt = document.querySelector(`#start-filter-date option[value="${state.dateFilter}"]`);
+        activeFilters.push(dateOpt ? dateOpt.text.split("(")[0].trim() : `Zeitraum: ${state.dateFilter}`);
+      }
+      if (hasComp) {
+        const compOpt = document.querySelector(`#start-filter-company option[value="${state.companyFilter}"]`);
+        activeFilters.push(compOpt ? compOpt.text.split("(")[0].trim() : `Unternehmen: ${state.companyFilter}`);
+      }
+      if (hasCats) {
+        activeFilters.push(`${state.selectedCategories.size} Kategorie(n)`);
+      }
+      if (hasCustomSort) {
+        const sortOpt = document.querySelector(`#start-sort-select option[value="${state.sortOrder}"]`);
+        activeFilters.push(sortOpt ? sortOpt.text : `Sortierung: ${state.sortOrder}`);
+      }
 
       summaryEl.innerHTML = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle me-1"><span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">filter_alt</span> ${activeFilters.length} Filter aktiv:</span> <span class="text-secondary">${escapeHtml(activeFilters.join(" • "))}</span>`;
     }
   } else {
     container.style.setProperty("display", "none", "important");
+    if (summaryEl) {
+      summaryEl.innerHTML = "";
+    }
   }
 }
