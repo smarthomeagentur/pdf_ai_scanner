@@ -135,6 +135,11 @@ async function loadJobs() {
     console.log(
       `[SQLITE] Verbunden mit store/database.sqlite (${Object.keys(uploadJobs).length} Belege geladen)`
     );
+
+    if (uploadQueue.length > 0) {
+      console.log(`[SQLITE] Starte automatische Verarbeitung von ${uploadQueue.length} Beleg(en) in der Warteschlange...`);
+      processQueue();
+    }
   } catch (e) {
     console.error("[SQLITE] Fehler beim Laden der Datenbank:", e);
   }
@@ -366,7 +371,7 @@ async function processSingleJob(jobId) {
     const searchDescription = [
       sortedName.company ? `Firma: ${sortedName.company}` : "",
       sortedName.category ? `Kategorie: ${sortedName.category}` : "",
-      tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
+      cleanUserTags.length > 0 ? `Tags: ${cleanUserTags.join(", ")}` : "",
     ]
       .filter(Boolean)
       .join(" | ");
