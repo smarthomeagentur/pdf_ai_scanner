@@ -16,7 +16,7 @@ export const STORAGE_KEYS = {
   DRIVE_SEARCH_QUERY: "scanner_client_drive_query",
 };
 
-export const state = {
+export const state = window.appState || {
   isAdmin: false,
   activeFilter: "all",
   searchQuery: "",
@@ -33,6 +33,7 @@ export const state = {
   skippedEmails: {},
   settings: {},
 };
+window.appState = state;
 
 export function getClientSecret(key) {
   try {

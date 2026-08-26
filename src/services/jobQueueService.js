@@ -513,6 +513,40 @@ function clearAllJobs() {
   persistAppState();
 }
 
+function rescanAllDuplicates() {
+  let scanned = 0;
+  let markedCount = 0;
+
+  const jobIds = Object.keys(uploadJobs);
+  for (const id of jobIds) {
+    const job = uploadJobs[id];
+    if (!job) continue;
+    scanned++;
+
+    if (job.duplicateDismissed) continue;
+
+    const dups = findDuplicatesForJob(job, uploadJobs);
+    if (dups.length > 0) {
+      job.suspectedDuplicate = true;
+      job.duplicateOf = dups[0].job.id;
+      job.duplicateReason = dups[0].reason;
+      job.duplicateDocName = dups[0].job.result?.full || dups[0].job.originalName;
+      markedCount++;
+    } else {
+      if (job.suspectedDuplicate) {
+        job.suspectedDuplicate = false;
+        delete job.duplicateOf;
+        delete job.duplicateReason;
+        delete job.duplicateDocName;
+      }
+    }
+    persistJob(job);
+  }
+
+  persistAppState();
+  return { success: true, scanned, markedCount };
+}
+
 function hideJob(jobId) {
   const job = uploadJobs[jobId];
   if (!job) return null;
@@ -692,6 +726,7 @@ module.exports = {
   updateJob,
   deleteJob,
   clearAllJobs,
+  rescanAllDuplicates,
   hideJob,
   unhideJob,
   retryJob,

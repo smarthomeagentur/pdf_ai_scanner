@@ -52,49 +52,257 @@ body {
 #loader {
   display: none;
 }
+.scanner-header {
+  background: rgba(255, 255, 255, 0.95) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  flex-shrink: 0 !important;
+  z-index: 1020;
+}
+
 .back-link {
-  text-decoration: none;
-  color: #495057;
-  font-weight: bold;
+  text-decoration: none !important;
+  color: #1e293b !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+  height: 36px !important;
+  padding: 0 12px !important;
+  border-radius: 8px !important;
+  background: #f8fafc !important;
+  border: 1px solid #cbd5e1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  transition: all 0.15s ease !important;
 }
+
 .back-link:hover {
-  color: #000;
+  background: #f1f5f9 !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
 }
+
 #opencv-loading {
-  color: #0d6efd;
+  color: #2563eb;
   font-weight: bold;
   margin-top: 50px;
 }
 
 /* Engine Mode Toggle Button in Top Bar */
 .mode-toggle-btn {
-  height: 40px;
-  padding: 8px 14px !important;
-  font-weight: 600;
-  font-size: 0.92rem;
-  border-radius: 8px;
-  transition: all 0.2s ease;
-  white-space: nowrap;
+  height: 36px !important;
+  padding: 4px 12px !important;
+  font-weight: 500 !important;
+  font-size: 12.5px !important;
+  border-radius: 8px !important;
+  background: #f8fafc !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #1e293b !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
 }
+
+.mode-toggle-btn:hover {
+  background: #f1f5f9 !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+}
+
 .mode-toggle-btn.btn-primary {
-  background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
-  border-color: #4338ca;
-  color: #fff;
-  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3);
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #fff !important;
 }
-.mode-toggle-btn.btn-outline-secondary {
-  border-color: #ced4da;
-  color: #495057;
-  background: #f8f9fa;
-}
+
 .mode-toggle-btn .mode-icon {
-  font-size: 19px;
+  font-size: 18px !important;
   vertical-align: middle;
 }
+
 .mode-toggle-btn .mode-spinner {
   width: 14px;
   height: 14px;
   border-width: 2px;
+}
+
+/* Modern Scanner Control Buttons (Auto-Capture & Settings) */
+.scanner-control-btn {
+  height: 36px !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  border-radius: 8px !important;
+  padding: 4px 12px !important;
+  background: #f8fafc !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #1e293b !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+  white-space: nowrap !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+
+.scanner-control-btn:hover {
+  background: #f1f5f9 !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+}
+
+.scanner-control-btn.active,
+.auto-capture-toggle-btn.active {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+  color: #ffffff !important;
+}
+
+.scanner-icon-btn {
+  width: 36px !important;
+  min-width: 36px !important;
+  padding: 0 !important;
+}
+
+/* Modern Camera Shutter Button (Groß & leicht treffbar) */
+.modern-shutter-btn {
+  position: fixed !important;
+  bottom: max(26px, env(safe-area-inset-bottom, 26px)) !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 999 !important;
+  width: 82px !important;
+  height: 82px !important;
+  border-radius: 50% !important;
+  background: rgba(255, 255, 255, 0.28) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 4px solid rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4) !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  outline: none !important;
+  touch-action: manipulation !important;
+  transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+/* Unsichtbarer erweiterter Touch-Bereich für perfekte Treffbarkeit auf Smartphones */
+.modern-shutter-btn::before {
+  content: "";
+  position: absolute;
+  top: -12px;
+  left: -12px;
+  right: -12px;
+  bottom: -12px;
+  border-radius: 50%;
+}
+
+.modern-shutter-btn .shutter-inner {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1e293b;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12);
+  transition: transform 0.12s ease;
+}
+
+.modern-shutter-btn .shutter-inner span {
+  font-size: 30px !important;
+  line-height: 1 !important;
+}
+
+.modern-shutter-btn:hover {
+  background: rgba(255, 255, 255, 0.45) !important;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45) !important;
+  transform: translateX(-50%) scale(1.03) !important;
+}
+
+.modern-shutter-btn:active {
+  transform: translateX(-50%) scale(0.92) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3) !important;
+}
+
+.modern-shutter-btn:active .shutter-inner {
+  transform: scale(0.88);
+}
+
+.modern-shutter-btn:disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
+/* Modern Floating Flashlight */
+.modern-torch-btn {
+  position: fixed !important;
+  bottom: max(38px, env(safe-area-inset-bottom, 38px)) !important;
+  right: 24px !important;
+  z-index: 999 !important;
+  border-radius: 50% !important;
+  width: 50px !important;
+  height: 50px !important;
+  padding: 0 !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+  color: #1e293b !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-direction: column !important;
+  cursor: pointer !important;
+  outline: none !important;
+  touch-action: manipulation !important;
+  transition: all 0.2s ease !important;
+}
+
+.modern-torch-btn span {
+  font-size: 20px !important;
+}
+
+.modern-torch-btn small {
+  font-size: 8.5px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  margin-top: 1px;
+}
+
+.modern-torch-btn:hover {
+  background: rgba(255, 255, 255, 1) !important;
+  transform: scale(1.06) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3) !important;
+}
+
+.modern-torch-btn.torch-on,
+.modern-torch-btn.btn-warning {
+  background: #fef08a !important;
+  color: #854d0e !important;
+  border-color: #facc15 !important;
+  box-shadow: 0 0 20px rgba(250, 204, 21, 0.7) !important;
+}
+
+.modern-torch-btn.torch-auto,
+.modern-torch-btn.btn-primary {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+  border-color: #93c5fd !important;
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.5) !important;
 }
 
 /* Scans Menu Sidebar */

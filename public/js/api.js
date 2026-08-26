@@ -19,6 +19,7 @@ export async function apiRequest(endpoint, options = {}) {
   if (credentials.clickupListId) defaultHeaders["X-Clickup-List-Id"] = credentials.clickupListId;
 
   const mergedOptions = {
+    credentials: "same-origin",
     ...options,
     headers: {
       ...defaultHeaders,

@@ -101,16 +101,21 @@
       <div class="main-content">
         <!-- View 1: Upload & Scanner -->
         <div id="view-upload" class="container" style="position: relative">
-          <!-- Legacy large Scannen button -->
-          <a href="/scanner.html" class="live-scanner-btn d-flex align-items-center justify-content-center gap-2"
-            ><span class="material-symbols-outlined">document_scanner</span> Live Scanner öffnen</a
-          >
+          <!-- Modern Scanner Button -->
+          <a href="/scanner.html" class="live-scanner-btn">
+            <span class="material-symbols-outlined" style="font-size: 19px;">document_scanner</span>
+            <span>Live Scanner öffnen</span>
+          </a>
 
-          <h2 style="margin-top: 10px">Upload</h2>
-
-          <div id="drop-area" style="margin-top: 20px">
-            <p>Datei(en) hier ablegen oder</p>
-            <button id="browse-btn" class="action-button">Dateien auswählen</button>
+          <!-- Modern Upload Drop Area -->
+          <div id="drop-area">
+            <span class="material-symbols-outlined upload-icon">cloud_upload</span>
+            <div class="upload-title">Dateien hier ablegen</div>
+            <div class="upload-subtitle">PDF, JPEG oder PNG auswählen</div>
+            <button id="browse-btn" type="button" class="app-btn app-btn-subtle px-3 py-1" style="height: 34px; font-weight: 500;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">upload_file</span>
+              <span>Dateien auswählen</span>
+            </button>
             <input type="file" id="file-input" accept=".pdf,.jpeg,.jpg,.png" multiple />
           </div>
 
@@ -132,38 +137,34 @@
             </div>
 
             <!-- Startseite Filter Card -->
-            <div class="card p-3 my-3 shadow-sm border" style="background-color: #ffffff; border-radius: 14px; border-color: #e2e8f0 !important;">
+            <div class="app-filter-card">
               <!-- Zeile 1: Nur die Suche (Full-Width) -->
               <div class="mb-2">
-                <div class="input-group search-input-group shadow-none">
-                  <span class="input-group-text bg-light border-end-0" id="search-prefix-addon" style="border-radius: 10px 0 0 10px; border-color: #cbd5e1; padding-left: 14px; padding-right: 10px;">
-                    <span class="material-symbols-outlined text-primary" id="search-icon-symbol" style="font-size: 20px;">search</span>
+                <div class="app-search-group">
+                  <span class="app-search-addon" id="search-prefix-addon">
+                    <span class="material-symbols-outlined" id="search-icon-symbol" style="font-size: 18px;">search</span>
                   </span>
                   <input
                     type="text"
                     id="start-search-input"
-                    class="form-control bg-light border-start-0 border-end-0 ps-1"
                     placeholder="Belege & PDF-Inhalte suchen (Name, Firma, Rechnungs-Nr, Betrag, OCR)..."
-                    style="font-size: 14px; height: 42px; border-color: #cbd5e1;"
                   />
-                  <span class="input-group-text bg-light border-start-0" id="search-suffix-addon" style="border-radius: 0 10px 10px 0; border-color: #cbd5e1; padding-right: 8px;">
-                    <button
-                      id="search-clear-btn"
-                      class="btn btn-sm btn-light border-0 text-muted rounded-circle p-1 d-flex align-items-center justify-content-center"
-                      type="button"
-                      title="Suche leeren"
-                      style="display: none; width: 26px; height: 26px;"
-                    >
-                      <span class="material-symbols-outlined" style="font-size: 16px;">close</span>
-                    </button>
-                  </span>
+                  <button
+                    id="search-clear-btn"
+                    class="app-search-clear-btn"
+                    type="button"
+                    title="Suche leeren"
+                    style="display: none;"
+                  >
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
                 </div>
               </div>
 
               <!-- Zeile 2: Die Dropdowns (Sortierung, Zeitraum, Unternehmen) -->
               <div class="row g-2 align-items-center mb-2">
                 <div class="col-12 col-md-4">
-                  <select id="start-sort-select" class="form-select start-filter-dropdown" title="Sortierung">
+                  <select id="start-sort-select" class="form-select start-filter-dropdown app-select-slim" title="Sortierung">
                     <option value="docdate_desc" selected>📅 Belegdatum (Neu ➔ Alt)</option>
                     <option value="docdate_asc">📅 Belegdatum (Alt ➔ Neu)</option>
                     <option value="uploaddate_desc">🕒 Upload (Neu ➔ Alt)</option>
@@ -171,8 +172,8 @@
                     <option value="amount_desc">💶 Betrag (Höchste zuerst)</option>
                   </select>
                 </div>
-                <div class="col-12 col-sm-6 col-md-4">
-                  <select id="start-filter-date" class="form-select start-filter-dropdown">
+                <div class="col-6 col-md-4">
+                  <select id="start-filter-date" class="form-select start-filter-dropdown app-select-slim" title="Zeitraum">
                     <option value="alle">📅 Zeitraum: Alle</option>
                     <option value="7days">Letzte 7 Tage</option>
                     <option value="30days">Letzte 30 Tage</option>
@@ -182,8 +183,8 @@
                     <option value="older">Älter als 2025</option>
                   </select>
                 </div>
-                <div class="col-12 col-sm-6 col-md-4">
-                  <select id="start-filter-company" class="form-select start-filter-dropdown">
+                <div class="col-6 col-md-4">
+                  <select id="start-filter-company" class="form-select start-filter-dropdown app-select-slim" title="Unternehmen">
                     <option value="alle">🏢 Alle Unternehmen</option>
                     <option value="thewire">The Wire UG</option>
                     <option value="wirewire">wirewire GmbH</option>
@@ -196,8 +197,8 @@
 
               <!-- Zeile 3: Kategorie-Filter (Pills / Badges) -->
               <div class="pt-2 border-top" style="border-color: #f1f5f9 !important;">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                  <span class="text-muted small fw-bold" style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.5px;">Kategorie / Typ Filter (Mehrfachauswahl):</span>
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                  <span class="text-muted small fw-semibold" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Kategorien & Filter:</span>
                 </div>
                 <div id="start-filter-category-bubbles" class="d-flex flex-wrap gap-1">
                   <!-- Dynamic Category Bubbles rendered here -->
@@ -206,27 +207,24 @@
 
               <!-- Zeile 4: Alles zurücksetzen (unter den Filtern, nur sichtbar wenn Filter aktiv) -->
               <div id="start-reset-filters-container" class="mt-2 pt-2 border-top d-flex align-items-center justify-content-between flex-wrap gap-2" style="display: none !important; border-color: #f1f5f9 !important;">
-                <div id="start-active-filters-summary" class="text-muted small" style="font-size: 12px;">
+                <div id="start-active-filters-summary" class="text-muted small" style="font-size: 11.5px;">
                   Filter aktiv
                 </div>
-                <button id="start-reset-filters-btn" type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 8px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
-                  <span class="material-symbols-outlined" style="font-size: 15px;">restart_alt</span>
+                <button id="start-reset-filters-btn" type="button" class="app-btn app-btn-subtle" style="height: 28px; font-size: 11.5px; padding: 2px 10px;">
+                  <span class="material-symbols-outlined" style="font-size: 14px;">restart_alt</span>
                   <span>Alles zurücksetzen</span>
                 </button>
               </div>
             </div>
 
             <!-- Header & Counter -->
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px; margin-bottom: 10px; flex-wrap: wrap; gap: 10px;">
-              <h3 style="margin: 0; font-size: 1.25rem;">
+            <div class="app-view-header">
+              <h3 class="app-view-title">
                 Belege & Scans
-                <span
-                  id="active-job-count"
-                  style="font-size: 13px; font-weight: normal; color: #666; margin-left: 8px;"
-                ></span>
+                <span id="active-job-count" class="app-view-badge"></span>
               </h3>
               <div class="d-flex align-items-center gap-2">
-                <button id="toggle-show-hidden-btn" type="button" class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 3px 12px;" title="Ausgeblendete Belege in der Liste anzeigen/verbergen">
+                <button id="toggle-show-hidden-btn" type="button" class="app-btn app-btn-subtle" title="Ausgeblendete Belege in der Liste anzeigen/verbergen">
                   <span class="material-symbols-outlined" style="font-size: 15px;">visibility_off</span>
                   <span>Ausgeblendete (<span id="hidden-jobs-count">0</span>)</span>
                 </button>
@@ -251,42 +249,50 @@
 
         <!-- View 2: Rechnungsverarbeitung & Lexoffice Transfer -->
         <div id="view-rechnungen" class="container" style="position: relative; display: none;">
-          <div class="d-flex justify-content-between align-items-center mt-3 mb-3 flex-wrap gap-2">
-            <h2 class="m-0">Rechnungsverarbeitung</h2>
-            <div class="text-muted fw-medium" id="rechnungen-count-badge" style="font-size: 14px;"></div>
+          <div class="app-view-header">
+            <h2 class="app-view-title">
+              <span class="material-symbols-outlined text-primary" style="font-size: 22px;">receipt_long</span>
+              Rechnungsverarbeitung
+              <span id="rechnungen-count-badge" class="app-view-badge">0</span>
+            </h2>
           </div>
 
           <!-- Filter Card -->
-          <div class="card p-3 mb-4 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
+          <div class="app-filter-card">
             <!-- Search Bar -->
-            <div class="mb-3">
-              <div class="input-group">
-                <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
-                  <span class="material-symbols-outlined text-muted" style="font-size: 20px;">search</span>
+            <div class="mb-2">
+              <div class="app-search-group">
+                <span class="app-search-addon">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">search</span>
                 </span>
                 <input
                   type="text"
                   id="filter-rechnungen-search"
-                  class="form-control border-start-0"
                   placeholder="Dokumente durchsuchen (Titel, Firma, Rechnungs-Nr, Betrag, Tags...)"
-                  style="border-radius: 0 8px 8px 0; font-size: 14px;"
                 />
+                <button
+                  id="rechnungen-search-clear-btn"
+                  class="app-search-clear-btn"
+                  type="button"
+                  title="Suche leeren"
+                  style="display: none;"
+                >
+                  <span class="material-symbols-outlined">close</span>
+                </button>
               </div>
             </div>
 
             <div class="row g-2 align-items-center">
               <div class="col-12 col-sm-6 col-md-3">
-                <label class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Dokumententyp</label>
-                <div class="form-check form-switch pt-1">
+                <div class="form-check form-switch m-0 d-flex align-items-center gap-2" style="height: 36px;">
                   <input class="form-check-input" type="checkbox" id="filter-only-invoices" checked style="cursor: pointer;" />
-                  <label class="form-check-label fw-medium ms-1" for="filter-only-invoices" style="cursor: pointer; font-size: 13px;">Nur Rechnungen</label>
+                  <label class="form-check-label fw-medium ms-1" for="filter-only-invoices" style="cursor: pointer; font-size: 12.5px; color: #334155;">Nur Rechnungen</label>
                 </div>
               </div>
 
               <div class="col-6 col-sm-6 col-md-3">
-                <label for="filter-company" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Unternehmen</label>
-                <select id="filter-company" class="form-select form-select-sm" style="border-radius: 8px;">
-                  <option value="alle">Alle Unternehmen</option>
+                <select id="filter-company" class="form-select app-select-slim" title="Unternehmen">
+                  <option value="alle">🏢 Alle Unternehmen</option>
                   <option value="wirewire">wirewire</option>
                   <option value="thewire">thewire</option>
                   <option value="polyxo">polyxo</option>
@@ -295,9 +301,8 @@
               </div>
 
               <div class="col-6 col-sm-4 col-md-2">
-                <label for="filter-status" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Lexoffice Status</label>
-                <select id="filter-status" class="form-select form-select-sm" style="border-radius: 8px;">
-                  <option value="alle">Alle Status</option>
+                <select id="filter-status" class="form-select app-select-slim" title="Lexoffice Status">
+                  <option value="alle">📋 Alle Status</option>
                   <option value="nicht_uebertragen">Offen (nicht übertragen)</option>
                   <option value="uebertragen">Bereits übertragen</option>
                   <option value="duplikat">⚠️ Duplikat-Verdacht</option>
@@ -305,16 +310,14 @@
               </div>
 
               <div class="col-6 col-sm-4 col-md-2">
-                <label for="filter-year" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Jahr</label>
-                <select id="filter-year" class="form-select form-select-sm" style="border-radius: 8px;">
-                  <option value="alle">Alle Jahre</option>
+                <select id="filter-year" class="form-select app-select-slim" title="Jahr">
+                  <option value="alle">📅 Alle Jahre</option>
                 </select>
               </div>
 
               <div class="col-6 col-sm-4 col-md-2">
-                <label for="filter-quarter" class="form-label fw-bold mb-1" style="font-size: 12px; color: #555;">Quartal</label>
-                <select id="filter-quarter" class="form-select form-select-sm" style="border-radius: 8px;">
-                  <option value="alle">Alle Quartale</option>
+                <select id="filter-quarter" class="form-select app-select-slim" title="Quartal">
+                  <option value="alle">🕒 Alle Quartale</option>
                   <option value="Q1">Q1 (Jan - Mär)</option>
                   <option value="Q2">Q2 (Apr - Jun)</option>
                   <option value="Q3">Q3 (Jul - Sep)</option>
@@ -325,49 +328,55 @@
           </div>
 
           <!-- Document List Container -->
-          <div id="rechnungen-list" class="d-flex flex-column gap-3"></div>
+          <div id="rechnungen-list" class="d-flex flex-column gap-2" style="margin-top: 5px;"></div>
         </div>
 
         <!-- View 3: Google Mail (Workmail) Inbox Scanner -->
         <div id="view-inbox" class="container" style="position: relative; display: none;">
-          <div class="d-flex justify-content-between align-items-center mt-3 mb-3 flex-wrap gap-2">
-            <div>
-              <h2 class="m-0 d-flex align-items-center gap-2">
-                <span class="material-symbols-outlined text-primary" style="font-size: 28px;">mail</span>
-                E-Mail Inbox Scanner
-              </h2>
-              <div class="text-muted small">Offene E-Mails nach PDF-Anhängen durchsuchen und verarbeiten</div>
-            </div>
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <select id="inbox-account-select" class="form-select form-select-sm" style="border-radius: 20px; font-size: 13px; min-width: 180px; max-width: 260px;" title="Posteingang auswählen">
-                <option value="all">📥 Alle Posteingänge</option>
-              </select>
-              <button id="inbox-add-account-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 5px 12px;" title="Weiteres Google-Konto verbinden">
-                <span class="material-symbols-outlined" style="font-size: 16px;">add</span>
-                <span class="d-none d-md-inline">Konto hinzufügen</span>
+          <div class="app-view-header">
+            <h2 class="app-view-title">
+              <span class="material-symbols-outlined text-primary" style="font-size: 22px;">mail</span>
+              <span>E-Mail Inbox</span>
+              <span id="inbox-count-badge" class="app-view-badge">0</span>
+            </h2>
+            <div class="d-flex align-items-center gap-2">
+              <button id="inbox-add-account-btn" type="button" class="app-btn app-btn-subtle" title="Weiteres Google-Konto verbinden">
+                <span class="material-symbols-outlined" style="font-size: 15px;">add</span>
+                <span>Konto hinzufügen</span>
               </button>
-              <button id="inbox-refresh-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" style="border-radius: 20px; font-size: 12px; padding: 5px 12px;">
-                <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
+              <button id="inbox-refresh-btn" type="button" class="app-btn app-btn-subtle" title="Aktualisieren">
+                <span class="material-symbols-outlined" style="font-size: 15px;">refresh</span>
                 <span>Aktualisieren</span>
               </button>
             </div>
           </div>
 
+          <!-- Verbundene Posteingänge Liste (wie in den Settings) -->
+          <div id="inbox-accounts-card" class="app-filter-card mb-2" style="padding: 10px 12px;">
+            <div class="d-flex align-items-center justify-content-between mb-2 pb-1 border-bottom" style="border-color: #f1f5f9 !important;">
+              <span class="text-muted small fw-semibold" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">Verbundene Posteingänge</span>
+              <span id="inbox-accounts-count" class="badge bg-light text-muted border" style="font-size: 10.5px;">0 Konten</span>
+            </div>
+            <div id="inbox-accounts-list" class="d-flex flex-column gap-1">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
           <!-- Filter & Batch Toolbar Card -->
-          <div class="card p-3 mb-3 shadow-sm border-0" style="background-color: #f8f9fa; border-radius: 12px;">
+          <div class="app-filter-card">
             <!-- Tabs: Erkannt vs Posteingang vs Übersprungen -->
-            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 pb-2 border-bottom">
-              <div class="d-flex gap-2 flex-wrap">
-                <button type="button" id="inbox-tab-detected" class="btn btn-sm btn-primary active inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
-                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">auto_fix_high</span>
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2 pb-2 border-bottom" style="border-color: #f1f5f9 !important;">
+              <div class="app-segmented-tabs">
+                <button type="button" id="inbox-tab-detected" class="app-segmented-tab active inbox-subtab-btn">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">auto_fix_high</span>
                   Erkannt (<span id="inbox-count-detected">0</span>)
                 </button>
-                <button type="button" id="inbox-tab-active" class="btn btn-sm btn-outline-secondary inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
-                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">inbox</span>
+                <button type="button" id="inbox-tab-active" class="app-segmented-tab inbox-subtab-btn">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">inbox</span>
                   Posteingang (<span id="inbox-count-active">0</span>)
                 </button>
-                <button type="button" id="inbox-tab-skipped" class="btn btn-sm btn-outline-secondary inbox-subtab-btn" style="border-radius: 20px; font-size: 13px; padding: 4px 14px;">
-                  <span class="material-symbols-outlined" style="font-size: 16px; vertical-align: middle;">playlist_remove</span>
+                <button type="button" id="inbox-tab-skipped" class="app-segmented-tab inbox-subtab-btn">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">playlist_remove</span>
                   Übersprungen (<span id="inbox-count-skipped">0</span>)
                 </button>
               </div>
@@ -384,22 +393,29 @@
             <!-- Search, Date Filter & Batch Action Row -->
             <div class="row g-2 align-items-center">
               <div class="col-12 col-md-5">
-                <div class="input-group input-group-sm">
-                  <span class="input-group-text bg-white border-end-0" style="border-radius: 8px 0 0 8px;">
-                    <span class="material-symbols-outlined text-muted" style="font-size: 18px;">search</span>
+                <div class="app-search-group">
+                  <span class="app-search-addon">
+                    <span class="material-symbols-outlined" style="font-size: 17px;">search</span>
                   </span>
                   <input
                     type="text"
                     id="inbox-search-input"
-                    class="form-control border-start-0"
                     placeholder="E-Mails suchen (Absender, Betreff, Dateiname, Datum...)"
-                    style="border-radius: 0 8px 8px 0; font-size: 13px;"
                   />
+                  <button
+                    id="inbox-search-clear-btn"
+                    class="app-search-clear-btn"
+                    type="button"
+                    title="Suche leeren"
+                    style="display: none;"
+                  >
+                    <span class="material-symbols-outlined">close</span>
+                  </button>
                 </div>
               </div>
 
               <div class="col-6 col-md-3">
-                <select id="inbox-filter-date" class="form-select form-select-sm" style="border-radius: 8px; font-size: 13px;">
+                <select id="inbox-filter-date" class="form-select app-select-slim" title="Zeitraum">
                   <option value="alle">📅 Alle Zeiträume</option>
                   <option value="today">Heute</option>
                   <option value="yesterday_today">Gestern & Heute</option>
@@ -416,17 +432,17 @@
               <div class="col-6 col-md-4 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
                 <div class="d-flex align-items-center gap-1" id="inbox-selection-controls">
                   <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer;" />
-                  <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 12px;">Alle auswählen</label>
+                  <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 11.5px;">Alle</label>
                 </div>
                 <button
                   id="inbox-batch-process-btn"
                   type="button"
-                  class="btn btn-sm btn-primary d-flex align-items-center gap-1"
-                  style="border-radius: 20px; font-size: 12px; padding: 4px 12px;"
+                  class="app-btn app-btn-primary"
+                  style="height: 32px; padding: 2px 10px; font-size: 11.5px;"
                   disabled
                 >
-                  <span class="material-symbols-outlined" style="font-size: 16px;">play_arrow</span>
-                  <span>Ausgewählte verarbeiten (<span id="inbox-selected-count">0</span>)</span>
+                  <span class="material-symbols-outlined" style="font-size: 15px;">play_arrow</span>
+                  <span>Verarbeiten (<span id="inbox-selected-count">0</span>)</span>
                 </button>
               </div>
             </div>
@@ -658,7 +674,6 @@
               <div class="gdev-card">
                 <div class="gdev-card-title">
                   <span>Google Drive Authentifizierung</span>
-                  <span class="badge bg-light text-dark border" style="font-size: 11px; font-weight: normal;">OAuth 2.0</span>
                 </div>
                 <div class="d-flex align-items-center justify-content-between p-3 border bg-light mb-3">
                   <div>
@@ -717,7 +732,6 @@
               <div class="gdev-card" id="gmail-settings-container">
                 <div class="gdev-card-title">
                   <span>Google Mail (Workmail) Client Scanner</span>
-                  <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Zero-Trust LocalStorage</span>
                 </div>
                 <div class="text-muted small mb-3" style="line-height: 1.4;">
                   Tokens und E-Mails verbleiben ausschließlich sicher in deinem lokalen Browser-Speicher. Der Server hat keinen Zugriff auf dein Postfach.
@@ -757,7 +771,6 @@
               <div class="gdev-card" id="ai-prompt-settings-container">
                 <div class="gdev-card-title">
                   <span>KI Prompt & Erkennungsparameter</span>
-                  <span class="badge bg-light text-dark border" style="font-size: 11px; font-weight: normal;">Gemini / Claude</span>
                 </div>
                 <div class="setting-group mb-3">
                   <label class="gdev-label">Kategorien (Komma-getrennt):</label>
@@ -770,6 +783,19 @@
                   <div class="gdev-helper">Erkannte Zielunternehmen für die automatische Zuordnung und Buchhaltung.</div>
                 </div>
               </div>
+              <div class="gdev-card" id="ai-duplicates-settings-container">
+                <div class="gdev-card-title">
+                  <span>Duplikate-Erkennung & Scan</span>
+                </div>
+                <div class="text-muted small mb-3" style="line-height: 1.4;">
+                  Analysiert alle Belege der Datenbank und gleicht Rechnungsnummern, Beträge, Datumsangaben und Dateinamen ab, um Duplikate zu markieren.
+                </div>
+                <button id="ai-trigger-rescan-duplicates-btn" type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-1 w-100 py-2 btn-trigger-rescan-duplicates">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">content_copy</span>
+                  <span>Duplikate neu scannen</span>
+                </button>
+                <div id="ai-duplicates-scan-result" class="mt-2 text-center small" style="display: none;"></div>
+              </div>
             </div>
 
             <!-- TAB 4: Buchhaltung & ClickUp -->
@@ -777,7 +803,6 @@
               <div class="gdev-card" id="lexoffice-settings-container">
                 <div class="gdev-card-title">
                   <span>Modulare Buchhaltungs-Zugänge</span>
-                  <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Zero-Trust</span>
                 </div>
                 <div class="text-muted small mb-3" style="line-height: 1.4;">
                   Verbinde beliebig viele Mandanten für Lexoffice und BuchhaltungsButler. Zugänge werden benannt und stehen sofort im Beleg-Modal und im Uploader zur Verfügung.
@@ -797,7 +822,6 @@
               <div class="gdev-card" id="clickup-settings-container">
                 <div class="gdev-card-title">
                   <span>ClickUp Integration</span>
-                  <span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px; font-weight: normal;">🔒 Client-only Storage</span>
                 </div>
                 <form id="clickup-form" autocomplete="off" onsubmit="return false;">
                   <input type="text" name="username" value="admin" autocomplete="username" style="display:none;" aria-hidden="true" />
@@ -841,7 +865,6 @@
               <div class="gdev-card" id="admin-backup-container">
                 <div class="gdev-card-title">
                   <span>Backup & Wiederherstellung</span>
-                  <span class="badge bg-light text-dark border" style="font-size: 11px; font-weight: normal;">JSON</span>
                 </div>
                 <div class="d-flex gap-2">
                   <button id="download-backup-btn" type="button" class="btn btn-sm btn-outline-success flex-grow-1 d-flex align-items-center justify-content-center gap-1">
@@ -869,7 +892,6 @@
               <div class="gdev-card">
                 <div class="gdev-card-title">
                   <span>App-Cache & Offline-Speicher</span>
-                  <span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 11px; font-weight: normal;">Hard Reload</span>
                 </div>
                 <p class="text-muted small mb-2" style="line-height: 1.4;">
                   Löscht alle zwischengespeicherten Daten, Service-Worker und den lokalen Speicher im Browser und lädt die Anwendung vollständig neu vom Server.
@@ -885,9 +907,6 @@
                   <span>Warteschlange & Bereinigung</span>
                 </div>
                 <div class="d-flex flex-column gap-2">
-                  <button id="trigger-rescan-duplicates-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1">
-                    <span class="material-symbols-outlined" style="font-size: 16px;">content_copy</span> Duplikate neu scannen
-                  </button>
                   <button id="trigger-clear-jobs-btn" type="button" class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center gap-1">
                     <span class="material-symbols-outlined" style="font-size: 16px;">delete_sweep</span> Belegliste leeren
                   </button>
@@ -898,10 +917,7 @@
 
           <!-- Sticky Footer Bar -->
           <div class="gdev-footer">
-            <div class="text-muted small d-flex align-items-center gap-1">
-              <span class="material-symbols-outlined text-success" style="font-size: 16px;">verified_user</span>
-              <span>Admin-Bereich • Zero-Trust Sicherheit</span>
-            </div>
+            <div></div>
             <div class="d-flex align-items-center gap-2">
               <button id="closeSettingsBottomBtn" type="button" class="btn btn-sm btn-outline-secondary px-3">
                 Schließen
@@ -1530,7 +1546,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260826_clickup_accounting_lookup_v68"></script>
+      <script type="module" src="/js/app.js?v=20260827_clickup_clean_v84"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

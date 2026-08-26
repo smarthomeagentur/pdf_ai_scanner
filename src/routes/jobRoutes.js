@@ -14,6 +14,7 @@ const {
   updateJob,
   deleteJob,
   clearAllJobs,
+  rescanAllDuplicates,
   hideJob,
   unhideJob,
   retryJob,
@@ -28,7 +29,7 @@ const router = express.Router();
 router.get("/api/status", (req, res) => {
   const isAdmin = checkIsAdmin(req);
   const statuses = getJobs(req.query.ids || "all", isAdmin);
-  res.json({ success: true, statuses });
+  res.json({ success: true, statuses, isAdmin: !!isAdmin });
 });
 
 router.post("/api/upload", uploadLimiter, upload.array("files"), (req, res) => {
@@ -266,6 +267,15 @@ router.delete("/api/jobs/:id", requireAdmin, (req, res) => {
 router.delete("/api/jobs", requireAdmin, (req, res) => {
   clearAllJobs();
   res.json({ success: true, message: "Alle Dokumente ausgeblendet." });
+});
+
+router.post("/api/jobs/rescan-duplicates", requireAdmin, (req, res) => {
+  try {
+    const result = rescanAllDuplicates();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post("/api/jobs/:id/dismiss-duplicate", requireAdmin, (req, res) => {

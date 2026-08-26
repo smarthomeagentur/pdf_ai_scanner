@@ -325,90 +325,18 @@ function renderSyncPreviewItems() {
             ${badgeHtml}
             <span style="font-weight: 600; font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${safeFileName}">${safeFileName}</span>
           </div>
-      renderSyncReviewStats(data);
-      renderSyncReviewList();
-      if (loading) loading.style.display = "none";
-      if (content) content.style.display = "block";
-    } else {
-      showToast("Vorschau konnte nicht geladen werden: " + (data.error || "Fehler"), "error");
-      modal.style.display = "none";
-    }
-  } catch (err) {
-    showToast("Netzwerkfehler bei ClickUp Sync Vorschau: " + err.message, "error");
-    modal.style.display = "none";
-  }
-}
-
-function updateSyncFilterButtons() {
-  const btns = [
-    { id: "clickup-sync-filter-all", filter: "all" },
-    { id: "clickup-sync-filter-pending", filter: "pending" },
-    { id: "clickup-sync-filter-synced", filter: "synced" },
-  ];
-  btns.forEach((b) => {
-    const el = document.getElementById(b.id);
-    if (el) {
-      if (b.filter === currentSyncFilter) {
-        el.className = "btn btn-sm btn-primary";
-      } else {
-        el.className = "btn btn-sm btn-outline-secondary";
-      }
-    }
+          <div style="display: flex; gap: 12px; font-size: 12px; color: #777; flex-wrap: wrap; margin-top: 2px;">
+            <span>🏢 ${safeCompany}</span>
+            <span>📁 ${safeCategory}</span>
+            ${safeAmount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${safeAmount}</span>` : ""}
+          </div>
+          <div style="margin-top: 4px;">
+            ${actionInfoHtml}
+          </div>
+        </div>
+      </div>
+    `;
   });
-}
-
-function renderSyncReviewStats(data) {
-  const totalEl = document.getElementById("clickup-sync-count-total");
-  const pendingEl = document.getElementById("clickup-sync-count-pending");
-  const syncedEl = document.getElementById("clickup-sync-count-synced");
-
-  const total = data.items?.length || 0;
-  const synced = data.items?.filter((i) => i.isTransferred).length || 0;
-  const pending = total - synced;
-
-  if (totalEl) totalEl.innerText = total;
-  if (pendingEl) pendingEl.innerText = pending;
-  if (syncedEl) syncedEl.innerText = synced;
-}
-
-function renderSyncReviewList() {
-  const syncItemsList = document.getElementById("clickup-sync-items-list");
-  if (!syncItemsList || !currentSyncPreviewData || !currentSyncPreviewData.items) return;
-
-  let items = currentSyncPreviewData.items;
-  if (currentSyncFilter === "pending") {
-    items = items.filter((i) => !i.isTransferred);
-  } else if (currentSyncFilter === "synced") {
-    items = items.filter((i) => i.isTransferred);
-  }
-
-  if (items.length === 0) {
-    syncItemsList.innerHTML = `<div class="text-center text-muted p-4">Keine Dokumente für diesen Filter gefunden.</div>`;
-    return;
-  }
-
-  const html = items
-    .map((item) => {
-      const isSynced = item.isTransferred;
-      const statusBadge = isSynced
-        ? `<span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1"><span class="material-symbols-outlined" style="font-size: 13px;">check_circle</span> #${item.taskId || "Sync"}</span>`
-        : `<span class="badge bg-warning-subtle text-dark border border-warning-subtle d-inline-flex align-items-center gap-1"><span class="material-symbols-outlined text-warning" style="font-size: 13px;">schedule</span> Ausstehend</span>`;
-
-      return `
-        <div class="d-flex align-items-center justify-content-between p-2 border-bottom hover-bg-light gap-2">
-          <div class="d-flex align-items-center gap-2" style="min-width: 0;">
-            <input type="checkbox" class="form-check-input clickup-sync-item-cb" data-job-id="${item.id}" ${!isSynced ? "checked" : ""}>
-            <div class="text-truncate" style="font-size: 13px;">
-              <strong class="text-dark">${escapeHtml(item.title || item.originalName)}</strong>
-              <div class="text-muted small">${escapeHtml(item.company || "Unbekannt")} • ${escapeHtml(item.category || "-")} • 📅 ${escapeHtml(item.date || "-")}</div>
-            </div>
-          </div>
-          <div class="flex-shrink-0 text-end">
-            ${statusBadge}
-          </div>
-        </div>`;
-    })
-    .join("");
 
   syncItemsList.innerHTML = html;
 }
