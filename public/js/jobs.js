@@ -411,7 +411,7 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
     return `<span class="fw-bold text-dark" style="font-size: 14px;">${highlightQueryText(job.originalName || "Dokument.pdf", searchQuery)}</span>`;
   }
 
-  const category = (res.category && res.category !== "unknown") ? res.category : (res.isInvoice ? "Rechnungen" : "Dokumente");
+  const category = (res.category && res.category !== "unknown" && res.category !== "Unbekannt") ? res.category : (res.isInvoice ? "Rechnungen" : "Dokumente");
   const company = (res.company && res.company !== "unknown") ? res.company : (job.targetCompany || "Unbekannt");
 
   let tagsArray = [];
@@ -423,7 +423,14 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
 
   const cleanTags = tagsArray
     .map((t) => String(t).trim().replace(/^[-_\s]+|[-_\s]+$/g, ""))
-    .filter((t) => t.length > 0 && !["unknown", "none", "pdf", "scan"].includes(t.toLowerCase()))
+    .filter((t) => {
+      const lower = t.toLowerCase();
+      if (!t || t.length < 2) return false;
+      if (["unknown", "unbekannt", "none", "null", "pdf", "scan", "dokument", "document", "rechnung", "invoice"].includes(lower)) return false;
+      if (/^(isinvoice|datum|date|invoicenumber|invoiceammount|betrag|firma|company|kategorie|category):/i.test(t)) return false;
+      if (lower === category.toLowerCase() || lower === company.toLowerCase()) return false;
+      return true;
+    })
     .slice(0, 3);
 
   const categoryBadge = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;" title="Kategorie"><span class="material-symbols-outlined" style="font-size: 14px;">folder</span> ${highlightQueryText(category, searchQuery)}</span>`;
@@ -442,7 +449,7 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
   return `
     <div class="d-flex align-items-center gap-1 flex-wrap" style="line-height: 1.4;">
       ${categoryBadge}
-      ${tagsBadges}
+      ${tagsBadges ? `${tagsBadges}` : ""}
       ${companyBadge}
     </div>`;
 }
@@ -644,20 +651,88 @@ function renderPagination(totalItems, totalPages) {
   nav.appendChild(nextLi);
 }
 
-export function openDocPreview(jobId) {
+let currentPdfDoc = null;
+let currentPdfPageNum = 1;
+let currentPdfScale = 1.0;
+let isRenderingPdf = false;
+let renderPendingPage = null;
+
+async function renderPdfPage(num) {
+  if (!currentPdfDoc) return;
+  isRenderingPdf = true;
+  const canvas = document.getElementById("doc-preview-canvas");
+  const pageInfo = document.getElementById("doc-preview-page-info");
+  const zoomLevel = document.getElementById("doc-preview-zoom-level");
+  if (!canvas) return;
+
+  try {
+    const page = await currentPdfDoc.getPage(num);
+    const container = document.getElementById("doc-preview-canvas-container");
+    const containerWidth = container ? Math.max(280, container.clientWidth - 24) : 600;
+
+    const unscaledViewport = page.getViewport({ scale: 1.0 });
+    const fitScale = (containerWidth / unscaledViewport.width) * currentPdfScale;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const viewport = page.getViewport({ scale: fitScale * dpr });
+
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
+    canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+    canvas.style.display = "block";
+
+    const ctx = canvas.getContext("2d");
+    const renderContext = {
+      canvasContext: ctx,
+      viewport: viewport,
+    };
+    await page.render(renderContext).promise;
+
+    if (pageInfo) {
+      pageInfo.innerText = `Seite ${num} / ${currentPdfDoc.numPages}`;
+    }
+    if (zoomLevel) {
+      zoomLevel.innerText = `${Math.round(currentPdfScale * 100)}%`;
+    }
+
+    const prevBtn = document.getElementById("doc-preview-prev-page");
+    const nextBtn = document.getElementById("doc-preview-next-page");
+    if (prevBtn) prevBtn.disabled = num <= 1;
+    if (nextBtn) nextBtn.disabled = num >= currentPdfDoc.numPages;
+  } catch (err) {
+    console.warn("[PDF.js] Render Error:", err);
+  } finally {
+    isRenderingPdf = false;
+    if (renderPendingPage !== null) {
+      const p = renderPendingPage;
+      renderPendingPage = null;
+      renderPdfPage(p);
+    }
+  }
+}
+
+function queueRenderPage(num) {
+  if (isRenderingPdf) {
+    renderPendingPage = num;
+  } else {
+    renderPdfPage(num);
+  }
+}
+
+export async function openDocPreview(jobId) {
   debugLog("PREVIEW", "openDocPreview called for jobId:", jobId);
   const modal = document.getElementById("doc-preview-modal");
+  const canvas = document.getElementById("doc-preview-canvas");
+  const fallbackImg = document.getElementById("doc-preview-fallback-img");
   const iframe = document.getElementById("doc-preview-iframe");
+  const toolbar = document.getElementById("doc-preview-toolbar");
   const title = document.getElementById("doc-preview-title");
   const subtitle = document.getElementById("doc-preview-subtitle");
   const downloadBtn = document.getElementById("doc-preview-download-btn");
   const extBtn = document.getElementById("doc-preview-external-btn");
   const loading = document.getElementById("doc-preview-loading");
 
-  if (!modal || !iframe) {
-    console.error("[PREVIEW] Modal element or iframe not found in DOM!");
-    return;
-  }
+  if (!modal) return;
 
   let job = state.jobs && state.jobs.find((j) => String(j.id) === String(jobId) || String(j.rawDriveId) === String(jobId) || String(j.driveFileId) === String(jobId));
   if (!job && state.driveOnlySearchResults) {
@@ -680,11 +755,6 @@ export function openDocPreview(jobId) {
   const downloadUrl = `/api/jobs/${jobId}/file?download=1`;
   const extUrl = res.webViewLink || job?.webViewLink || (isDriveOnly ? `https://drive.google.com/file/d/${rawDriveId}/view` : fileUrl);
 
-  let previewSrc = fileUrl;
-  if (isDriveOnly && rawDriveId && !job?.filePath) {
-    previewSrc = `https://drive.google.com/file/d/${rawDriveId}/preview`;
-  }
-
   if (downloadBtn) {
     downloadBtn.href = downloadUrl;
     downloadBtn.setAttribute("download", filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
@@ -695,23 +765,77 @@ export function openDocPreview(jobId) {
 
   modal.style.setProperty("display", "flex", "important");
   if (loading) loading.style.setProperty("display", "block", "important");
+  if (canvas) canvas.style.display = "none";
+  if (fallbackImg) fallbackImg.style.display = "none";
+  if (iframe) iframe.style.display = "none";
+  if (toolbar) toolbar.style.setProperty("display", "none", "important");
 
-  iframe.onload = () => {
+  // Method 1: Attempt PDF.js rendering (Works flawlessly on iOS Safari, Android Chrome & Desktop)
+  if (window.pdfjsLib) {
+    try {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      const loadingTask = window.pdfjsLib.getDocument({
+        url: fileUrl,
+        withCredentials: true,
+      });
+
+      const pdf = await loadingTask.promise;
+      currentPdfDoc = pdf;
+      currentPdfPageNum = 1;
+      currentPdfScale = 1.0;
+
+      if (loading) loading.style.setProperty("display", "none", "important");
+      if (toolbar) toolbar.style.setProperty("display", "flex", "important");
+      await renderPdfPage(1);
+      return;
+    } catch (pdfErr) {
+      console.warn("[PREVIEW] PDF.js render failed, trying thumbnail fallback:", pdfErr);
+    }
+  }
+
+  // Method 2: High-Resolution Server Thumbnail Fallback
+  try {
+    const thumbUrl = `/api/thumbnail/${jobId}?v=${Date.now()}`;
+    if (fallbackImg) {
+      fallbackImg.onload = () => {
+        if (loading) loading.style.setProperty("display", "none", "important");
+        fallbackImg.style.display = "block";
+      };
+      fallbackImg.onerror = () => {
+        // Method 3: Iframe Fallback
+        if (loading) loading.style.setProperty("display", "none", "important");
+        if (iframe) {
+          iframe.style.display = "block";
+          iframe.src = isDriveOnly ? `https://drive.google.com/file/d/${rawDriveId}/preview` : fileUrl;
+        }
+      };
+      fallbackImg.src = thumbUrl;
+    }
+  } catch (e) {
     if (loading) loading.style.setProperty("display", "none", "important");
-  };
-
-  setTimeout(() => {
-    if (loading) loading.style.setProperty("display", "none", "important");
-  }, 2000);
-
-  iframe.src = previewSrc;
+    if (iframe) {
+      iframe.style.display = "block";
+      iframe.src = fileUrl;
+    }
+  }
 }
 
 export function closeDocPreview() {
   const modal = document.getElementById("doc-preview-modal");
   const iframe = document.getElementById("doc-preview-iframe");
+  const canvas = document.getElementById("doc-preview-canvas");
+  const fallbackImg = document.getElementById("doc-preview-fallback-img");
+  const toolbar = document.getElementById("doc-preview-toolbar");
+
   if (modal) modal.style.setProperty("display", "none", "important");
   if (iframe) iframe.src = "";
+  if (canvas) canvas.style.display = "none";
+  if (fallbackImg) {
+    fallbackImg.src = "";
+    fallbackImg.style.display = "none";
+  }
+  if (toolbar) toolbar.style.setProperty("display", "none", "important");
+  currentPdfDoc = null;
 }
 
 export async function ensureAdminAuth(actionCallback) {
@@ -753,11 +877,43 @@ export function initJobEventDelegation() {
       }
     }
 
-    // 0b. Document Preview Modal Close Button or Overlay Click
+    // 0b. Document Preview Modal Controls (Close, Prev/Next Page, Zoom In/Out)
     const docModalClose = e.target.closest("#doc-preview-close-btn");
     const docPreviewModal = document.getElementById("doc-preview-modal");
     if (docModalClose || e.target === docPreviewModal) {
       closeDocPreview();
+      return;
+    }
+
+    const prevPageBtn = e.target.closest("#doc-preview-prev-page");
+    if (prevPageBtn) {
+      if (currentPdfDoc && currentPdfPageNum > 1) {
+        currentPdfPageNum--;
+        queueRenderPage(currentPdfPageNum);
+      }
+      return;
+    }
+
+    const nextPageBtn = e.target.closest("#doc-preview-next-page");
+    if (nextPageBtn) {
+      if (currentPdfDoc && currentPdfPageNum < currentPdfDoc.numPages) {
+        currentPdfPageNum++;
+        queueRenderPage(currentPdfPageNum);
+      }
+      return;
+    }
+
+    const zoomInBtn = e.target.closest("#doc-preview-zoom-in");
+    if (zoomInBtn) {
+      currentPdfScale = Math.min(currentPdfScale + 0.25, 3.0);
+      queueRenderPage(currentPdfPageNum);
+      return;
+    }
+
+    const zoomOutBtn = e.target.closest("#doc-preview-zoom-out");
+    if (zoomOutBtn) {
+      currentPdfScale = Math.max(currentPdfScale - 0.25, 0.5);
+      queueRenderPage(currentPdfPageNum);
       return;
     }
 
@@ -1008,6 +1164,8 @@ export function initJobEventDelegation() {
     // 9. Buchhaltung Sync Button (Admin Only)
     const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync");
     if (lexofficeBtn) {
+      e.preventDefault();
+      e.stopPropagation();
       if (!state.isAdmin) {
         ensureAdminAuth(() => lexofficeBtn.click());
         return;
@@ -1020,11 +1178,15 @@ export function initJobEventDelegation() {
     // 10. Reprocess AI (Admin Only)
     const reprocessBtn = e.target.closest(".btn-reprocess-ai");
     if (reprocessBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const jobId = reprocessBtn.getAttribute("data-job-id");
       if (!state.isAdmin) {
-        ensureAdminAuth(() => reprocessBtn.click());
+        ensureAdminAuth(() => {
+          if (jobId && window.retryJob) window.retryJob(jobId);
+        });
         return;
       }
-      const jobId = reprocessBtn.getAttribute("data-job-id");
       if (jobId && window.retryJob) window.retryJob(jobId);
       return;
     }
@@ -1032,12 +1194,16 @@ export function initJobEventDelegation() {
     // 11. Hide / Unhide (Admin Only)
     const hideBtn = e.target.closest(".btn-hide-job");
     if (hideBtn) {
-      if (!state.isAdmin) {
-        ensureAdminAuth(() => hideBtn.click());
-        return;
-      }
+      e.preventDefault();
+      e.stopPropagation();
       const jobId = hideBtn.getAttribute("data-job-id");
       const isCurrentlyHidden = hideBtn.getAttribute("data-is-hidden") === "true";
+      if (!state.isAdmin) {
+        ensureAdminAuth(() => {
+          if (jobId && window.toggleHideJob) window.toggleHideJob(jobId, !isCurrentlyHidden);
+        });
+        return;
+      }
       if (jobId && window.toggleHideJob) window.toggleHideJob(jobId, !isCurrentlyHidden);
       return;
     }
@@ -1045,11 +1211,15 @@ export function initJobEventDelegation() {
     // 12. Delete Job (Admin Only)
     const deleteBtn = e.target.closest(".btn-delete-job");
     if (deleteBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const jobId = deleteBtn.getAttribute("data-job-id");
       if (!state.isAdmin) {
-        ensureAdminAuth(() => deleteBtn.click());
+        ensureAdminAuth(() => {
+          if (jobId && window.deleteJob) window.deleteJob(jobId);
+        });
         return;
       }
-      const jobId = deleteBtn.getAttribute("data-job-id");
       if (jobId && window.deleteJob) window.deleteJob(jobId);
       return;
     }
@@ -1057,6 +1227,8 @@ export function initJobEventDelegation() {
     // 13. Toggle Show Hidden Filter
     const toggleHiddenBtn = e.target.closest("#toggle-show-hidden-btn");
     if (toggleHiddenBtn) {
+      e.preventDefault();
+      e.stopPropagation();
       state.activeFilter = state.activeFilter === "hidden" ? "all" : "hidden";
       toggleHiddenBtn.classList.toggle("active", state.activeFilter === "hidden");
       renderJobsList();

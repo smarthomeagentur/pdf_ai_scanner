@@ -135,6 +135,11 @@ async function loadJobs() {
     console.log(
       `[SQLITE] Verbunden mit store/database.sqlite (${Object.keys(uploadJobs).length} Belege geladen)`
     );
+
+    if (uploadQueue.length > 0) {
+      console.log(`[SQLITE] Starte automatische Verarbeitung von ${uploadQueue.length} Beleg(en) in der Warteschlange...`);
+      processQueue();
+    }
   } catch (e) {
     console.error("[SQLITE] Fehler beim Laden der Datenbank:", e);
   }
@@ -271,6 +276,27 @@ async function processSingleJob(jobId) {
 
   try {
     console.log(`[WEB] Processing job ${jobId} for file ${job.originalName}...`);
+
+    // Ensure local file exists on disk (re-download from Drive if previously unlinked)
+    if (!job.filePath || !fs.existsSync(job.filePath)) {
+      const driveFileId = job.driveFileId || job.rawDriveId;
+      if (driveFileId) {
+        console.log(`[WEB] Lade Datei für Job ${jobId} von Google Drive (${driveFileId}) herunter...`);
+        const localPath = path.join(DOWNLOADS_DIR, `redownload_${jobId}.pdf`);
+        const drive = await driveApi.getClient();
+        const downloadRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" });
+        await new Promise((resolve, reject) => {
+          const dest = fs.createWriteStream(localPath);
+          downloadRes.data.pipe(dest);
+          dest.on("finish", resolve);
+          dest.on("error", reject);
+        });
+        job.filePath = localPath;
+      } else {
+        throw new Error("Lokale Datei existiert nicht mehr und Beleg besitzt keine Google Drive ID.");
+      }
+    }
+
     let folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
       ? appSettings.FOLDER_ID
       : await driveApi.findFolderId(appSettings.FOLDER_ID);
@@ -302,15 +328,29 @@ async function processSingleJob(jobId) {
       }
     }
 
-    const tagsArr = Array.isArray(sortedName.tags) ? sortedName.tags : [];
-    if (sortedName.isInvoice) tagsArr.push("Rechnung");
+    // Clean real content tags for UI & search
+    const cleanUserTags = (Array.isArray(sortedName.tags) ? sortedName.tags : [])
+      .map((t) => String(t).trim())
+      .filter((t) => {
+        const lower = t.toLowerCase();
+        return (
+          t.length > 0 &&
+          !["unknown", "unbekannt", "none", "null", "pdf", "scan", "dokument", "document"].includes(lower) &&
+          !/^(isinvoice|datum|date|invoicenumber|invoiceammount|betrag|firma|company|kategorie|category):/i.test(t)
+        );
+      });
+    sortedName.tags = cleanUserTags;
+
+    // Technical ExifTool metadata keywords
+    const exifKeywords = [...cleanUserTags];
+    if (sortedName.isInvoice) exifKeywords.push("Rechnung");
     if (sortedName.documentDate && sortedName.documentDate !== "unknown")
-      tagsArr.push(`Datum:${sortedName.documentDate}`);
-    if (sortedName.isInvoice !== undefined) tagsArr.push(`isInvoice:${sortedName.isInvoice}`);
+      exifKeywords.push(`Datum:${sortedName.documentDate}`);
+    if (sortedName.isInvoice !== undefined) exifKeywords.push(`isInvoice:${sortedName.isInvoice}`);
     if (sortedName.invoiceNumber && sortedName.invoiceNumber !== "none")
-      tagsArr.push(`invoiceNumber:${sortedName.invoiceNumber}`);
+      exifKeywords.push(`invoiceNumber:${sortedName.invoiceNumber}`);
     if (sortedName.invoiceAmmount !== undefined)
-      tagsArr.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
+      exifKeywords.push(`invoiceAmmount:${sortedName.invoiceAmmount}`);
 
     try {
       const { exiftool } = require("exiftool-vendored");
@@ -319,7 +359,7 @@ async function processSingleJob(jobId) {
         Author: sortedName.company || "Unbekannt",
         Subject: sortedName.category || "",
         Creator: "AI Document Scanner",
-        Keywords: tagsArr,
+        Keywords: exifKeywords,
       });
       if (fs.existsSync(job.filePath + "_original")) {
         await fs.promises.unlink(job.filePath + "_original").catch(() => {});
@@ -331,7 +371,7 @@ async function processSingleJob(jobId) {
     const searchDescription = [
       sortedName.company ? `Firma: ${sortedName.company}` : "",
       sortedName.category ? `Kategorie: ${sortedName.category}` : "",
-      tagsArr.length > 0 ? `Tags: ${tagsArr.join(", ")}` : "",
+      cleanUserTags.length > 0 ? `Tags: ${cleanUserTags.join(", ")}` : "",
     ]
       .filter(Boolean)
       .join(" | ");
@@ -611,6 +651,22 @@ async function importDriveFile(driveFileId, name = null) {
   return newJob;
 }
 
+function retryJob(jobId) {
+  const job = uploadJobs[jobId];
+  if (!job) return null;
+  job.status = "pending";
+  job.inAiPipeline = true;
+  job.error = null;
+  job.aiPipelineStartedAt = new Date().toISOString();
+  if (!uploadQueue.includes(jobId)) {
+    uploadQueue.push(jobId);
+  }
+  persistJob(job);
+  persistAppState();
+  processQueue();
+  return job;
+}
+
 module.exports = {
   loadJobs,
   saveJobs,
@@ -622,6 +678,7 @@ module.exports = {
   clearAllJobs,
   hideJob,
   unhideJob,
+  retryJob,
   processQueue,
   processSingleJob,
   findMatchingJobForDriveFile,

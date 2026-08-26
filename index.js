@@ -19,6 +19,14 @@ console.log = function (...args) {
   originalConsoleLog.apply(console, args);
 };
 
+process.on("uncaughtException", (err) => {
+  console.error("[CRITICAL ERROR] Uncaught Exception in worker/server:", err?.stack || err?.message || err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[CRITICAL ERROR] Unhandled Rejection in async pipeline:", reason?.stack || reason?.message || reason);
+});
+
 const dotenv = require("dotenv");
 dotenv.config();
 

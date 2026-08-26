@@ -16,6 +16,7 @@ const {
   clearAllJobs,
   hideJob,
   unhideJob,
+  retryJob,
   saveJobs,
   processQueue,
 } = require("../services/jobQueueService");
@@ -245,15 +246,9 @@ router.post("/api/jobs/:id/update-meta", requireAdmin, (req, res) => {
 });
 
 router.post("/api/jobs/:id/retry", requireAdmin, (req, res) => {
-  const job = getJob(req.params.id);
+  const job = retryJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
-  job.status = "pending";
-  job.inAiPipeline = true;
-  job.error = null;
-  job.aiPipelineStartedAt = new Date().toISOString();
-  saveJobs();
-  processQueue();
-  res.json({ success: true, message: "KI-Erkennung wird erneut durchgeführt." });
+  res.json({ success: true, message: "KI-Erkennung wird erneut durchgeführt.", job });
 });
 
 router.post("/api/jobs/:id/cancel", requireAdmin, (req, res) => {

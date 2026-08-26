@@ -75,7 +75,7 @@ app.use(
           "https://*.opencv.org",
         ],
         frameSrc: ["'self'", "blob:", "https://*.google.com", "https://accounts.google.com", "https://docs.google.com", "https://drive.google.com"],
-        workerSrc: ["'self'", "blob:"],
+        workerSrc: ["'self'", "blob:", "https://cdn.jsdelivr.net"],
         objectSrc: ["'self'", "blob:", "data:"],
         frameAncestors: ["'self'"],
         upgradeInsecureRequests: null,
