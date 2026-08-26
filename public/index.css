@@ -757,14 +757,10 @@ iframe[src*="docs.google.com/picker"] {
 }
 
 /* ==========================================================================
-   Modern Settings Modal Design
+   Modern GDev Modal Design (Settings, Admin Login, Accounting)
    ========================================================================== */
-#settings-modal .modal-content.gdev-modal,
-#settings-modal .gdev-dialog {
-  max-width: 860px !important;
-  width: 96vw !important;
-  height: 86vh !important;
-  max-height: 820px !important;
+.modal-content.gdev-modal,
+.gdev-modal {
   padding: 0 !important;
   display: flex !important;
   flex-direction: column !important;
@@ -776,7 +772,30 @@ iframe[src*="docs.google.com/picker"] {
   font-family: inherit !important;
 }
 
-#settings-modal .gdev-header {
+#settings-modal .modal-content.gdev-modal,
+#settings-modal .gdev-dialog {
+  max-width: 860px !important;
+  width: 96vw !important;
+  height: 86vh !important;
+  max-height: 820px !important;
+}
+
+#admin-login-modal .modal-content.gdev-modal {
+  max-width: 440px !important;
+  width: 92vw !important;
+  height: auto !important;
+  max-height: 90vh !important;
+}
+
+#accounting-account-modal .modal-content.gdev-modal,
+#drive-sync-modal .modal-content.gdev-modal {
+  max-width: 720px !important;
+  width: 94vw !important;
+  height: auto !important;
+  max-height: 88vh !important;
+}
+
+.gdev-modal .gdev-header {
   background: #ffffff !important;
   border-bottom: 1px solid #e2e8f0 !important;
   padding: 14px 20px !important;
@@ -787,11 +806,11 @@ iframe[src*="docs.google.com/picker"] {
   flex-shrink: 0 !important;
 }
 
-#settings-modal .gdev-header::before {
+.gdev-modal .gdev-header::before {
   display: none !important;
 }
 
-#settings-modal .gdev-title {
+.gdev-modal .gdev-title {
   font-size: 16px !important;
   font-weight: 600 !important;
   color: #0f172a !important;
@@ -801,34 +820,37 @@ iframe[src*="docs.google.com/picker"] {
   gap: 8px !important;
 }
 
-#settings-modal .gdev-subtitle {
+.gdev-modal .gdev-subtitle {
   font-size: 12px !important;
   color: #64748b !important;
   margin-top: 2px !important;
 }
 
-#settings-modal .gdev-close-btn {
+.gdev-modal .gdev-close-btn {
   border: 1px solid #e2e8f0 !important;
   background: #f8fafc !important;
   color: #64748b !important;
   width: 32px !important;
   height: 32px !important;
+  min-width: 32px !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
   border-radius: 8px !important;
   cursor: pointer !important;
+  padding: 0 !important;
   transition: all 0.15s ease !important;
+  flex-shrink: 0 !important;
 }
 
-#settings-modal .gdev-close-btn:hover {
+.gdev-modal .gdev-close-btn:hover {
   background: #f1f5f9 !important;
   color: #0f172a !important;
   border-color: #cbd5e1 !important;
 }
 
 /* Nav Tabs - Wide, no horizontal scrolling needed */
-#settings-modal .gdev-tabs-bar {
+.gdev-modal .gdev-tabs-bar {
   display: flex !important;
   background: #ffffff !important;
   border-bottom: 1px solid #e2e8f0 !important;
@@ -838,7 +860,7 @@ iframe[src*="docs.google.com/picker"] {
   gap: 2px !important;
 }
 
-#settings-modal .gdev-tab-btn {
+.gdev-modal .gdev-tab-btn {
   background: transparent !important;
   border: none !important;
   border-bottom: 2px solid transparent !important;
@@ -857,12 +879,12 @@ iframe[src*="docs.google.com/picker"] {
   flex: 1 0 auto !important;
 }
 
-#settings-modal .gdev-tab-btn:hover {
+.gdev-modal .gdev-tab-btn:hover {
   color: #1e293b !important;
   background: #f8fafc !important;
 }
 
-#settings-modal .gdev-tab-btn.active {
+.gdev-modal .gdev-tab-btn.active {
   color: #2563eb !important;
   border-bottom: 2px solid #2563eb !important;
   font-weight: 600 !important;
@@ -870,14 +892,14 @@ iframe[src*="docs.google.com/picker"] {
 }
 
 /* Tab Panel & Content Area */
-#settings-modal .gdev-body {
+.gdev-modal .gdev-body {
   flex-grow: 1 !important;
   overflow-y: auto !important;
   padding: 16px 20px !important;
   background: #f8fafc !important;
 }
 
-#settings-modal .gdev-card {
+.gdev-modal .gdev-card {
   border: 1px solid #e2e8f0 !important;
   border-radius: 12px !important;
   background: #ffffff !important;
@@ -886,7 +908,7 @@ iframe[src*="docs.google.com/picker"] {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03) !important;
 }
 
-#settings-modal .gdev-card-title {
+.gdev-modal .gdev-card-title {
   font-size: 13px !important;
   font-weight: 600 !important;
   color: #1e293b !important;
@@ -899,7 +921,7 @@ iframe[src*="docs.google.com/picker"] {
   gap: 8px !important;
 }
 
-#settings-modal .gdev-label {
+.gdev-modal .gdev-label {
   display: block !important;
   font-size: 12.5px !important;
   font-weight: 600 !important;
@@ -907,11 +929,11 @@ iframe[src*="docs.google.com/picker"] {
   margin-bottom: 5px !important;
 }
 
-#settings-modal .gdev-input,
-#settings-modal input[type="text"],
-#settings-modal input[type="password"],
-#settings-modal textarea,
-#settings-modal select {
+.gdev-modal .gdev-input,
+.gdev-modal input[type="text"],
+.gdev-modal input[type="password"],
+.gdev-modal textarea,
+.gdev-modal select {
   border: 1px solid #cbd5e1 !important;
   border-radius: 8px !important;
   padding: 7px 12px !important;
@@ -922,27 +944,28 @@ iframe[src*="docs.google.com/picker"] {
   transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
 }
 
-#settings-modal .gdev-input:focus,
-#settings-modal input[type="text"]:focus,
-#settings-modal input[type="password"]:focus,
-#settings-modal textarea:focus,
-#settings-modal select:focus {
+.gdev-modal .gdev-input:focus,
+.gdev-modal input[type="text"]:focus,
+.gdev-modal input[type="password"]:focus,
+.gdev-modal textarea:focus,
+.gdev-modal select:focus {
   border-color: #3b82f6 !important;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1) !important;
   outline: none !important;
 }
 
-#settings-modal .gdev-helper {
+.gdev-modal .gdev-helper {
   font-size: 11.5px !important;
   color: #64748b !important;
   margin-top: 4px !important;
   line-height: 1.4 !important;
 }
 
-/* Unified Button Heights & High-Contrast Modern Colors inside Settings */
-#settings-modal .btn,
-#settings-modal .action-button,
-#settings-modal .app-btn {
+/* Unified Button Heights & High-Contrast Modern Colors inside GDev Modals */
+.modal-overlay .gdev-modal .btn,
+.modal-overlay .gdev-modal .action-button,
+.modal-overlay .gdev-modal .app-btn,
+.modal-overlay .gdev-modal button.btn {
   height: 34px !important;
   min-height: 34px !important;
   font-size: 12.5px !important;
@@ -958,67 +981,76 @@ iframe[src*="docs.google.com/picker"] {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
 }
 
-#settings-modal .btn-outline-primary,
-#settings-modal .btn-outline-secondary,
-#settings-modal .btn-outline-info,
-#settings-modal .btn-outline-success,
-#settings-modal .btn-trigger-rescan-duplicates,
-#settings-modal #closeSettingsBottomBtn {
+.modal-overlay .gdev-modal .btn-outline-primary,
+.modal-overlay .gdev-modal .btn-outline-secondary,
+.modal-overlay .gdev-modal .btn-outline-info,
+.modal-overlay .gdev-modal .btn-outline-success,
+.modal-overlay .gdev-modal .btn-trigger-rescan-duplicates,
+.modal-overlay .gdev-modal #closeSettingsBottomBtn,
+.modal-overlay .gdev-modal #admin-login-cancel-btn {
   background-color: #f1f5f9 !important;
   border: 1px solid #cbd5e1 !important;
   color: #1e293b !important;
   font-weight: 500 !important;
 }
 
-#settings-modal .btn-outline-primary:hover,
-#settings-modal .btn-outline-secondary:hover,
-#settings-modal .btn-outline-info:hover,
-#settings-modal .btn-outline-success:hover,
-#settings-modal .btn-trigger-rescan-duplicates:hover,
-#settings-modal #closeSettingsBottomBtn:hover {
+.modal-overlay .gdev-modal .btn-outline-primary:hover,
+.modal-overlay .gdev-modal .btn-outline-secondary:hover,
+.modal-overlay .gdev-modal .btn-outline-info:hover,
+.modal-overlay .gdev-modal .btn-outline-success:hover,
+.modal-overlay .gdev-modal .btn-trigger-rescan-duplicates:hover,
+.modal-overlay .gdev-modal #closeSettingsBottomBtn:hover,
+.modal-overlay .gdev-modal #admin-login-cancel-btn:hover {
   background-color: #e2e8f0 !important;
   border-color: #94a3b8 !important;
   color: #0f172a !important;
 }
 
-#settings-modal .btn-outline-danger {
+.modal-overlay .gdev-modal .btn-outline-danger {
   background-color: #fff1f2 !important;
   border: 1px solid #fecdd3 !important;
   color: #e11d48 !important;
   font-weight: 500 !important;
 }
 
-#settings-modal .btn-outline-danger:hover {
+.modal-overlay .gdev-modal .btn-outline-danger:hover {
   background-color: #ffe4e6 !important;
   border-color: #fda4af !important;
   color: #be123c !important;
 }
 
-#settings-modal .btn-primary,
-#settings-modal #saveSettingsBtn {
+.modal-overlay .gdev-modal .btn-primary,
+.modal-overlay .gdev-modal #saveSettingsBtn,
+.modal-overlay .gdev-modal #admin-login-submit-btn {
   background-color: #2563eb !important;
   border: 1px solid #2563eb !important;
   color: #ffffff !important;
   padding: 4px 20px !important;
 }
 
-#settings-modal .btn-primary:hover,
-#settings-modal #saveSettingsBtn:hover {
+.modal-overlay .gdev-modal .btn-primary:hover,
+.modal-overlay .gdev-modal #saveSettingsBtn:hover,
+.modal-overlay .gdev-modal #admin-login-submit-btn:hover {
   background-color: #1d4ed8 !important;
   border-color: #1d4ed8 !important;
   color: #ffffff !important;
 }
 
 /* Sticky Footer */
-#settings-modal .gdev-footer {
+.gdev-modal .gdev-footer {
   background: #ffffff !important;
   border-top: 1px solid #e2e8f0 !important;
   padding: 12px 20px !important;
   display: flex !important;
-  justify-content: space-between !important;
+  justify-content: flex-end !important;
   align-items: center !important;
+  gap: 8px !important;
   flex-shrink: 0 !important;
   border-radius: 0 0 16px 16px !important;
+}
+
+#settings-modal .gdev-footer {
+  justify-content: space-between !important;
 }
 
 /* ==========================================================================
