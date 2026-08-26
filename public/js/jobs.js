@@ -411,7 +411,7 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
     return `<span class="fw-bold text-dark" style="font-size: 14px;">${highlightQueryText(job.originalName || "Dokument.pdf", searchQuery)}</span>`;
   }
 
-  const category = (res.category && res.category !== "unknown") ? res.category : (res.isInvoice ? "Rechnungen" : "Dokumente");
+  const category = (res.category && res.category !== "unknown" && res.category !== "Unbekannt") ? res.category : (res.isInvoice ? "Rechnungen" : "Dokumente");
   const company = (res.company && res.company !== "unknown") ? res.company : (job.targetCompany || "Unbekannt");
 
   let tagsArray = [];
@@ -423,7 +423,14 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
 
   const cleanTags = tagsArray
     .map((t) => String(t).trim().replace(/^[-_\s]+|[-_\s]+$/g, ""))
-    .filter((t) => t.length > 0 && !["unknown", "none", "pdf", "scan"].includes(t.toLowerCase()))
+    .filter((t) => {
+      const lower = t.toLowerCase();
+      if (!t || t.length < 2) return false;
+      if (["unknown", "unbekannt", "none", "null", "pdf", "scan", "dokument", "document", "rechnung", "invoice"].includes(lower)) return false;
+      if (/^(isinvoice|datum|date|invoicenumber|invoiceammount|betrag|firma|company|kategorie|category):/i.test(t)) return false;
+      if (lower === category.toLowerCase() || lower === company.toLowerCase()) return false;
+      return true;
+    })
     .slice(0, 3);
 
   const categoryBadge = `<span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;" title="Kategorie"><span class="material-symbols-outlined" style="font-size: 14px;">folder</span> ${highlightQueryText(category, searchQuery)}</span>`;
@@ -442,7 +449,7 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
   return `
     <div class="d-flex align-items-center gap-1 flex-wrap" style="line-height: 1.4;">
       ${categoryBadge}
-      ${tagsBadges}
+      ${tagsBadges ? `${tagsBadges}` : ""}
       ${companyBadge}
     </div>`;
 }
