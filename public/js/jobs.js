@@ -1157,6 +1157,8 @@ export function initJobEventDelegation() {
     // 9. Buchhaltung Sync Button (Admin Only)
     const lexofficeBtn = e.target.closest(".btn-manual-lexoffice-sync");
     if (lexofficeBtn) {
+      e.preventDefault();
+      e.stopPropagation();
       if (!state.isAdmin) {
         ensureAdminAuth(() => lexofficeBtn.click());
         return;
@@ -1169,11 +1171,15 @@ export function initJobEventDelegation() {
     // 10. Reprocess AI (Admin Only)
     const reprocessBtn = e.target.closest(".btn-reprocess-ai");
     if (reprocessBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const jobId = reprocessBtn.getAttribute("data-job-id");
       if (!state.isAdmin) {
-        ensureAdminAuth(() => reprocessBtn.click());
+        ensureAdminAuth(() => {
+          if (jobId && window.retryJob) window.retryJob(jobId);
+        });
         return;
       }
-      const jobId = reprocessBtn.getAttribute("data-job-id");
       if (jobId && window.retryJob) window.retryJob(jobId);
       return;
     }
@@ -1181,12 +1187,16 @@ export function initJobEventDelegation() {
     // 11. Hide / Unhide (Admin Only)
     const hideBtn = e.target.closest(".btn-hide-job");
     if (hideBtn) {
-      if (!state.isAdmin) {
-        ensureAdminAuth(() => hideBtn.click());
-        return;
-      }
+      e.preventDefault();
+      e.stopPropagation();
       const jobId = hideBtn.getAttribute("data-job-id");
       const isCurrentlyHidden = hideBtn.getAttribute("data-is-hidden") === "true";
+      if (!state.isAdmin) {
+        ensureAdminAuth(() => {
+          if (jobId && window.toggleHideJob) window.toggleHideJob(jobId, !isCurrentlyHidden);
+        });
+        return;
+      }
       if (jobId && window.toggleHideJob) window.toggleHideJob(jobId, !isCurrentlyHidden);
       return;
     }
@@ -1194,11 +1204,15 @@ export function initJobEventDelegation() {
     // 12. Delete Job (Admin Only)
     const deleteBtn = e.target.closest(".btn-delete-job");
     if (deleteBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const jobId = deleteBtn.getAttribute("data-job-id");
       if (!state.isAdmin) {
-        ensureAdminAuth(() => deleteBtn.click());
+        ensureAdminAuth(() => {
+          if (jobId && window.deleteJob) window.deleteJob(jobId);
+        });
         return;
       }
-      const jobId = deleteBtn.getAttribute("data-job-id");
       if (jobId && window.deleteJob) window.deleteJob(jobId);
       return;
     }
@@ -1206,6 +1220,8 @@ export function initJobEventDelegation() {
     // 13. Toggle Show Hidden Filter
     const toggleHiddenBtn = e.target.closest("#toggle-show-hidden-btn");
     if (toggleHiddenBtn) {
+      e.preventDefault();
+      e.stopPropagation();
       state.activeFilter = state.activeFilter === "hidden" ? "all" : "hidden";
       toggleHiddenBtn.classList.toggle("active", state.activeFilter === "hidden");
       renderJobsList();

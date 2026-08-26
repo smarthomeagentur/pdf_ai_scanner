@@ -611,6 +611,22 @@ async function importDriveFile(driveFileId, name = null) {
   return newJob;
 }
 
+function retryJob(jobId) {
+  const job = uploadJobs[jobId];
+  if (!job) return null;
+  job.status = "pending";
+  job.inAiPipeline = true;
+  job.error = null;
+  job.aiPipelineStartedAt = new Date().toISOString();
+  if (!uploadQueue.includes(jobId)) {
+    uploadQueue.push(jobId);
+  }
+  persistJob(job);
+  persistAppState();
+  processQueue();
+  return job;
+}
+
 module.exports = {
   loadJobs,
   saveJobs,
@@ -622,6 +638,7 @@ module.exports = {
   clearAllJobs,
   hideJob,
   unhideJob,
+  retryJob,
   processQueue,
   processSingleJob,
   findMatchingJobForDriveFile,

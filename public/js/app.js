@@ -1,17 +1,17 @@
 /**
  * Main Frontend Coordinator & Bootstrapping
  */
-import { apiRequest } from "./api.js?v=20260826_v65";
-import { state } from "./state.js?v=20260826_v65";
-import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260826_v65";
-import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260826_v65";
-import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260826_v65";
-import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260826_v65";
-import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260826_v65";
-import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260826_v65";
-import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260826_v65";
-import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260826_v65";
-import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview, ensureAdminAuth } from "./jobs.js?v=20260826_v65";
+import { apiRequest } from "./api.js?v=20260826_v66";
+import { state } from "./state.js?v=20260826_v66";
+import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260826_v66";
+import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260826_v66";
+import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260826_v66";
+import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260826_v66";
+import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260826_v66";
+import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260826_v66";
+import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260826_v66";
+import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260826_v66";
+import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview, ensureAdminAuth } from "./jobs.js?v=20260826_v66";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
@@ -32,15 +32,25 @@ window.ensureAdminAuth = ensureAdminAuth;
 
 window.retryJob = async (jobId) => {
   try {
+    const job = state.jobs && state.jobs.find((j) => j.id === jobId);
+    if (job) {
+      job.status = "pending";
+      job.error = null;
+      job.inAiPipeline = true;
+      renderJobsList(state.jobs, true);
+    }
+
     const res = await apiRequest(`/api/jobs/${jobId}/retry`, { method: "POST" });
     if (res.success) {
-      showToast("Verarbeitung erneut gestartet.", "info");
+      showToast("KI-Verarbeitung erneut gestartet!", "info");
       refreshStatus();
     } else {
       showToast(res.error || "Fehler beim erneuten Starten.", "error");
+      refreshStatus();
     }
   } catch (err) {
-    showToast(err.message, "error");
+    showToast("Fehler: " + err.message, "error");
+    refreshStatus();
   }
 };
 
