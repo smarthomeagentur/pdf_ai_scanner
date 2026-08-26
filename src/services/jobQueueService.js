@@ -478,7 +478,23 @@ function getJobs(ids = "all", isAdmin = true) {
 }
 
 function getJob(id) {
-  return uploadJobs[id] || null;
+  if (!id) return null;
+  if (uploadJobs[id]) return uploadJobs[id];
+  const strId = String(id);
+  const cleanId = strId.replace(/^gdrive_/, "");
+  if (uploadJobs[cleanId]) return uploadJobs[cleanId];
+  if (uploadJobs[`gdrive_${cleanId}`]) return uploadJobs[`gdrive_${cleanId}`];
+
+  // Search by ID, driveFileId or rawDriveId
+  const match = Object.values(uploadJobs).find(
+    (j) =>
+      String(j.id) === strId ||
+      String(j.id) === cleanId ||
+      String(j.driveFileId) === cleanId ||
+      String(j.rawDriveId) === cleanId ||
+      String(j.id).replace(/^gdrive_/, "") === cleanId
+  );
+  return match || null;
 }
 
 function updateJob(id, updates) {

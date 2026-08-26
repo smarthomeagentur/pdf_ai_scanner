@@ -1,6 +1,6 @@
 import { escapeHtml, formatCurrency, formatDateDisplay, highlightQueryText, showToast, debugLog } from "./utils.js";
 import { apiRequest } from "./api.js";
-import { getAllClientCredentials, getAccountingAccounts, state } from "./state.js";
+import { getAllClientCredentials, getAccountingAccounts, state, findJobInState } from "./state.js";
 import { transferJobToClickUp } from "./clickup.js";
 
 let allRechnungenJobs = [];
@@ -28,19 +28,50 @@ export function initRechnungenEvents() {
   if (filterYear) filterYear.addEventListener("change", renderRechnungenList);
   if (filterQuarter) filterQuarter.addEventListener("change", renderRechnungenList);
 
+  // Accounting Accounts Config Modal
+  const btnAccountsConfig = document.getElementById("btn-accounting-accounts-config");
+  if (btnAccountsConfig) {
+    btnAccountsConfig.addEventListener("click", openAccountingAccountsModal);
+  }
+  const btnCloseAccounts = document.getElementById("btn-close-accounting-accounts");
+  if (btnCloseAccounts) {
+    btnCloseAccounts.addEventListener("click", () => {
+      const modal = document.getElementById("accounting-accounts-modal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+  const btnAddAccount = document.getElementById("btn-add-accounting-account");
+  if (btnAddAccount) {
+    btnAddAccount.addEventListener("click", () => openAccountEditModal(null));
+  }
+
+  // Account Edit Modal
+  const btnCloseEdit = document.getElementById("btn-close-account-edit");
+  const btnCancelEdit = document.getElementById("btn-cancel-account-edit");
+  if (btnCloseEdit) {
+    btnCloseEdit.addEventListener("click", () => {
+      const modal = document.getElementById("account-edit-modal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+  if (btnCancelEdit) {
+    btnCancelEdit.addEventListener("click", () => {
+      const modal = document.getElementById("account-edit-modal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+  const formEdit = document.getElementById("form-account-edit");
+  if (formEdit) {
+    formEdit.addEventListener("submit", handleSaveAccountForm);
+  }
+  const selectProvider = document.getElementById("edit-acc-provider");
+  if (selectProvider) {
+    selectProvider.addEventListener("change", toggleProviderFields);
+  }
+
+  // Event Delegation for Table Action Buttons
   if (rechnungenList) {
     rechnungenList.addEventListener("click", async (e) => {
-      // 1. ClickUp transfer
-      const clickupBtn = e.target.closest(".rechnung-clickup-btn");
-      if (clickupBtn) {
-        const jobId = clickupBtn.getAttribute("data-job-id");
-        if (jobId) {
-          transferJobToClickUp(jobId, false, clickupBtn);
-        }
-        return;
-      }
-
-      // 2. Accounting sync modal
       const lexBtn = e.target.closest(".rechnung-lex-btn");
       if (lexBtn) {
         const jobId = lexBtn.getAttribute("data-job-id");
@@ -148,13 +179,22 @@ export async function openAccountingModal(jobId, companyKey = null) {
   const lexSyncModal = document.getElementById("lexoffice-sync-modal");
   if (!lexSyncModal) return;
 
-  const job = (state.jobs && state.jobs.find((j) => j.id === jobId)) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+  let job = findJobInState(jobId);
+  if (!job) {
+    try {
+      const data = await apiRequest(`/api/status?ids=${encodeURIComponent(jobId)}`);
+      if (data.statuses && data.statuses.length > 0) {
+        job = data.statuses[0];
+      }
+    } catch (e) {}
+  }
+
   if (!job) {
     showToast("Dokument nicht gefunden.", "error");
     return;
   }
 
-  currentLexJobId = jobId;
+  currentLexJobId = job.id || jobId;
   const res = job.result || {};
   lexSyncModal.style.display = "flex";
 
@@ -729,7 +769,7 @@ export function closeAccountingCompareModal() {
 }
 
 export function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
-  const job = (state.jobs && state.jobs.find((j) => j.id === jobId)) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+  const job = findJobInState(jobId);
   if (!job || !currentLexCheckData) return;
 
   const accountingCompareModal = document.getElementById("accounting-compare-modal");

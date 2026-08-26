@@ -1152,6 +1152,8 @@ export function initJobEventDelegation() {
     // 8. ClickUp Transfer Button (Admin Only)
     const clickupBtn = e.target.closest(".btn-manual-clickup-transfer");
     if (clickupBtn) {
+      e.preventDefault();
+      e.stopPropagation();
       if (!state.isAdmin) {
         ensureAdminAuth(() => clickupBtn.click());
         return;

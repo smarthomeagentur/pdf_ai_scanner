@@ -164,3 +164,39 @@ export function deleteAccountingAccountById(id) {
   saveAccountingAccounts(accounts);
   return accounts;
 }
+
+export function findJobInState(jobId) {
+  if (!jobId) return null;
+  const strId = String(jobId);
+  const cleanId = strId.replace(/^gdrive_/, "");
+
+  const matcher = (j) => {
+    if (!j) return false;
+    const jId = String(j.id || "");
+    const jClean = jId.replace(/^gdrive_/, "");
+    const rawDrive = String(j.rawDriveId || "");
+    const driveFile = String(j.driveFileId || "");
+    return (
+      jId === strId ||
+      jClean === cleanId ||
+      rawDrive === cleanId ||
+      driveFile === cleanId ||
+      rawDrive === strId ||
+      driveFile === strId
+    );
+  };
+
+  if (Array.isArray(state.jobs)) {
+    const found = state.jobs.find(matcher);
+    if (found) return found;
+  }
+  if (Array.isArray(state.driveOnlySearchResults)) {
+    const found = state.driveOnlySearchResults.find(matcher);
+    if (found) return found;
+  }
+  if (window.allRechnungenJobs && Array.isArray(window.allRechnungenJobs)) {
+    const found = window.allRechnungenJobs.find(matcher);
+    if (found) return found;
+  }
+  return null;
+}
