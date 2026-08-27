@@ -950,9 +950,52 @@ async function setVideoStream(stream) {
   updateTorchState();
   await initAutofocus();
 
+  if (!streaming && video.videoWidth > 0 && activeSource === "camera") {
+    const rect = videoWrapper.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      overlay.width = rect.width;
+      overlay.height = rect.height;
+    }
+    streaming = true;
+    captureBtn.disabled = false;
+    setTimeout(processVideo, 60);
+  }
+
   // Wenn wir mit 4K gestartet sind, überwache nach dem Start die reale FPS-Rate der Hardware
   if (currentCameraResolution === "4k") {
     monitorCameraFpsAndAdapt();
+  }
+}
+
+function pauseCameraAndInference() {
+  streaming = false;
+  isProcessingFrame = false;
+  cancelAutoCountdown();
+
+  // Video-Tracks stoppen & Kamera-Hardware freigeben (spart Akku & schützt vor Hitzeentwicklung)
+  if (videoTrack) {
+    try { videoTrack.stop(); } catch (_) { }
+    videoTrack = null;
+  }
+  if (video && video.srcObject) {
+    try {
+      video.srcObject.getTracks().forEach((t) => t.stop());
+    } catch (_) { }
+    video.srcObject = null;
+  }
+  cameraStarted = false;
+  console.log("[Scanner] Kamera & ONNX-Inferenz im Review-Modus erfolgreich pausiert.");
+}
+
+async function resumeCameraAndInference() {
+  if (streaming && cameraStarted) return;
+  console.log("[Scanner] Re-aktiviere Kamera & ONNX-Inferenz...");
+  if (activeSource === "camera") {
+    cameraStarted = true;
+    await startCamera();
+  } else {
+    streaming = true;
+    setTimeout(processVideo, 50);
   }
 }
 
@@ -1242,6 +1285,76 @@ async function processVideo() {
   setTimeout(processVideo, 35);
 }
 
+// --- Hochpräziser 2-Stufen ONNX Re-Scan auf dem hochauflösenden Rohfoto ---
+async function performDetailedPostScan(canvasHighRes, initialRelativeCorners) {
+  if (!canvasHighRes || canvasHighRes.width <= 0 || canvasHighRes.height <= 0) {
+    return initialRelativeCorners;
+  }
+
+  if (currentEngine !== "onnx" || !onnxReady) {
+    if (openCvReady) {
+      const cvCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
+      if (cvCorners && cvCorners.length === 4) return sortAndOrderCorners(cvCorners);
+    }
+    return initialRelativeCorners;
+  }
+
+  try {
+    console.log("[Scanner] Führe detaillierten 2-Stufen ONNX Re-Scan auf Rohfoto durch...");
+    const W = canvasHighRes.width;
+    const H = canvasHighRes.height;
+
+    // Stufe 1: Globale Erkennung auf dem hochauflösenden Vollbild
+    let stage1Corners = await detectCornersOnnx(canvasHighRes, 0, 0, W, H);
+    if (!stage1Corners && initialRelativeCorners && initialRelativeCorners.length === 4) {
+      stage1Corners = initialRelativeCorners;
+    }
+
+    if (!stage1Corners || stage1Corners.length !== 4) {
+      return initialRelativeCorners;
+    }
+
+    // Stufe 2: Zoom-ROI Erkennung (Hierarchischer Re-Scan)
+    // Wir fokussieren das 256x256 KI-Netzwerk direkt auf den Belegbereich mit 15% Puffer.
+    // Dadurch verdreifacht sich die Auflösung der Kanten/Ecken im Neuronalen Netz!
+    const xs = stage1Corners.map((c) => c.x * W);
+    const ys = stage1Corners.map((c) => c.y * H);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const padX = (maxX - minX) * 0.15;
+    const padY = (maxY - minY) * 0.15;
+
+    const roiX = Math.max(0, Math.floor(minX - padX));
+    const roiY = Math.max(0, Math.floor(minY - padY));
+    const roiW = Math.min(W - roiX, Math.ceil(maxX - minX + 2 * padX));
+    const roiH = Math.min(H - roiY, Math.ceil(maxY - minY + 2 * padY));
+
+    if (roiW > 100 && roiH > 100) {
+      const stage2Corners = await detectCornersOnnx(canvasHighRes, roiX, roiY, roiW, roiH);
+      if (stage2Corners && stage2Corners.length === 4 && isPlausibleDocumentShape(stage2Corners)) {
+        // Rechne die feinen ROI-Ecken zurück in relative Koordinaten des Gesamtbildes
+        const detailedCorners = stage2Corners.map((c) => ({
+          x: (roiX + c.x * roiW) / W,
+          y: (roiY + c.y * roiH) / H,
+        }));
+        const sortedDetailed = sortAndOrderCorners(detailedCorners);
+        if (isPlausibleDocumentShape(sortedDetailed)) {
+          console.log("[Scanner] Detaillierter 2-Stufen ONNX Re-Scan erfolgreich: Kanten millimetergenau optimiert ✓");
+          return sortedDetailed;
+        }
+      }
+    }
+
+    return stage1Corners;
+  } catch (err) {
+    console.warn("[Scanner] Detaillierter Re-Scan Fehler, verwende Initial-Ecken:", err);
+    return initialRelativeCorners;
+  }
+}
+
 captureBtn.addEventListener("click", async () => {
   if (!streaming) return;
 
@@ -1270,8 +1383,6 @@ captureBtn.addEventListener("click", async () => {
         const capabilities = videoTrack.getCapabilities();
         const advancedConstraints = [];
 
-        // Kein manueller Fokus-Override: nativer Continuous-AF der Kamera bleibt aktiv.
-        // Torch nur bei Modus "auto" kurz einschalten.
         if (torchSupported && torchMode === "auto") {
           advancedConstraints.push({ torch: true });
           flashWasTriggered = true;
@@ -1369,47 +1480,23 @@ captureBtn.addEventListener("click", async () => {
     ctxHighRes.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
   }
 
+  // Pausiere Kamera und Live-ONNX-Inferenz sofort nach dem Foto-Schnappschuss
+  pauseCameraAndInference();
+
   let hasRealCorners = !!frozenCorners;
-  // Falls absolut kein Dokument gefunden
-  if (!frozenCorners) {
-    frozenCorners = [
-      { x: 0.1, y: 0.1 },
-      { x: 0.9, y: 0.1 },
-      { x: 0.9, y: 0.9 },
-      { x: 0.1, y: 0.9 },
-    ];
-    // Automatischen Filter-Request stoppen, da wir keine Kanten haben
-    document.getElementById("previewLoadingText").style.display = "none";
-  } else {
-    // Kanten gefunden -> Starte Preload
-    document.getElementById("previewLoadingText").style.display = "block";
-  }
 
-  // Falls im Live-Stream keine Kanten erfasst wurden, versuche Post-Scan auf dem Rohfoto
-  if (!hasRealCorners) {
-    try {
-      let postScanCorners = null;
-      if (currentEngine === "onnx" && onnxReady) {
-        postScanCorners = await detectCornersOnnx(
-          canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height
-        );
-      } else if (openCvReady) {
-        postScanCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
-      }
-
-      if (postScanCorners && postScanCorners.length === 4) {
-        frozenCorners = sortAndOrderCorners(postScanCorners);
-        hasRealCorners = true;
-        console.log("Erfolgreicher Post-Scan auf Rohfoto!");
-      }
-    } catch (e) {
-      console.error("Post-Scan fehlgeschlagen:", e);
+  // Detaillierter Re-Scan auf dem hochauflösenden Rohfoto (immer ausführen für perfekten Sitz!)
+  try {
+    const refinedCorners = await performDetailedPostScan(canvasHighRes, frozenCorners);
+    if (refinedCorners && refinedCorners.length === 4) {
+      frozenCorners = refinedCorners;
+      hasRealCorners = true;
     }
+  } catch (e) {
+    console.error("Post-Scan fehlgeschlagen:", e);
   }
 
   // Wenn am Ende immer noch keine gültigen Ecken vorliegen
-  // bestCntRaw is block scoped, handle it here safely
-  // hasRealCorners is already managed above
   if (!frozenCorners) {
     hasRealCorners = false;
     frozenCorners = [
@@ -1435,11 +1522,33 @@ let reviewState = {
   activeCorner: -1,
 };
 
+function syncFilterPresetButtons(alg) {
+  const currentAlg = alg || document.getElementById("algorithmSelect")?.value || "auto";
+  document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
+    const fType = btn.getAttribute("data-filter");
+    let shouldBeActive = false;
+    if ((fType === "photo" || fType === "original") && currentAlg === "color") {
+      shouldBeActive = true;
+    } else if (fType === "color_doc" && currentAlg === "color_enhanced") {
+      shouldBeActive = true;
+    } else if ((fType === "doc" || fType === "clean") && (currentAlg === "white_paper" || currentAlg === "auto")) {
+      shouldBeActive = true;
+    } else if (fType === "bw" && (currentAlg === "bw_adaptive" || currentAlg === "grayscale")) {
+      shouldBeActive = true;
+    }
+    if (shouldBeActive) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+}
+
 function updatePreviewFilter() {
   const filter = document.getElementById("algorithmSelect").value;
   const rCv = document.getElementById("reviewCanvas");
 
-  // Zuerst immer das originale(ungefilterte), um 15% erweiterte Bild zurückholen
+  // Zuerst immer das originale (ungefilterte), um 20% erweiterte Bild zurückholen
   if (!reviewState.highResCanvas) return;
   rCv.width = reviewState.cropW;
   rCv.height = reviewState.cropH;
@@ -1457,14 +1566,18 @@ function updatePreviewFilter() {
       reviewState.cropH
     );
 
-  rCv.style.filter = "none"; // CSS-Reset (falls es alte Testsachen gäbe)
+  rCv.style.filter = "none"; // CSS-Reset
 
   // Original überspringt alles und behält einfach das ungefilterte High-Res Segment
   if (filter === "color") {
+    document.getElementById("previewLoadingText").style.display = "none";
+    syncFilterPresetButtons("color");
+    fitReviewCanvas();
+    drawReviewOverlay();
     return;
   }
 
-  // Optisches Feedback, dass es lädt (Kein "Blurry Image" Effekt mehr)
+  // Optisches Feedback, dass es lädt
   document.getElementById("previewLoadingText").style.display = "block";
 
   // Neues echtes OpenCV-Preview generieren
@@ -1492,12 +1605,16 @@ function updatePreviewFilter() {
         if (!response.ok) throw new Error("Preview Fetch fail");
 
         const detectedAlgorithm = response.headers.get("X-Detected-Algorithm");
-        if (filter === "auto" && detectedAlgorithm) {
+        if (detectedAlgorithm) {
           const selectEl = document.getElementById("previewAlgorithmSelect");
           if (selectEl && selectEl.querySelector(`option[value="${detectedAlgorithm}"]`)) {
             selectEl.value = detectedAlgorithm;
           }
-          document.getElementById("algorithmSelect").value = detectedAlgorithm;
+          if (filter === "auto") {
+            document.getElementById("algorithmSelect").value = detectedAlgorithm;
+          }
+          // Vorschlag der Automatik in den Filter-Buttons hervorheben
+          syncFilterPresetButtons(detectedAlgorithm);
         }
 
         const imgBlob = await response.blob();
@@ -1523,14 +1640,13 @@ function updatePreviewFilter() {
 }
 
 function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true) {
-  // Pausiere Kameraanzeige
+  // Pausiere Kameraanzeige, Hardware-Tracks und Live-ONNX-Inferenz
+  pauseCameraAndInference();
   document.getElementById("video-wrapper").style.display = "none";
   document.getElementById("captureBtn").style.display = "none";
   document.getElementById("captureBtn").disabled = true;
   document.getElementById("filterMenu").style.display = "none";
   document.getElementById("manual-review-section").style.display = "flex";
-  // Wenn man in den Review kommt, Auto-Tracking unbedingt zurücksetzen:
-  cancelAutoCountdown();
   updateConfirmBtnText();
 
   reviewState.highResCanvas = highResCanvas;
@@ -1543,14 +1659,19 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   let minY = Math.min(...ys),
     maxY = Math.max(...ys);
 
-  // Füge 15% Puffer um den erkannten Rahmen hinzu, damit der User noch etwas "außerhalb" sieht
-  let padX = (maxX - minX) * 0.15;
-  let padY = (maxY - minY) * 0.15;
+  // Füge 20% Puffer um den erkannten Rahmen hinzu, damit der User noch genügend Rand um den Ausschnitt sieht
+  let padX = (maxX - minX) * 0.20;
+  let padY = (maxY - minY) * 0.20;
 
-  reviewState.cropX = Math.max(0, minX - padX);
-  reviewState.cropY = Math.max(0, minY - padY);
-  reviewState.cropW = Math.min(highResCanvas.width - reviewState.cropX, maxX - minX + 2 * padX);
-  reviewState.cropH = Math.min(highResCanvas.height - reviewState.cropY, maxY - minY + 2 * padY);
+  const left = Math.max(0, Math.floor(minX - padX));
+  const top = Math.max(0, Math.floor(minY - padY));
+  const right = Math.min(highResCanvas.width, Math.ceil(maxX + padX));
+  const bottom = Math.min(highResCanvas.height, Math.ceil(maxY + padY));
+
+  reviewState.cropX = left;
+  reviewState.cropY = top;
+  reviewState.cropW = Math.max(50, right - left);
+  reviewState.cropH = Math.max(50, bottom - top);
 
   // Lade diesen Puffer-Zuschnitt in den ReviewCanvas
   const rCv = document.getElementById("reviewCanvas");
@@ -1577,28 +1698,14 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
 
   // Rechne die 4 Originalecken in das lokale (abgeschnittene) Review-Bild um
   reviewState.corners = relativeCorners.map((c) => ({
-    x: c.x * highResCanvas.width - reviewState.cropX,
-    y: c.y * highResCanvas.height - reviewState.cropY,
+    x: Math.round(c.x * highResCanvas.width - reviewState.cropX),
+    y: Math.round(c.y * highResCanvas.height - reviewState.cropY),
   }));
 
-  // Sync preview combo box if present
-  const prevAlgSel = document.getElementById("previewAlgorithmSelect");
-  const algVal = document.getElementById("algorithmSelect")?.value || "auto";
-  if (prevAlgSel) {
-    prevAlgSel.value = algVal;
-  }
-
-  // Sync filter preset buttons
-  document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
-    const fType = btn.getAttribute("data-filter");
-    if ((algVal === "color" && fType === "original") ||
-        ((algVal === "color_enhanced" || algVal === "white_paper" || algVal === "auto") && fType === "clean") ||
-        (algVal === "bw_adaptive" && fType === "bw")) {
-      btn.classList.add("active");
-    } else {
-      btn.classList.remove("active");
-    }
-  });
+  // Initialisiere Filter auf Auto und synchronisiere Buttons
+  const algInput = document.getElementById("algorithmSelect");
+  if (algInput) algInput.value = "auto";
+  syncFilterPresetButtons("auto");
 
   fitReviewCanvas();
   requestAnimationFrame(() => {
@@ -1756,42 +1863,11 @@ if (rescanBtn) {
     rescanBtn.disabled = true;
 
     try {
-      let neueEcken = null;
-
-      let tCanvas = document.createElement("canvas");
-      tCanvas.width = reviewState.cropW;
-      tCanvas.height = reviewState.cropH;
-      let tCtx = tCanvas.getContext("2d", { willReadFrequently: true });
-      tCtx.imageSmoothingEnabled = true;
-      tCtx.imageSmoothingQuality = "high";
-
-      tCtx.drawImage(
-        reviewState.highResCanvas,
-        reviewState.cropX,
-        reviewState.cropY,
-        reviewState.cropW,
-        reviewState.cropH,
-        0,
-        0,
-        reviewState.cropW,
-        reviewState.cropH
-      );
-
-      if (currentEngine === "onnx") {
-        if (onnxReady) {
-          neueEcken = await detectCornersOnnx(tCanvas);
-        }
-      } else {
-        // Reiner OpenCV Modus (nur wenn per Button aktiv)
-        if (openCvReady) {
-          neueEcken = detectCornersCv(tCanvas, 0, 0, reviewState.cropW, reviewState.cropH, true);
-        }
-      }
-
-      if (neueEcken && neueEcken.length === 4) {
-        reviewState.corners = neueEcken.map((c) => ({
-          x: c.x * reviewState.cropW,
-          y: c.y * reviewState.cropH,
+      const refinedCorners = await performDetailedPostScan(reviewState.highResCanvas, null);
+      if (refinedCorners && refinedCorners.length === 4) {
+        reviewState.corners = refinedCorners.map((c) => ({
+          x: Math.round(c.x * reviewState.highResCanvas.width - reviewState.cropX),
+          y: Math.round(c.y * reviewState.highResCanvas.height - reviewState.cropY),
         }));
         drawReviewOverlay();
         updatePreviewFilter();
@@ -1832,13 +1908,15 @@ function updateScannedPagesUI() {
   if (count === 0) {
     if (strip) strip.style.display = "none";
     if (captureBtn) {
-      captureBtn.innerHTML = '<span class="material-symbols-outlined pe-2">photo_camera</span> Dokument scannen';
+      captureBtn.title = "Dokument scannen";
+      captureBtn.innerHTML = '<div class="shutter-inner"><span class="material-symbols-outlined">photo_camera</span></div>';
     }
   } else {
     if (strip) strip.style.display = "flex";
     if (countBadge) countBadge.innerText = count === 1 ? "1 Seite" : `${count} Seiten`;
     if (captureBtn) {
-      captureBtn.innerHTML = `<span class="material-symbols-outlined pe-2">photo_camera</span> Seite ${count + 1} scannen`;
+      captureBtn.title = `Seite ${count + 1} scannen`;
+      captureBtn.innerHTML = '<div class="shutter-inner"><span class="material-symbols-outlined">photo_camera</span></div>';
     }
     if (stripFinishBtn) {
       stripFinishBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 16px;">check_circle</span> <span>Abschließen (${count})</span>`;
@@ -1873,7 +1951,7 @@ window.removeScannedPage = function (index) {
 };
 
 // Handler für Abbrechen / Schließen des Review-Panels (bricht nur den aktuellen Scan ab, behält vorherige Seiten)
-const closeReviewPanel = () => {
+const closeReviewPanel = async () => {
   const reviewSec = document.getElementById("manual-review-section");
   if (reviewSec) reviewSec.style.display = "none";
   const filterMenu = document.getElementById("filterMenu");
@@ -1888,6 +1966,7 @@ const closeReviewPanel = () => {
   // WICHTIG: Bereits gespeicherte Seiten bleiben erhalten, nur der unbestätigte Snapshot wird verworfen
   reviewState.highResCanvas = null;
   updateScannedPagesUI();
+  await resumeCameraAndInference();
 };
 
 const cancelCrossBtn = document.getElementById("cancelReviewCrossBtn");
@@ -1956,20 +2035,20 @@ if (rotateRightBtn) rotateRightBtn.addEventListener("click", () => rotateReviewI
 
 document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".filter-preset-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-
     const filterType = btn.getAttribute("data-filter");
     const algInput = document.getElementById("algorithmSelect");
-    if (algInput) {
-      if (filterType === "original") {
-        algInput.value = "color";
-      } else if (filterType === "clean") {
-        algInput.value = "auto";
-      } else if (filterType === "bw") {
-        algInput.value = "bw_adaptive";
-      }
+    let targetAlg = "auto";
+    if (filterType === "photo" || filterType === "original") {
+      targetAlg = "color";
+    } else if (filterType === "color_doc") {
+      targetAlg = "color_enhanced";
+    } else if (filterType === "doc" || filterType === "clean") {
+      targetAlg = "white_paper";
+    } else if (filterType === "bw") {
+      targetAlg = "bw_adaptive";
     }
+    if (algInput) algInput.value = targetAlg;
+    syncFilterPresetButtons(targetAlg);
     updatePreviewFilter();
   });
 });
@@ -2059,7 +2138,7 @@ const handleAddPageAction = async () => {
   scanPagesArray.push({ blob, previewUrl });
   reviewState.highResCanvas = null;
 
-  setTimeout(() => {
+  setTimeout(async () => {
     if (loader) loader.style.display = "none";
     const filterMenu = document.getElementById("filterMenu");
     if (filterMenu) filterMenu.style.display = "block";
@@ -2070,6 +2149,7 @@ const handleAddPageAction = async () => {
       captureBtn.disabled = false;
     }
     updateScannedPagesUI();
+    await resumeCameraAndInference();
   }, 400);
 };
 
@@ -2134,6 +2214,7 @@ async function finishScanProcess(sendToAI) {
   scanPagesArray = [];
   reviewState.highResCanvas = null;
   updateScannedPagesUI();
+  await resumeCameraAndInference();
 
   // Der asynchrone Upload-Prozess im Hintergrund
   try {
