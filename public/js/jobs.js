@@ -749,6 +749,8 @@ export async function openDocPreview(jobId) {
     job = state.driveOnlySearchResults.find((j) => String(j.id) === String(jobId) || String(j.rawDriveId) === String(jobId));
   }
 
+  const res = job?.result || {};
+  const filename = res.full || job?.originalName || job?.name || "Dokument.pdf";
   const rawDocDate = res.documentDate || job?.documentDate;
   const docDate = (rawDocDate && rawDocDate !== "unknown" && rawDocDate !== "none" && rawDocDate !== "-")
     ? rawDocDate
