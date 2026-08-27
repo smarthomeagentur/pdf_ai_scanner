@@ -16,7 +16,8 @@ test("Security Regression Tests (Enforcing .github/copilot-instructions.md)", as
     ];
 
     for (const input of maliciousInputs) {
-      const sanitizedBasename = path.basename(input);
+      // Normalize both Windows (\) and POSIX (/) path separators cross-platform
+      const sanitizedBasename = path.basename(input.replace(/\\/g, "/"));
       const safeCombined = path.join(DOWNLOADS_DIR, sanitizedBasename);
 
       // 1. Ensure path.basename removes directory traversal markers

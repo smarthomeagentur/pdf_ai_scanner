@@ -20,7 +20,7 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const safeName = fixUmlauts(file.originalname);
-    cb(null, Date.now() + "-" + path.basename(safeName));
+    cb(null, Date.now() + "-" + path.basename(safeName.replace(/\\/g, "/")));
   },
 });
 
