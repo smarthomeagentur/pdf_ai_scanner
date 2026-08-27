@@ -23,8 +23,8 @@
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 
-    <link rel="stylesheet" href="/index.css?v=20260827_doc_aspect_ratio_v72" />
-    <link rel="stylesheet" href="/md3-theme.css?v=20260827_drop_fix_v2" />
+    <link rel="stylesheet" href="/index.css?v=20260827_checkbox_fix_v74" />
+    <link rel="stylesheet" href="/md3-theme.css?v=20260827_checkbox_fix_v3" />
 
     <!-- ONNX Modell & WASM Prefetch für blitzschnelles Öffnen des Scanners -->
     <link rel="prefetch" href="/models/doc_corner_net.onnx" as="fetch" crossorigin="anonymous" />
@@ -457,7 +457,7 @@
 
               <div class="col-6 col-md-4 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
                 <div class="d-flex align-items-center gap-1" id="inbox-selection-controls">
-                  <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer;" />
+                  <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer; width: 16px; height: 16px; min-width: 16px; max-width: 16px;" />
                   <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 11.5px;">Alle</label>
                 </div>
                 <button
@@ -1577,7 +1577,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260827_doc_aspect_ratio_v93"></script>
+      <script type="module" src="/js/app.js?v=20260827_inbox_file_selection_v95"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

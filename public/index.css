@@ -895,6 +895,86 @@ iframe[src*="docs.google.com/picker"] {
   }
 }
 
+/* Inbox Email Card & Attachment Selection */
+.inbox-email-card {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.inbox-att-item {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  min-width: 0 !important;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  transition: all 0.15s ease;
+}
+
+.inbox-att-item:hover {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+
+.inbox-att-item.att-selected {
+  background-color: #f0fdf4 !important;
+  border-color: #86efac !important;
+}
+
+@media (max-width: 576px) {
+  .inbox-email-card {
+    padding: 12px !important;
+  }
+  .inbox-att-item {
+    padding: 6px 8px !important;
+  }
+  .inbox-att-item .preview-att-btn span.fw-medium {
+    font-size: 11.5px !important;
+  }
+}
+
+/* Universal Checkbox Protection: Strict Dimensions, No Ballooning on Focus/Click */
+input[type="checkbox"],
+input[type="radio"] {
+  padding: 0 !important;
+  transform: none !important;
+  box-sizing: border-box !important;
+}
+
+input[type="checkbox"]:focus,
+input[type="radio"]:focus {
+  padding: 0 !important;
+  transform: none !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25) !important;
+}
+
+input[type="checkbox"]:not(.form-switch input),
+.form-check-input:not(.form-switch .form-check-input) {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  padding: 0 !important;
+  border-radius: 4px !important;
+  flex-shrink: 0 !important;
+}
+
+#inbox-select-all-cb {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  flex-shrink: 0 !important;
+}
+
 /* Document Preview Modal & Iframe */
 #doc-preview-modal .modal-content {
   max-width: 1100px;
