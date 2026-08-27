@@ -1756,8 +1756,8 @@ ${lexofficeDetailsHtml}
       let progressStyles = "";
       if (job.processingStartedAt) {
         const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
-        // 0 to 100% over 200 seconds, max out at 99% while processing
-        const progress = Math.min((elapsedSec / 200) * 100, 99);
+        // Linear von 0 bis 99% über 3 Minuten (180s), wartet bei 99% bis die KI fertig ist
+        const progress = Math.min((elapsedSec / 180) * 99, 99);
         progressStyles = `width: ${progress}%;`;
       }
       resultHtml = `
@@ -1833,8 +1833,8 @@ setInterval(() => {
 
     if (job && job.processingStartedAt && job.status === "processing") {
       const elapsedSec = (Date.now() - job.processingStartedAt) / 1000;
-      // 0 to 100% over 200 seconds, max out at 99% while processing
-      const progressProgress = Math.min((elapsedSec / 200) * 100, 99);
+      // Linear von 0 bis 99% über 3 Minuten (180s), wartet bei 99% bis die KI fertig ist
+      const progressProgress = Math.min((elapsedSec / 180) * 99, 99);
       bar.style.width = progressProgress + "%";
     }
   });
