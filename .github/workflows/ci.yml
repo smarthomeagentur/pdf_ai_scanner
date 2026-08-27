@@ -89,4 +89,3 @@ jobs:
           tags: adobe-cloud-downloader:ci-verification
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          fi
