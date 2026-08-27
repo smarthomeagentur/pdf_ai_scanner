@@ -18,8 +18,8 @@ async function initDatabase() {
     SQL = await initSqlJs();
   }
 
-  // If existing database.sqlite exists on disk, load its binary buffer
-  if (fs.existsSync(DB_FILE)) {
+  // If existing database.sqlite exists on disk, load its binary buffer (unless running in test mode)
+  if (process.env.NODE_ENV !== "test" && fs.existsSync(DB_FILE)) {
     try {
       const fileBuffer = fs.readFileSync(DB_FILE);
       db = new SQL.Database(fileBuffer);
@@ -81,7 +81,7 @@ async function initDatabase() {
  * Persists the binary SQLite database to disk atomically to prevent corruption.
  */
 function saveDatabaseToDisk() {
-  if (!db) return;
+  if (!db || process.env.NODE_ENV === "test") return;
   try {
     const data = db.export();
     const buffer = Buffer.from(data);

@@ -14,7 +14,11 @@ const BUTLER_API_BASE = "https://api.buchhaltungsbutler.de/v1";
  */
 async function verifyConnection({ client, secret, key }) {
   if (!client || !secret || !key) {
-    return { valid: false, error: "Unvollständige BuchhaltungsButler Zugangsdaten (Client, Secret oder Key fehlt)." };
+    return {
+      success: false,
+      valid: false,
+      error: "Unvollständige BuchhaltungsButler Zugangsdaten (Client, Secret oder Key fehlt).",
+    };
   }
 
   const basicAuth = Buffer.from(`${client.trim()}:${secret.trim()}`).toString("base64");
@@ -37,13 +41,16 @@ async function verifyConnection({ client, secret, key }) {
 
     if (res.ok && data.success === true) {
       return {
+        success: true,
         valid: true,
+        companyName: client,
         organizationName: client,
       };
     }
 
     if (data.error_code === 4) {
       return {
+        success: false,
         valid: false,
         error: "BuchhaltungsButler Mandanten-Fehler (Code 4): Der API-Key ist im Portal nicht für den API-Client ('" + client + "') freigeschaltet.",
       };
@@ -51,17 +58,20 @@ async function verifyConnection({ client, secret, key }) {
 
     if (data.error_code === 3) {
       return {
+        success: false,
         valid: false,
         error: "BuchhaltungsButler Authentifizierungsfehler (Code 3): API Client oder Secret ist ungültig.",
       };
     }
 
     return {
+      success: false,
       valid: false,
       error: data.message || `API Fehler (${res.status})`,
     };
   } catch (err) {
     return {
+      success: false,
       valid: false,
       error: `Verbindungsfehler zu BuchhaltungsButler: ${err.message}`,
     };
@@ -256,6 +266,8 @@ async function searchReceipts({ client, secret, key, invoiceNumber, fileName, am
 
 module.exports = {
   verifyConnection,
+  testConnection: verifyConnection,
   uploadReceipt,
   searchReceipts,
+  searchDocuments: searchReceipts,
 };
