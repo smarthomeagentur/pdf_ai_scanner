@@ -1,9 +1,33 @@
 /**
- * Sanitizes a string for secure HTML insertion (XSS Prevention).
+ * Normalizes broken UTF-8 / Mojibake strings so German umlauts (ä, ö, ü, ß, Ä, Ö, Ü) render correctly.
+ */
+export function fixUmlauts(str) {
+  if (!str || typeof str !== "string") return str || "";
+  if (/[\u00C2-\u00C3][\u0080-\u00BF]/.test(str)) {
+    try {
+      const fixed = decodeURIComponent(escape(str));
+      if (!fixed.includes("\uFFFD")) return fixed;
+    } catch (e) {}
+    return str
+      .replace(/Ã¤/g, "ä")
+      .replace(/Ã¶/g, "ö")
+      .replace(/Ã¼/g, "ü")
+      .replace(/Ã„/g, "Ä")
+      .replace(/Ã–/g, "Ö")
+      .replace(/Ãœ/g, "Ü")
+      .replace(/ÃŸ/g, "ß")
+      .replace(/â‚¬/g, "€");
+  }
+  return str;
+}
+
+/**
+ * Sanitizes a string for secure HTML insertion (XSS Prevention) and ensures clean UTF-8 Umlauts.
  */
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
-  return String(str)
+  const fixed = fixUmlauts(String(str));
+  return fixed
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

@@ -140,10 +140,10 @@ input:focus, select:focus {
   border: 2px dashed var(--md-sys-color-primary) !important;
   transition: background-color 0.3s, border-width 0.3s;
 }
-#drop-area.hover {
+#drop-area.hover,
+#drop-area.drag-over {
   background-color: var(--md-sys-color-secondary-container) !important;
-  border: 4px dashed var(--md-sys-color-primary) !important;
-  padding: 48px; /* account for border thickness */
+  border: 2px dashed var(--md-sys-color-primary) !important;
 }
 .job-item {
   background-color: var(--md-sys-color-surface-container-low) !important;

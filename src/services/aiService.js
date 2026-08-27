@@ -154,7 +154,7 @@ function isPdf(filePath) {
 }
 
 async function getFileDataJSONGemma(pdfText, settings = {}) {
-  const allowedCompanies = settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
+  const allowedCompanies = settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel (Privat), Unbekannt";
   const allowedCategories =
     settings.AI_CATEGORIES ||
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";

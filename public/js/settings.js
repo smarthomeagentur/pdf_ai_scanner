@@ -441,7 +441,7 @@ function populateSettingsForm(settings = {}) {
   );
   setVal(
     "ai-company-input",
-    settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt"
+    settings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel (Privat), Unbekannt"
   );
 
   const monDriveCb = document.getElementById("monitor-drive-checkbox");

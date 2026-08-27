@@ -32,6 +32,16 @@ router.get("/api/status", (req, res) => {
   res.json({ success: true, statuses, isAdmin: !!isAdmin });
 });
 
+function fixUmlauts(str) {
+  if (!str || typeof str !== "string") return str || "";
+  try {
+    if (/[\u00C2-\u00C3][\u0080-\u00BF]/.test(str)) {
+      return Buffer.from(str, "latin1").toString("utf8");
+    }
+  } catch (e) {}
+  return str;
+}
+
 router.post("/api/upload", uploadLimiter, upload.array("files"), (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
 
@@ -42,7 +52,7 @@ router.post("/api/upload", uploadLimiter, upload.array("files"), (req, res) => {
 
     return {
       id: jobId,
-      originalName: file.originalname,
+      originalName: fixUmlauts(file.originalname),
       status: "pending",
       source: req.body.source || "upload",
       gmailMessageId: req.body.gmailMessageId || null,
@@ -66,7 +76,7 @@ router.post("/share-target", upload.array("share_files", 50), (req, res) => {
       const jobs = req.files.map((file) => {
         return {
           id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
-          originalName: file.originalname,
+          originalName: fixUmlauts(file.originalname),
           status: "pending",
           source: "share_target",
           inAiPipeline: true,
@@ -231,19 +241,42 @@ router.post("/api/jobs/:id/company", requireAdmin, (req, res) => {
   else if (compLower.includes("the wire") || compLower.includes("thewire")) job.targetCompany = "thewire";
   else if (compLower.includes("polyxo")) job.targetCompany = "polyxo";
   else if (compLower.includes("daniel")) job.targetCompany = "daniel";
+
+  // Wenn Unternehmen "privat" im Namen hat (z.B. Daniel (Privat)), automatisch auf privat setzen
+  if (compLower.includes("privat")) {
+    job.isPrivate = true;
+  }
   saveJobs();
-  res.json({ success: true, company: job.result.company });
+  res.json({ success: true, company: job.result.company, isPrivate: job.isPrivate });
+});
+
+router.post("/api/jobs/:id/tags", requireAdmin, (req, res) => {
+  const { tags } = req.body;
+  const job = getJob(req.params.id);
+  if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
+  if (!job.result) job.result = {};
+  job.result.tags = Array.isArray(tags) ? tags : (typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : []);
+  saveJobs();
+  res.json({ success: true, tags: job.result.tags });
 });
 
 router.post("/api/jobs/:id/update-meta", requireAdmin, (req, res) => {
-  const { category, company } = req.body;
+  const { category, company, tags } = req.body;
   const job = getJob(req.params.id);
   if (!job) return res.status(404).json({ success: false, error: "Dokument nicht gefunden." });
   if (!job.result) job.result = {};
   if (category) job.result.category = category;
-  if (company) job.result.company = company;
+  if (company) {
+    job.result.company = company;
+    if (company.toLowerCase().includes("privat")) {
+      job.isPrivate = true;
+    }
+  }
+  if (tags !== undefined) {
+    job.result.tags = Array.isArray(tags) ? tags : (typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : []);
+  }
   saveJobs();
-  res.json({ success: true, result: job.result });
+  res.json({ success: true, result: job.result, isPrivate: job.isPrivate });
 });
 
 router.post("/api/jobs/:id/retry", requireAdmin, (req, res) => {
