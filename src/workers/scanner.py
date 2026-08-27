@@ -100,8 +100,15 @@ def scan_document(image_path, output_pdf_path, coords_str="", algorithm="auto"):
         warped = orig
     else:
         pts = np.array([float(x) for x in coords_str.split(',')]).reshape(4, 2)
-        warped = four_point_transform(orig, pts)
-        eval_warped = auto_exposure(warped.copy())
+        is_preview = os.path.splitext(output_pdf_path)[1].lower() in ['.jpg', '.jpeg', '.png']
+        if is_preview:
+            # Im Vorschau-Modus (Review-Canvas): Bild nicht zuschneiden,
+            # damit der Rand um den Ausschnitt erhalten bleibt und der Rahmen perfekt passt!
+            eval_warped = auto_exposure(four_point_transform(orig, pts))
+            warped = orig
+        else:
+            warped = four_point_transform(orig, pts)
+            eval_warped = auto_exposure(warped.copy())
 
     warped = auto_exposure(warped)
 

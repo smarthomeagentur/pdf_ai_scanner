@@ -251,7 +251,8 @@ export function renderJobsList(jobs = state.jobs, force = false) {
         ? new Date(job.processingStartedAt).getTime()
         : (job.uploadDate ? new Date(job.uploadDate).getTime() : Date.now());
       const elapsedSec = Math.max(0, (Date.now() - startTime) / 1000);
-      const progressPercent = Math.min(96, Math.max(10, Math.round(100 * (1 - Math.exp(-elapsedSec / 22)))));
+      // Linearer Fortschritt: Nach exakt 3 Minuten (180s) 99% erreichen und warten
+      const progressPercent = Math.min(99, Math.max(0, Math.round((elapsedSec / 180) * 99)));
 
       statusHtml = `
         <div class="ai-processing-box mt-2 p-2 rounded-2 border" style="background: #eff6ff; border-color: #bfdbfe !important;">
@@ -1576,7 +1577,8 @@ setInterval(() => {
   bars.forEach((bar) => {
     const startTime = parseFloat(bar.getAttribute("data-start-time")) || now;
     const elapsedSec = Math.max(0, (now - startTime) / 1000);
-    const progressPercent = Math.min(96, Math.max(10, Math.round(100 * (1 - Math.exp(-elapsedSec / 22)))));
+    // Linearer Fortschritt: Nach exakt 3 Minuten (180s) 99% erreichen und warten
+    const progressPercent = Math.min(99, Math.max(0, Math.round((elapsedSec / 180) * 99)));
     bar.style.width = `${progressPercent}%`;
     const box = bar.closest(".ai-processing-box");
     if (box) {
