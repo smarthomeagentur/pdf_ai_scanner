@@ -12,7 +12,7 @@ test("Security Regression Tests (Enforcing .github/copilot-instructions.md)", as
       "..\\..\\Windows\\System32\\config\\SAM",
       "....//....//etc/shadow",
       "/var/log/syslog",
-      "C:\\boot.ini",
+      process.platform === "win32" ? "C:\\boot.ini" : "/etc/shadow",
     ];
 
     for (const input of maliciousInputs) {
