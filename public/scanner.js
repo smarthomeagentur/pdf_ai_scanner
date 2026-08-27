@@ -752,27 +752,18 @@ async function updateTorchState() {
       if (torchMode === "off") {
         await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
         torchBtn.innerHTML =
-          '<span class="material-symbols-outlined pb-1">flashlight_off</span><small style="font-size:8px">Aus</small>';
-        torchBtn.classList.remove("btn-warning", "btn-primary");
-        torchBtn.classList.add("btn-outline-secondary");
-        torchBtn.style.color = "#333";
-        torchBtn.style.backgroundColor = "rgba(255,255,255,0.8)";
+          '<span class="material-symbols-outlined">flashlight_off</span><small>Aus</small>';
+        torchBtn.className = "modern-torch-btn torch-off";
       } else if (torchMode === "on") {
         await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
         torchBtn.innerHTML =
-          '<span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size:8px">An</small>';
-        torchBtn.classList.remove("btn-outline-secondary", "btn-primary");
-        torchBtn.classList.add("btn-warning");
-        torchBtn.style.color = "#000";
-        torchBtn.style.backgroundColor = "";
+          '<span class="material-symbols-outlined">flashlight_on</span><small>An</small>';
+        torchBtn.className = "modern-torch-btn torch-on";
       } else if (torchMode === "auto") {
         await videoTrack.applyConstraints({ advanced: [{ torch: false }] });
         torchBtn.innerHTML =
-          '<span class="material-symbols-outlined pb-1">flashlight_on</span><small style="font-size:8px">Auto</small>';
-        torchBtn.classList.remove("btn-outline-secondary", "btn-warning");
-        torchBtn.classList.add("btn-primary");
-        torchBtn.style.color = "#fff";
-        torchBtn.style.backgroundColor = "";
+          '<span class="material-symbols-outlined">flashlight_on</span><small>Auto</small>';
+        torchBtn.className = "modern-torch-btn torch-auto";
       }
     } else {
       torchBtn.style.display = "none";
@@ -802,17 +793,17 @@ let autoCaptureTriggered = false;
 
 // Button initial auf "Aus" setzen
 if (autoCaptureBtn) {
-  autoCaptureBtn.classList.replace("btn-primary", "btn-outline-secondary");
-  autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: Aus</span>';
+  autoCaptureBtn.className = "scanner-control-btn auto-capture-toggle-btn";
+  autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 18px;">document_scanner</span> <span>Auto: Aus</span>';
 
   autoCaptureBtn.addEventListener("click", () => {
     autoCaptureEnabled = !autoCaptureEnabled;
     if (autoCaptureEnabled) {
-      autoCaptureBtn.classList.replace("btn-outline-secondary", "btn-primary");
-      autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: An</span>';
+      autoCaptureBtn.className = "scanner-control-btn auto-capture-toggle-btn active";
+      autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 18px;">document_scanner</span> <span>Auto: An</span>';
     } else {
-      autoCaptureBtn.classList.replace("btn-primary", "btn-outline-secondary");
-      autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined">document_scanner</span> <span>Auto: Aus</span>';
+      autoCaptureBtn.className = "scanner-control-btn auto-capture-toggle-btn";
+      autoCaptureBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 18px;">document_scanner</span> <span>Auto: Aus</span>';
       cancelAutoCountdown();
     }
   });
@@ -864,48 +855,89 @@ let currentCameraResolution = "4k";
 async function startCamera(forceResolution = null) {
   if (sampleImage) sampleImage.style.display = "none";
   if (video) video.style.display = "block";
+  activeSource = "camera";
+  if (sourceSelect) sourceSelect.value = "camera";
+
+  // Bestehende Video-Tracks vor dem Neuverbinden zwingend stoppen, um NotReadableError zu verhindern
+  if (videoTrack) {
+    try { videoTrack.stop(); } catch (_) { }
+    videoTrack = null;
+  }
+  if (video && video.srcObject) {
+    try {
+      video.srcObject.getTracks().forEach((t) => t.stop());
+    } catch (_) { }
+    video.srcObject = null;
+  }
 
   const targetRes = forceResolution || "4k";
   currentCameraResolution = targetRes;
 
-  const constraints4K = {
-    video: {
-      facingMode: "environment",
-      width: { ideal: 3840 },
-      height: { ideal: 2160 },
-      frameRate: { ideal: 30, min: 15 },
+  const candidateConstraints = [
+    // 1. 4K Ultra HD Rückkamera (wird standardmäßig als Erstes versucht)
+    ...(targetRes === "4k"
+      ? [
+          {
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 3840 },
+              height: { ideal: 2160 },
+              frameRate: { ideal: 30, min: 15 },
+            },
+            audio: false,
+          },
+        ]
+      : []),
+    // 2. 1080p Full HD Rückkamera
+    {
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30, min: 15 },
+      },
+      audio: false,
     },
-    audio: false,
-  };
-
-  const constraints1080p = {
-    video: {
-      facingMode: "environment",
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30, min: 15 },
+    // 3. 720p HD Rückkamera
+    {
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
     },
-    audio: false,
-  };
+    // 4. Beliebige verfügbare Kamera (Webcam, Laptop, USB)
+    {
+      video: true,
+      audio: false,
+    },
+  ];
 
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia(
-      targetRes === "4k" ? constraints4K : constraints1080p
-    );
-    await setVideoStream(stream);
-  } catch (err) {
-    if (targetRes === "4k") {
-      try {
-        console.warn("4K Video-Stream konnte nicht gestartet werden, versuche 1080p Fallback:", err);
-        const stream = await navigator.mediaDevices.getUserMedia(constraints1080p);
-        currentCameraResolution = "1080p";
-        await setVideoStream(stream);
-      } catch (fallbackErr) {
-        handleCameraFailure(fallbackErr);
+  let stream = null;
+  let lastErr = null;
+
+  for (const constraints of candidateConstraints) {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (stream) break;
       }
-    } else {
-      handleCameraFailure(err);
+    } catch (e) {
+      lastErr = e;
+      console.warn("[Kamera] Constraint-Versuch fehlgeschlagen, probiere nächsten Fallback:", e);
+      // Vor dem nächsten Versuch Tracks stoppen
+      if (stream) {
+        try { stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
+        stream = null;
+      }
     }
+  }
+
+  if (stream) {
+    await setVideoStream(stream);
+  } else {
+    handleCameraFailure(lastErr);
   }
 }
 
@@ -925,10 +957,8 @@ async function setVideoStream(stream) {
 }
 
 function handleCameraFailure(fallbackErr) {
-  console.warn("Kamera konnte nicht gestartet werden (z. B. auf Desktop/Test). Schalte automatisch auf Test-Bild 'edge1.jpg' um.", fallbackErr);
-  if (sourceSelect) sourceSelect.value = "edge1.jpg";
-  activeSource = "edge1.jpg";
-  loadSampleImage("edge1.jpg");
+  console.warn("Kamera konnte nicht gestartet werden:", fallbackErr);
+  alert("Kein Zugriff auf die Kamera möglich. Bitte erlaube den Kamerazugriff im Browser oder prüfe, ob die Kamera durch eine andere Anwendung belegt ist.");
 }
 
 function monitorCameraFpsAndAdapt() {
@@ -1215,8 +1245,10 @@ async function processVideo() {
 captureBtn.addEventListener("click", async () => {
   if (!streaming) return;
 
-  document.getElementById("algorithmSelect").value = "auto";
-  document.getElementById("previewAlgorithmSelect").value = "auto";
+  const algSelect = document.getElementById("algorithmSelect");
+  if (algSelect) algSelect.value = "auto";
+  const prevAlgSelect = document.getElementById("previewAlgorithmSelect");
+  if (prevAlgSelect) prevAlgSelect.value = "auto";
 
   cancelAutoCountdown();
 
@@ -1549,8 +1581,24 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
     y: c.y * highResCanvas.height - reviewState.cropY,
   }));
 
-  // Sync preview combo box with global config
-  document.getElementById("previewAlgorithmSelect").value = document.getElementById("algorithmSelect").value;
+  // Sync preview combo box if present
+  const prevAlgSel = document.getElementById("previewAlgorithmSelect");
+  const algVal = document.getElementById("algorithmSelect")?.value || "auto";
+  if (prevAlgSel) {
+    prevAlgSel.value = algVal;
+  }
+
+  // Sync filter preset buttons
+  document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
+    const fType = btn.getAttribute("data-filter");
+    if ((algVal === "color" && fType === "original") ||
+        ((algVal === "color_enhanced" || algVal === "white_paper" || algVal === "auto") && fType === "clean") ||
+        (algVal === "bw_adaptive" && fType === "bw")) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
 
   fitReviewCanvas();
   requestAnimationFrame(() => {
@@ -1698,63 +1746,66 @@ reviewOverlay.addEventListener("touchmove", onDragMove, { passive: false });
 reviewOverlay.addEventListener("touchend", onDragEnd);
 
 // Klick auf "Kantenerkennung wiederholen" -> Scannt das aktuelle Standbild noch einmal
-document.getElementById("rescanBtn").addEventListener("click", async () => {
-  if (!reviewState.highResCanvas) return;
+const rescanBtn = document.getElementById("rescanBtn") || document.getElementById("manualRescanCornersBtn");
+if (rescanBtn) {
+  rescanBtn.addEventListener("click", async () => {
+    if (!reviewState.highResCanvas) return;
 
-  const orgBtnHtml = '<span class="material-symbols-outlined" style="font-size: 18px;">crop</span> <span>Kantenerkennung</span>';
-  document.getElementById("rescanBtn").innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> <span style="font-size: 0.8rem;">Bitte warten...</span>`;
-  document.getElementById("rescanBtn").disabled = true;
+    const orgBtnHtml = '<span class="material-symbols-outlined" style="font-size: 16px;">auto_fix_high</span> <span>Ecken neu erkennen</span>';
+    rescanBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> <span style="font-size: 0.8rem;">Bitte warten...</span>`;
+    rescanBtn.disabled = true;
 
-  try {
-    let neueEcken = null;
+    try {
+      let neueEcken = null;
 
-    let tCanvas = document.createElement("canvas");
-    tCanvas.width = reviewState.cropW;
-    tCanvas.height = reviewState.cropH;
-    let tCtx = tCanvas.getContext("2d", { willReadFrequently: true });
-    tCtx.imageSmoothingEnabled = true;
-    tCtx.imageSmoothingQuality = "high";
+      let tCanvas = document.createElement("canvas");
+      tCanvas.width = reviewState.cropW;
+      tCanvas.height = reviewState.cropH;
+      let tCtx = tCanvas.getContext("2d", { willReadFrequently: true });
+      tCtx.imageSmoothingEnabled = true;
+      tCtx.imageSmoothingQuality = "high";
 
-    tCtx.drawImage(
-      reviewState.highResCanvas,
-      reviewState.cropX,
-      reviewState.cropY,
-      reviewState.cropW,
-      reviewState.cropH,
-      0,
-      0,
-      reviewState.cropW,
-      reviewState.cropH
-    );
+      tCtx.drawImage(
+        reviewState.highResCanvas,
+        reviewState.cropX,
+        reviewState.cropY,
+        reviewState.cropW,
+        reviewState.cropH,
+        0,
+        0,
+        reviewState.cropW,
+        reviewState.cropH
+      );
 
-    if (currentEngine === "onnx") {
-      if (onnxReady) {
-        neueEcken = await detectCornersOnnx(tCanvas);
+      if (currentEngine === "onnx") {
+        if (onnxReady) {
+          neueEcken = await detectCornersOnnx(tCanvas);
+        }
+      } else {
+        // Reiner OpenCV Modus (nur wenn per Button aktiv)
+        if (openCvReady) {
+          neueEcken = detectCornersCv(tCanvas, 0, 0, reviewState.cropW, reviewState.cropH, true);
+        }
       }
-    } else {
-      // Reiner OpenCV Modus (nur wenn per Button aktiv)
-      if (openCvReady) {
-        neueEcken = detectCornersCv(tCanvas, 0, 0, reviewState.cropW, reviewState.cropH, true);
-      }
-    }
 
-    if (neueEcken && neueEcken.length === 4) {
-      reviewState.corners = neueEcken.map((c) => ({
-        x: c.x * reviewState.cropW,
-        y: c.y * reviewState.cropH,
-      }));
-      drawReviewOverlay();
-      updatePreviewFilter();
-    } else {
-      alert("Auf diesem Foto konnte kein eindeutiges Dokument erkannt werden. Bitte justiere die Kanten manuell.");
+      if (neueEcken && neueEcken.length === 4) {
+        reviewState.corners = neueEcken.map((c) => ({
+          x: c.x * reviewState.cropW,
+          y: c.y * reviewState.cropH,
+        }));
+        drawReviewOverlay();
+        updatePreviewFilter();
+      } else {
+        alert("Auf diesem Foto konnte kein eindeutiges Dokument erkannt werden. Bitte justiere die Kanten manuell.");
+      }
+    } catch (e) {
+      console.error("Manueller Re-Scan fehlgeschlagen:", e);
+    } finally {
+      rescanBtn.innerHTML = orgBtnHtml;
+      rescanBtn.disabled = false;
     }
-  } catch (e) {
-    console.error("Manueller Re-Scan fehlgeschlagen:", e);
-  } finally {
-    document.getElementById("rescanBtn").innerHTML = orgBtnHtml;
-    document.getElementById("rescanBtn").disabled = false;
-  }
-});
+  });
+}
 
 function updateConfirmBtnText() {
   const finishBtn = document.getElementById("finishScanBtn");
@@ -1858,6 +1909,70 @@ if (finishScanBtn) {
     finishScanProcess(true);
   });
 }
+
+const discardScanBtn = document.getElementById("discardScanBtn");
+if (discardScanBtn) discardScanBtn.addEventListener("click", closeReviewPanel);
+
+function rotateReviewImage(clockwise = true) {
+  if (!reviewState.highResCanvas) return;
+  const oldCanvas = reviewState.highResCanvas;
+  const oldW = oldCanvas.width;
+  const oldH = oldCanvas.height;
+
+  const newCanvas = document.createElement("canvas");
+  newCanvas.width = oldH;
+  newCanvas.height = oldW;
+  const ctx = newCanvas.getContext("2d");
+
+  ctx.translate(newCanvas.width / 2, newCanvas.height / 2);
+  ctx.rotate((clockwise ? 90 : -90) * (Math.PI / 180));
+  ctx.drawImage(oldCanvas, -oldW / 2, -oldH / 2);
+
+  let absCorners = reviewState.corners.map((c) => {
+    let absX = c.x + reviewState.cropX;
+    let absY = c.y + reviewState.cropY;
+    if (clockwise) {
+      return { x: oldH - absY, y: absX };
+    } else {
+      return { x: absY, y: oldW - absX };
+    }
+  });
+
+  absCorners = sortAndOrderCorners(absCorners);
+
+  const relCorners = absCorners.map((c) => ({
+    x: c.x / newCanvas.width,
+    y: c.y / newCanvas.height,
+  }));
+
+  showManualReview(newCanvas, relCorners, true);
+}
+
+const rotateLeftBtn = document.getElementById("rotateReviewLeftBtn");
+if (rotateLeftBtn) rotateLeftBtn.addEventListener("click", () => rotateReviewImage(false));
+
+const rotateRightBtn = document.getElementById("rotateReviewRightBtn");
+if (rotateRightBtn) rotateRightBtn.addEventListener("click", () => rotateReviewImage(true));
+
+document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".filter-preset-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+
+    const filterType = btn.getAttribute("data-filter");
+    const algInput = document.getElementById("algorithmSelect");
+    if (algInput) {
+      if (filterType === "original") {
+        algInput.value = "color";
+      } else if (filterType === "clean") {
+        algInput.value = "auto";
+      } else if (filterType === "bw") {
+        algInput.value = "bw_adaptive";
+      }
+    }
+    updatePreviewFilter();
+  });
+});
 
 const stripFinishBtn = document.getElementById("stripFinishBtn");
 if (stripFinishBtn) {

@@ -1,7 +1,8 @@
 import { escapeHtml, formatCurrency, formatDateDisplay, highlightQueryText, showToast, debugLog } from "./utils.js";
 import { apiRequest } from "./api.js";
-import { getAllClientCredentials, getAccountingAccounts, state } from "./state.js";
+import { getAllClientCredentials, getAccountingAccounts, state, findJobInState } from "./state.js";
 import { transferJobToClickUp } from "./clickup.js";
+import { openDocPreview } from "./jobs.js";
 
 let allRechnungenJobs = [];
 let currentLexJobId = null;
@@ -14,6 +15,7 @@ let currentCompareMatch = null;
 
 export function initRechnungenEvents() {
   const filterRechnungenSearch = document.getElementById("filter-rechnungen-search");
+  const rechnungenClearBtn = document.getElementById("rechnungen-search-clear-btn");
   const filterOnlyInvoices = document.getElementById("filter-only-invoices");
   const filterCompany = document.getElementById("filter-company");
   const filterStatus = document.getElementById("filter-status");
@@ -21,16 +23,53 @@ export function initRechnungenEvents() {
   const filterQuarter = document.getElementById("filter-quarter");
   const rechnungenList = document.getElementById("rechnungen-list");
 
-  if (filterRechnungenSearch) filterRechnungenSearch.addEventListener("input", renderRechnungenList);
+  if (filterRechnungenSearch) {
+    filterRechnungenSearch.addEventListener("input", () => {
+      if (rechnungenClearBtn) {
+        rechnungenClearBtn.style.display = filterRechnungenSearch.value.trim() ? "inline-flex" : "none";
+      }
+      renderRechnungenList();
+    });
+  }
+
+  if (rechnungenClearBtn && filterRechnungenSearch) {
+    rechnungenClearBtn.addEventListener("click", () => {
+      filterRechnungenSearch.value = "";
+      rechnungenClearBtn.style.display = "none";
+      filterRechnungenSearch.focus();
+      renderRechnungenList();
+    });
+  }
+
   if (filterOnlyInvoices) filterOnlyInvoices.addEventListener("change", renderRechnungenList);
   if (filterCompany) filterCompany.addEventListener("change", renderRechnungenList);
   if (filterStatus) filterStatus.addEventListener("change", renderRechnungenList);
   if (filterYear) filterYear.addEventListener("change", renderRechnungenList);
   if (filterQuarter) filterQuarter.addEventListener("change", renderRechnungenList);
 
+  // Quick Filter Badges
+  const quickFilters = document.querySelectorAll(".quick-filter-badge");
+  quickFilters.forEach((badge) => {
+    badge.addEventListener("click", () => {
+      quickFilters.forEach((b) => b.classList.remove("active"));
+      badge.classList.add("active");
+      const f = badge.getAttribute("data-filter");
+      applyQuickFilter(f);
+    });
+  });
+
+  // Event Delegation for Table Action Buttons (Details, ClickUp, Buchhaltung)
   if (rechnungenList) {
     rechnungenList.addEventListener("click", async (e) => {
-      // 1. ClickUp transfer
+      const lexBtn = e.target.closest(".rechnung-lex-btn");
+      if (lexBtn) {
+        const jobId = lexBtn.getAttribute("data-job-id");
+        if (jobId) {
+          openAccountingModal(jobId);
+        }
+        return;
+      }
+
       const clickupBtn = e.target.closest(".rechnung-clickup-btn");
       if (clickupBtn) {
         const jobId = clickupBtn.getAttribute("data-job-id");
@@ -40,7 +79,61 @@ export function initRechnungenEvents() {
         return;
       }
 
-      // 2. Accounting sync modal
+      const detailsBtn = e.target.closest(".rechnung-details-btn, .rechnung-preview-link");
+      if (detailsBtn) {
+        const jobId = detailsBtn.getAttribute("data-job-id");
+        if (jobId) {
+          openDocPreview(jobId);
+        }
+        return;
+      }
+    });
+  }
+
+  // Accounting Accounts Config Modal
+  const btnAccountsConfig = document.getElementById("btn-accounting-accounts-config");
+  if (btnAccountsConfig) {
+    btnAccountsConfig.addEventListener("click", openAccountingAccountsModal);
+  }
+  const btnCloseAccounts = document.getElementById("btn-close-accounting-accounts");
+  if (btnCloseAccounts) {
+    btnCloseAccounts.addEventListener("click", () => {
+      const modal = document.getElementById("accounting-accounts-modal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+  const btnAddAccount = document.getElementById("btn-add-accounting-account");
+  if (btnAddAccount) {
+    btnAddAccount.addEventListener("click", () => openAccountEditModal(null));
+  }
+
+  // Account Edit Modal
+  const btnCloseEdit = document.getElementById("btn-close-account-edit");
+  const btnCancelEdit = document.getElementById("btn-cancel-account-edit");
+  if (btnCloseEdit) {
+    btnCloseEdit.addEventListener("click", () => {
+      const modal = document.getElementById("account-edit-modal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+  if (btnCancelEdit) {
+    btnCancelEdit.addEventListener("click", () => {
+      const modal = document.getElementById("account-edit-modal");
+      if (modal) modal.style.display = "none";
+    });
+  }
+  const formEdit = document.getElementById("form-account-edit");
+  if (formEdit) {
+    formEdit.addEventListener("submit", handleSaveAccountForm);
+  }
+  const selectProvider = document.getElementById("edit-acc-provider");
+  if (selectProvider) {
+    selectProvider.addEventListener("change", toggleProviderFields);
+  }
+
+  // Event Delegation for Table Action Buttons
+  if (rechnungenList) {
+    rechnungenList.addEventListener("click", async (e) => {
       const lexBtn = e.target.closest(".rechnung-lex-btn");
       if (lexBtn) {
         const jobId = lexBtn.getAttribute("data-job-id");
@@ -148,13 +241,22 @@ export async function openAccountingModal(jobId, companyKey = null) {
   const lexSyncModal = document.getElementById("lexoffice-sync-modal");
   if (!lexSyncModal) return;
 
-  const job = (state.jobs && state.jobs.find((j) => j.id === jobId)) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+  let job = findJobInState(jobId);
+  if (!job) {
+    try {
+      const data = await apiRequest(`/api/status?ids=${encodeURIComponent(jobId)}`);
+      if (data.statuses && data.statuses.length > 0) {
+        job = data.statuses[0];
+      }
+    } catch (e) {}
+  }
+
   if (!job) {
     showToast("Dokument nicht gefunden.", "error");
     return;
   }
 
-  currentLexJobId = jobId;
+  currentLexJobId = job.id || jobId;
   const res = job.result || {};
   lexSyncModal.style.display = "flex";
 
@@ -729,7 +831,7 @@ export function closeAccountingCompareModal() {
 }
 
 export function openAccountingCompareModal(jobId, companyKey, matchIndex = 0) {
-  const job = (state.jobs && state.jobs.find((j) => j.id === jobId)) || (allRechnungenJobs && allRechnungenJobs.find((j) => j.id === jobId));
+  const job = findJobInState(jobId);
   if (!job || !currentLexCheckData) return;
 
   const accountingCompareModal = document.getElementById("accounting-compare-modal");
@@ -1099,11 +1201,15 @@ function createRechnungCard(job, searchQuery = "") {
   const safeInvNum = res.invoiceNumber && res.invoiceNumber !== "none" ? highlightQueryText(res.invoiceNumber, searchQuery) : "";
   const safeAmt = amountFormatted ? escapeHtml(amountFormatted) : "";
 
+  const isClickupSynced = !!(job.clickup && job.clickup.taskId);
+
   card.innerHTML = `
     <div class="card-body p-3">
       <div class="d-flex gap-3 align-items-start">
         <div class="flex-shrink-0">
-          ${thumbnailHtml}
+          <a href="javascript:void(0)" class="pdf-preview-container rechnung-preview-link" data-job-id="${job.id}" title="Beleg öffnen">
+            ${thumbnailHtml}
+          </a>
         </div>
         <div class="flex-grow-1" style="min-width: 0;">
           <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
@@ -1121,31 +1227,18 @@ function createRechnungCard(job, searchQuery = "") {
         </div>
       </div>
 
-      <div class="border-top mt-2 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="d-flex align-items-center gap-2">
-          <span class="text-muted small" style="font-size: 12px; font-weight: 500;">ClickUp:</span>
-          ${job.clickup && job.clickup.taskId
-            ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${encodeURIComponent(job.clickup.taskId)}`}" target="_blank" class="badge text-decoration-none" style="background: #7b68ee; color: white;">#${escapeHtml(job.clickup.taskId)} (${escapeHtml(job.clickup.status || 'offen')})</a>`
-            : `<span class="badge bg-light text-secondary border">Nicht übertragen</span>`
-          }
-        </div>
-        <button type="button" class="btn btn-sm btn-outline-secondary rechnung-clickup-btn d-flex align-items-center gap-1" data-job-id="${encodeURIComponent(job.id)}" style="border-radius: 20px; padding: 4px 12px; font-size: 12px; border-color: #7b68ee; color: #7b68ee;">
-          <span class="material-symbols-outlined" style="font-size: 15px;">cloud_upload</span>
-          <span>${job.clickup && job.clickup.taskId ? "ClickUp aktualisieren" : "Zu ClickUp"}</span>
+      <div class="job-action-bar d-flex align-items-center gap-2 mt-2 pt-2 border-top" style="border-color: #f1f5f9 !important;">
+        <button type="button" class="job-action-btn btn-details rechnung-details-btn" data-job-id="${job.id}" title="Beleg öffnen">
+          <span class="material-symbols-outlined">info</span>
+          <span>Details</span>
         </button>
-      </div>
-
-      <div class="border-top mt-2 pt-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="d-flex align-items-center gap-2">
-          <span class="text-muted small" style="font-size: 12px; font-weight: 500;">Buchhaltung:</span>
-          ${activeTransfer
-            ? `<span class="badge bg-success-subtle text-success border border-success-subtle d-inline-flex align-items-center gap-1"><span class="material-symbols-outlined" style="font-size: 13px;">check_circle</span> <span>✓ Übertragen am ${new Date(activeTransfer.transferredAt).toLocaleDateString("de-DE")}</span></span>`
-            : `<span class="badge bg-light text-secondary border">Nicht übertragen</span>`
-          }
-        </div>
-        <button type="button" class="btn btn-sm ${activeTransfer ? 'btn-outline-success' : 'btn-outline-primary'} rechnung-lex-btn d-flex align-items-center gap-1" data-job-id="${job.id}" style="border-radius: 20px; padding: 4px 12px; font-size: 12px;">
-          <span class="material-symbols-outlined" style="font-size: 15px;">${activeTransfer ? 'check_circle' : 'sync'}</span>
-          <span>${activeTransfer ? '✓ Synchronisiert' : 'In Buchhaltung'}</span>
+        <button type="button" class="job-action-btn ${isClickupSynced ? "btn-clickup-synced" : "btn-clickup-pending"} rechnung-clickup-btn" data-job-id="${job.id}" title="Zu ClickUp übertragen">
+          <span class="material-symbols-outlined">${isClickupSynced ? "check_circle" : "cloud_upload"}</span>
+          <span>ClickUp</span>
+        </button>
+        <button type="button" class="job-action-btn ${isLexTransferred ? "btn-accounting-synced" : "btn-accounting-pending"} rechnung-lex-btn" data-job-id="${job.id}" title="An Buchhaltung übertragen">
+          <span class="material-symbols-outlined">${isLexTransferred ? "check_circle" : "sync"}</span>
+          <span>${isLexTransferred ? "Buchhalt. ✓" : "Buchhalt."}</span>
         </button>
       </div>
     </div>

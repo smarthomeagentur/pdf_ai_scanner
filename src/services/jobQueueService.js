@@ -108,13 +108,16 @@ async function loadJobs() {
         recoveredCount++;
       }
 
-      if (job.result && job.result.documentDate) {
+      if (job.result) {
         const dateCheck = validateDocumentDate(job.result.documentDate, job.uploadDate);
-        if (dateCheck.isInvalidFuture) {
+        if (dateCheck.isInvalidFuture || dateCheck.isFallback || !job.result.documentDate || job.result.documentDate === "unknown") {
           job.result.documentDate = dateCheck.validDateStr;
-          job.result.rawDocumentDate = dateCheck.rawDateStr;
+          if (dateCheck.rawDateStr) job.result.rawDocumentDate = dateCheck.rawDateStr;
           job.documentDate = dateCheck.validDateStr;
         }
+      } else if (!job.documentDate || job.documentDate === "unknown" || job.documentDate === "none" || job.documentDate === "-") {
+        const dateCheck = validateDocumentDate(job.documentDate, job.uploadDate);
+        job.documentDate = dateCheck.validDateStr;
       }
 
       uploadJobs[job.id] = job;
@@ -173,10 +176,21 @@ function saveJobs() {
 loadJobs();
 
 function validateDocumentDate(docDateStr, uploadDateStr) {
-  if (!docDateStr || docDateStr === "unknown" || docDateStr === "none" || docDateStr === "-") {
-    return { validDateStr: "unknown", isInvalidFuture: false };
-  }
   const uploadDate = uploadDateStr ? new Date(uploadDateStr) : new Date();
+  const day = String(uploadDate.getDate()).padStart(2, "0");
+  const month = String(uploadDate.getMonth() + 1).padStart(2, "0");
+  const year = uploadDate.getFullYear();
+  const fallbackFormatted = `${day}.${month}.${year}`;
+
+  if (!docDateStr || docDateStr === "unknown" || docDateStr === "none" || docDateStr === "-") {
+    return {
+      validDateStr: fallbackFormatted,
+      rawDateStr: "unknown",
+      isFallback: true,
+      isInvalidFuture: false,
+    };
+  }
+
   const maxAllowed = new Date(
     uploadDate.getFullYear(),
     uploadDate.getMonth(),
@@ -209,18 +223,21 @@ function validateDocumentDate(docDateStr, uploadDateStr) {
 
   if (parsed && !isNaN(parsed.getTime())) {
     if (parsed.getTime() > maxAllowed) {
-      const day = String(uploadDate.getDate()).padStart(2, "0");
-      const month = String(uploadDate.getMonth() + 1).padStart(2, "0");
-      const year = uploadDate.getFullYear();
-      const fallbackFormatted = `${day}.${month}.${year}`;
       return {
         validDateStr: fallbackFormatted,
         rawDateStr: docDateStr,
         isInvalidFuture: true,
       };
     }
+    return { validDateStr: docDateStr, isInvalidFuture: false };
   }
-  return { validDateStr: docDateStr, isInvalidFuture: false };
+
+  return {
+    validDateStr: fallbackFormatted,
+    rawDateStr: docDateStr,
+    isFallback: true,
+    isInvalidFuture: false,
+  };
 }
 
 function checkJobNeedsEnrichment(job) {
@@ -320,13 +337,12 @@ async function processSingleJob(jobId) {
       throw new Error(sortedName.error || "KI-Verarbeitung fehlgeschlagen.");
     }
 
-    if (sortedName.documentDate && sortedName.documentDate !== "unknown") {
-      const dateCheck = validateDocumentDate(sortedName.documentDate, job.uploadDate);
-      if (dateCheck.isInvalidFuture) {
-        sortedName.documentDate = dateCheck.validDateStr;
-        sortedName.rawDocumentDate = dateCheck.rawDateStr;
-      }
+    const dateCheck = validateDocumentDate(sortedName.documentDate, job.uploadDate);
+    sortedName.documentDate = dateCheck.validDateStr;
+    if (dateCheck.rawDateStr) {
+      sortedName.rawDocumentDate = dateCheck.rawDateStr;
     }
+    job.documentDate = dateCheck.validDateStr;
 
     // Clean real content tags for UI & search
     const cleanUserTags = (Array.isArray(sortedName.tags) ? sortedName.tags : [])
@@ -478,7 +494,23 @@ function getJobs(ids = "all", isAdmin = true) {
 }
 
 function getJob(id) {
-  return uploadJobs[id] || null;
+  if (!id) return null;
+  if (uploadJobs[id]) return uploadJobs[id];
+  const strId = String(id);
+  const cleanId = strId.replace(/^gdrive_/, "");
+  if (uploadJobs[cleanId]) return uploadJobs[cleanId];
+  if (uploadJobs[`gdrive_${cleanId}`]) return uploadJobs[`gdrive_${cleanId}`];
+
+  // Search by ID, driveFileId or rawDriveId
+  const match = Object.values(uploadJobs).find(
+    (j) =>
+      String(j.id) === strId ||
+      String(j.id) === cleanId ||
+      String(j.driveFileId) === cleanId ||
+      String(j.rawDriveId) === cleanId ||
+      String(j.id).replace(/^gdrive_/, "") === cleanId
+  );
+  return match || null;
 }
 
 function updateJob(id, updates) {
@@ -495,6 +527,40 @@ function deleteJob(id) {
 function clearAllJobs() {
   Object.keys(uploadJobs).forEach((id) => hideJob(id));
   persistAppState();
+}
+
+function rescanAllDuplicates() {
+  let scanned = 0;
+  let markedCount = 0;
+
+  const jobIds = Object.keys(uploadJobs);
+  for (const id of jobIds) {
+    const job = uploadJobs[id];
+    if (!job) continue;
+    scanned++;
+
+    if (job.duplicateDismissed) continue;
+
+    const dups = findDuplicatesForJob(job, uploadJobs);
+    if (dups.length > 0) {
+      job.suspectedDuplicate = true;
+      job.duplicateOf = dups[0].job.id;
+      job.duplicateReason = dups[0].reason;
+      job.duplicateDocName = dups[0].job.result?.full || dups[0].job.originalName;
+      markedCount++;
+    } else {
+      if (job.suspectedDuplicate) {
+        job.suspectedDuplicate = false;
+        delete job.duplicateOf;
+        delete job.duplicateReason;
+        delete job.duplicateDocName;
+      }
+    }
+    persistJob(job);
+  }
+
+  persistAppState();
+  return { success: true, scanned, markedCount };
 }
 
 function hideJob(jobId) {
@@ -676,6 +742,7 @@ module.exports = {
   updateJob,
   deleteJob,
   clearAllJobs,
+  rescanAllDuplicates,
   hideJob,
   unhideJob,
   retryJob,

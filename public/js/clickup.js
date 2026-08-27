@@ -3,7 +3,7 @@
  */
 import { escapeHtml, showToast, debugLog } from "./utils.js";
 import { apiRequest } from "./api.js";
-import { getAllClientCredentials, state } from "./state.js";
+import { getAllClientCredentials, state, findJobInState } from "./state.js";
 import { renderJobsList } from "./jobs.js";
 
 let pendingClickupTransferJobId = null;
@@ -328,7 +328,7 @@ function renderSyncPreviewItems() {
           <div style="display: flex; gap: 12px; font-size: 12px; color: #777; flex-wrap: wrap; margin-top: 2px;">
             <span>🏢 ${safeCompany}</span>
             <span>📁 ${safeCategory}</span>
-            ${safeAmount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${safeAmount}</span>` : ''}
+            ${safeAmount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${safeAmount}</span>` : ""}
           </div>
           <div style="margin-top: 4px;">
             ${actionInfoHtml}
@@ -351,7 +351,16 @@ export async function transferJobToClickUp(jobId, force = false, btn = null) {
     return await executeClickupTransfer(jobId, true, btn);
   }
 
-  const targetJob = state.jobs.find((j) => j.id === jobId);
+  let targetJob = findJobInState(jobId);
+  if (!targetJob) {
+    try {
+      const data = await apiRequest(`/api/status?ids=${encodeURIComponent(jobId)}`);
+      if (data.statuses && data.statuses.length > 0) {
+        targetJob = data.statuses[0];
+      }
+    } catch (e) {}
+  }
+
   if (!targetJob) {
     showToast("Dokument nicht gefunden.", "error");
     return;
@@ -362,7 +371,7 @@ export async function transferJobToClickUp(jobId, force = false, btn = null) {
   const taskId = targetJob.clickup?.taskId;
   const taskUrl = targetJob.clickup?.taskUrl || (taskId ? `https://app.clickup.com/t/${taskId}` : "");
 
-  pendingClickupTransferJobId = jobId;
+  pendingClickupTransferJobId = targetJob.id || jobId;
   pendingClickupTransferBtn = btn;
 
   // 1. Set Title & Button text
@@ -390,8 +399,11 @@ export async function transferJobToClickUp(jobId, force = false, btn = null) {
   const docInv = document.getElementById("confirm-clickup-doc-inv");
   const docAmt = document.getElementById("confirm-clickup-doc-amt");
 
-  if (docTitle) docTitle.innerText = res.full || targetJob.originalName || "Dokument.pdf";
-  if (docDate) docDate.innerText = `📅 ${res.documentDate || "-"}`;
+  const rawClickupDate = res.documentDate || targetJob.documentDate;
+  const clickupDateDisplay = (rawClickupDate && rawClickupDate !== "unknown" && rawClickupDate !== "none" && rawClickupDate !== "-")
+    ? rawClickupDate
+    : (targetJob.uploadDate ? formatDateDisplay(targetJob.uploadDate) : "-");
+  if (docDate) docDate.innerText = `📅 ${clickupDateDisplay}`;
   if (docComp) docComp.innerText = `🏢 ${res.company || "Unbekannt"}`;
   if (docCat) docCat.innerText = `📁 ${res.category || "-"}`;
   if (docInv) docInv.innerText = `Rechnung: ${res.invoiceNumber && res.invoiceNumber !== "none" ? res.invoiceNumber : "-"}`;
@@ -456,7 +468,7 @@ async function executeClickupTransfer(jobId, force = true, btn = null) {
     });
 
     if (data.success) {
-      const targetJob = state.jobs.find((j) => j.id === jobId);
+      const targetJob = findJobInState(jobId);
       if (targetJob) {
         targetJob.clickup = data.clickup;
       }

@@ -62,7 +62,25 @@ export function initGmailScannerEvents() {
   if (inboxTabActive) inboxTabActive.addEventListener("click", () => setInboxSubtab("active"));
   if (inboxTabSkipped) inboxTabSkipped.addEventListener("click", () => setInboxSubtab("skipped"));
 
-  if (inboxSearchInput) inboxSearchInput.addEventListener("input", renderInboxList);
+  const inboxClearBtn = document.getElementById("inbox-search-clear-btn");
+  if (inboxSearchInput) {
+    inboxSearchInput.addEventListener("input", () => {
+      if (inboxClearBtn) {
+        inboxClearBtn.style.display = inboxSearchInput.value.trim() ? "inline-flex" : "none";
+      }
+      renderInboxList();
+    });
+  }
+
+  if (inboxClearBtn && inboxSearchInput) {
+    inboxClearBtn.addEventListener("click", () => {
+      inboxSearchInput.value = "";
+      inboxClearBtn.style.display = "none";
+      inboxSearchInput.focus();
+      renderInboxList();
+    });
+  }
+
   if (inboxFilterDate) {
     inboxFilterDate.addEventListener("change", () => {
       if (currentInboxSubtab === "detected") {
@@ -313,68 +331,79 @@ export async function requestGmailAccountAuth(accountHint = null) {
   }
 }
 
-function updateAccountsDropdown(accounts) {
-  inboxAccounts = accounts || [];
-  const select = document.getElementById("inbox-account-select");
-  if (!select) return;
-
-  const currentVal = select.value || "all";
-  select.innerHTML = `<option value="all">📥 Alle Posteingänge (${inboxAccounts.length || 0})</option>`;
-
-  inboxAccounts.forEach((acc) => {
-    const isExpired = acc.needsReauth || (acc.expiresAt && Date.now() > acc.expiresAt);
-    const opt = document.createElement("option");
-    opt.value = acc.id || acc.email;
-    opt.innerText = `${isExpired ? "⚠️" : "✉️"} ${acc.email}${isExpired ? " (Re-Auth erforderlich)" : ""}`;
-    select.appendChild(opt);
-  });
-
-  if (Array.from(select.options).some((o) => o.value === currentVal)) {
-    select.value = currentVal;
+function renderAccountsListToContainer(container, accounts) {
+  if (!container) return;
+  container.innerHTML = "";
+  if (!accounts || accounts.length === 0) {
+    container.innerHTML = `
+      <div class="text-muted small p-2 text-center bg-light rounded border">
+        Noch keine Google Mail Posteingänge verbunden.
+      </div>
+    `;
+    return;
   }
 
-  // Update Settings Modal container if exists
+  accounts.forEach((acc) => {
+    const isExpired = acc.needsReauth || (acc.expiresAt && Date.now() > acc.expiresAt);
+    const expiresTimeStr = acc.expiresAt ? new Date(acc.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+    const item = document.createElement("div");
+    item.className = "d-flex justify-content-between align-items-center p-2 rounded border bg-white small mb-1 flex-wrap gap-2 shadow-sm";
+    item.innerHTML = `
+      <div class="d-flex align-items-center gap-2 text-truncate">
+        <span class="material-symbols-outlined text-primary" style="font-size: 18px;">mail</span>
+        <strong class="text-truncate" style="font-size: 12.5px; color: #1e293b;">${escapeHtml(acc.email)}</strong>
+        ${isExpired
+          ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 10.5px;">⚠️ Token abgelaufen</span>`
+          : `<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 10.5px;">Aktiv ${expiresTimeStr ? `(bis ${expiresTimeStr} Uhr)` : ""}</span>`
+        }
+      </div>
+      <div class="d-flex align-items-center gap-1">
+        ${isExpired ? `
+          <button type="button" class="app-btn app-btn-subtle py-0 px-2 reauth-gmail-btn" data-email="${escapeHtml(acc.email)}" style="height: 26px; font-size: 11px;">
+            <span class="material-symbols-outlined" style="font-size: 13px;">lock_reset</span>
+            <span>Reaktivieren</span>
+          </button>
+        ` : ""}
+        <button type="button" class="app-btn app-btn-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="height: 26px; font-size: 11px;" title="Konto trennen">
+          <span class="material-symbols-outlined" style="font-size: 13px;">link_off</span>
+          <span>Trennen</span>
+        </button>
+      </div>
+    `;
+
+    item.querySelector(".reauth-gmail-btn")?.addEventListener("click", () => {
+      handleAddNewAccount();
+    });
+
+    item.querySelector(".remove-gmail-acc-btn")?.addEventListener("click", () => {
+      if (confirm(`Möchtest du das Google-Konto "${acc.email}" trennen?`)) {
+        const updated = getStoredGmailAccounts().filter((a) => a.id !== acc.id && a.email !== acc.email);
+        saveStoredGmailAccounts(updated);
+        updateAccountsDropdown(updated);
+        loadInboxData(false);
+      }
+    });
+
+    container.appendChild(item);
+  });
+}
+
+function updateAccountsDropdown(accounts) {
+  inboxAccounts = accounts || [];
+
+  const countBadge = document.getElementById("inbox-accounts-count");
+  if (countBadge) {
+    countBadge.innerText = `${inboxAccounts.length} ${inboxAccounts.length === 1 ? "Konto" : "Konten"}`;
+  }
+
+  const inboxContainer = document.getElementById("inbox-accounts-list");
+  if (inboxContainer) {
+    renderAccountsListToContainer(inboxContainer, inboxAccounts);
+  }
+
   const settingsContainer = document.getElementById("gmail-accounts-container");
   if (settingsContainer) {
-    settingsContainer.innerHTML = "";
-    if (inboxAccounts.length === 0) {
-      settingsContainer.innerHTML = `<div class="text-muted small">Noch keine Gmail-Konten im Browser verknüpft.</div>`;
-    } else {
-      inboxAccounts.forEach((acc) => {
-        const isExpired = acc.needsReauth || (acc.expiresAt && Date.now() > acc.expiresAt);
-        const expiresTimeStr = acc.expiresAt ? new Date(acc.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-        const item = document.createElement("div");
-        item.className = "d-flex justify-content-between align-items-center p-2 rounded border bg-white small mb-2 flex-wrap gap-2";
-        item.innerHTML = `
-          <div class="d-flex align-items-center gap-2 text-truncate">
-            <span class="material-symbols-outlined text-primary" style="font-size: 18px;">mail</span>
-            <strong class="text-truncate">${escapeHtml(acc.email)}</strong>
-            ${isExpired
-              ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle" style="font-size: 10px;">Token abgelaufen</span>`
-              : `<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 10px;">Aktiv (bis ${expiresTimeStr})</span>`
-            }
-          </div>
-          <div class="d-flex align-items-center gap-2">
-            ${isExpired ? `
-              <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 reauth-gmail-btn d-inline-flex align-items-center gap-1" data-email="${escapeHtml(acc.email)}" style="font-size: 11px;">
-                <span class="material-symbols-outlined" style="font-size: 14px;">lock_reset</span>
-                <span>Reaktivieren</span>
-              </button>
-            ` : ""}
-            <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-gmail-acc-btn" data-id="${acc.id}" style="font-size: 11px;">Trennen</button>
-          </div>
-        `;
-        item.querySelector(".remove-gmail-acc-btn")?.addEventListener("click", () => {
-          if (confirm(`Möchtest du das Google-Konto "${acc.email}" trennen?`)) {
-            const updated = getStoredGmailAccounts().filter((a) => a.id !== acc.id && a.email !== acc.email);
-            saveStoredGmailAccounts(updated);
-            updateAccountsDropdown(updated);
-            loadInboxData(false);
-          }
-        });
-        settingsContainer.appendChild(item);
-      });
-    }
+    renderAccountsListToContainer(settingsContainer, inboxAccounts);
   }
 }
 
@@ -424,8 +453,8 @@ export async function loadInboxData(silent = false) {
     inboxLoadingContainer.style.setProperty("display", "block", "important");
   }
 
-  const selectedAccountVal = document.getElementById("inbox-account-select")?.value || "all";
-  const targetAccounts = selectedAccountVal === "all" ? accounts : accounts.filter((a) => a.id === selectedAccountVal || a.email === selectedAccountVal);
+  // Always scan all connected active accounts
+  const targetAccounts = accounts;
 
   const scanQuery = "in:inbox filename:pdf";
   const allMails = [];
@@ -777,7 +806,7 @@ function renderInboxList() {
 
     const attPillsHtml = attachments
       .map((att, idx) => `
-        <span class="badge bg-light text-dark border p-2 d-inline-flex align-items-center gap-1 preview-att-btn" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer;" title="Vorschau öffnen">
+        <span class="badge bg-white text-dark border p-2 d-inline-flex align-items-center gap-1 preview-att-btn" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; border-radius: 8px; font-weight: 500; font-size: 11.5px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);" title="Vorschau öffnen">
           <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
           <span class="fw-medium">${escapeHtml(att.filename)}</span>
           <span class="text-muted small">(${formatFileSize(att.size)})</span>
@@ -793,9 +822,12 @@ function renderInboxList() {
             </div>` : ""}
           <div class="flex-grow-1" style="min-width: 0;">
             <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-              <span class="badge bg-secondary-subtle text-secondary small" style="font-size: 11px;">${escapeHtml(mail.accountEmail || mail.accountId)}</span>
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1 px-2 py-1" style="font-size: 11px; font-weight: 600;" title="Posteingang: ${escapeHtml(mail.accountEmail || mail.accountId)}">
+                <span class="material-symbols-outlined" style="font-size: 14px;">mail</span>
+                <span>${escapeHtml(mail.accountEmail || mail.accountId)}</span>
+              </span>
               ${mail.isDetected ? `<span class="badge bg-success-subtle text-success border border-success-subtle" style="font-size: 11px;">🔍 Rechnung erkannt</span>` : ""}
-              <span class="text-muted small ms-auto">${formatDateDisplay(mail.date)}</span>
+              <span class="text-muted small ms-auto"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${formatDateDisplay(mail.date)}</span>
             </div>
             <h6 class="fw-bold mb-1 text-dark text-truncate" title="${escapeHtml(mail.subject)}">${escapeHtml(mail.subject || "(Kein Betreff)")}</h6>
             <div class="small text-muted mb-2">Von: <strong>${escapeHtml(mail.fromName || mail.fromEmail)}</strong> &lt;${escapeHtml(mail.fromEmail)}&gt;</div>
@@ -805,16 +837,16 @@ function renderInboxList() {
         </div>
         <div class="d-flex align-items-center gap-2 ms-auto">
           ${!isSkippedTab ? `
-            <button type="button" class="btn btn-sm btn-outline-secondary skip-single-mail-btn" data-mail-id="${mail.id}" title="Nicht verarbeiten / ignorieren">
+            <button type="button" class="app-btn app-btn-subtle skip-single-mail-btn" data-mail-id="${mail.id}" title="Nicht verarbeiten / ignorieren">
               <span class="material-symbols-outlined" style="font-size: 15px;">playlist_remove</span>
               <span>Überspringen</span>
             </button>
-            <button type="button" class="btn btn-sm btn-primary process-single-mail-btn" data-mail-id="${mail.id}">
+            <button type="button" class="app-btn app-btn-primary process-single-mail-btn" data-mail-id="${mail.id}">
               <span class="material-symbols-outlined" style="font-size: 15px;">play_arrow</span>
               <span>Importieren (${attachments.length})</span>
             </button>
           ` : `
-            <button type="button" class="btn btn-sm btn-outline-primary unskip-single-mail-btn" data-mail-id="${mail.id}">
+            <button type="button" class="app-btn app-btn-subtle unskip-single-mail-btn" data-mail-id="${mail.id}">
               <span class="material-symbols-outlined" style="font-size: 15px;">restore_from_trash</span>
               <span>Wiederherstellen</span>
             </button>

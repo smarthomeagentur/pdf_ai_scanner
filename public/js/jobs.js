@@ -147,13 +147,13 @@ export function renderJobsList(jobs = state.jobs, force = false) {
         <div class="job-body-section" style="width: 100%;">
           <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
             ${state.isAdmin ? `
-              <button type="button" class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 btn-import-drive-file" data-drive-id="${rawDriveId}" data-file-name="${escapeHtml(job.originalName || job.name || '')}" style="border-radius: 8px; font-size: 12px; padding: 4px 12px; font-weight: 500;">
-                <span class="material-symbols-outlined" style="font-size: 16px;">cloud_download</span>
+              <button type="button" class="job-action-btn btn-import-drive btn-import-drive-file" data-drive-id="${rawDriveId}" data-file-name="${escapeHtml(job.originalName || job.name || '')}" title="In System importieren und per KI analysieren">
+                <span class="material-symbols-outlined">cloud_download</span>
                 <span>Importieren & per KI verarbeiten</span>
               </button>
             ` : ""}
-            <a href="${webViewLink}" target="_blank" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1" style="border-radius: 8px; font-size: 12px; padding: 4px 10px; text-decoration: none;">
-              <span class="material-symbols-outlined" style="font-size: 15px;">open_in_new</span>
+            <a href="${webViewLink}" target="_blank" class="job-action-btn btn-open-gdrive" title="Dokument in Google Drive öffnen">
+              <span class="material-symbols-outlined">open_in_new</span>
               <span>In Google Drive öffnen</span>
             </a>
           </div>
@@ -237,7 +237,10 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     const titleBadgesHtml = formatTitleBadgesHtml(job, state.searchQuery);
 
     // 6. Dates, Invoice details & Amounts
-    const docDateDisplay = res.documentDate || formatDateDisplay(job.uploadDate);
+    const rawDocDate = res.documentDate || job.documentDate;
+    const docDateDisplay = (rawDocDate && rawDocDate !== "unknown" && rawDocDate !== "none" && rawDocDate !== "-")
+      ? rawDocDate
+      : formatDateDisplay(job.uploadDate);
     const uploadDateDisplay = formatDateDisplay(job.uploadDate);
     const invoiceNumber = (res.invoiceNumber || job.invoiceNumber) && (res.invoiceNumber || job.invoiceNumber) !== "none" ? (res.invoiceNumber || job.invoiceNumber) : null;
     const invoiceAmtRaw = res.invoiceAmmount !== undefined ? res.invoiceAmmount : job.invoiceAmmount;
@@ -390,10 +393,15 @@ export function renderJobsList(jobs = state.jobs, force = false) {
             ${res.duration ? `<div><strong style="color: #475569;">Verarbeitungszeit:</strong> ${res.duration} s</div>` : ""}
 
             <div class="mt-2 pt-2 border-top">
-              <label class="fw-semibold text-muted small d-flex align-items-center gap-1 mb-1">
-                <span class="material-symbols-outlined" style="font-size: 15px;">edit_note</span> Notizen zu diesem Beleg:
+              <label class="fw-semibold text-muted small d-flex align-items-center justify-content-between mb-1">
+                <span class="d-flex align-items-center gap-1">
+                  <span class="material-symbols-outlined" style="font-size: 15px;">edit_note</span> Notizen zu diesem Beleg:
+                </span>
+                <span class="notes-save-indicator text-success small" style="display: none; font-size: 11px; font-weight: 500;">
+                  <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: middle;">check_circle</span> Gespeichert
+                </span>
               </label>
-              <textarea class="form-control job-notes-input" data-job-id="${job.id}" rows="2" placeholder="Notizen hinterlegen..." style="font-size: 12.5px; border-radius: 8px;">${escapeHtml(job.notes || "")}</textarea>
+              <textarea class="form-control job-notes-input" data-job-id="${job.id}" rows="2" placeholder="Notizen hinterlegen (speichert automatisch)..." style="font-size: 12.5px; border-radius: 8px; resize: vertical; line-height: 1.4;">${escapeHtml(job.notes || "")}</textarea>
             </div>
           </div>
         </details>
@@ -534,7 +542,9 @@ function filterAndSortJobs(jobs) {
   }
 
 function parseDocTimestamp(dateStr, maxUploadDateStr) {
-  if (!dateStr || dateStr === "unknown" || dateStr === "none" || dateStr === "-") return null;
+  if (!dateStr || dateStr === "unknown" || dateStr === "none" || dateStr === "-") {
+    return maxUploadDateStr ? new Date(maxUploadDateStr).getTime() : null;
+  }
   const clean = String(dateStr).replace(/\(.*?\)/g, "").trim();
   let d = null;
   const deMatch = clean.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
@@ -739,9 +749,10 @@ export async function openDocPreview(jobId) {
     job = state.driveOnlySearchResults.find((j) => String(j.id) === String(jobId) || String(j.rawDriveId) === String(jobId));
   }
 
-  const res = job?.result || {};
-  const filename = res.full || job?.originalName || job?.name || `Dokument_${jobId}.pdf`;
-  const docDate = res.documentDate || (job?.uploadDate ? formatDateDisplay(job.uploadDate) : "");
+  const rawDocDate = res.documentDate || job?.documentDate;
+  const docDate = (rawDocDate && rawDocDate !== "unknown" && rawDocDate !== "none" && rawDocDate !== "-")
+    ? rawDocDate
+    : (job?.uploadDate ? formatDateDisplay(job.uploadDate) : "");
   const company = res.company || job?.targetCompany || "";
   const invoiceNum = res.invoiceNumber && res.invoiceNumber !== "none" ? ` • Rechnungs-Nr: ${res.invoiceNumber}` : "";
   const amountStr = res.invoiceAmmount ? ` • Betrag: ${formatCurrency(res.invoiceAmmount)}` : "";
@@ -1152,6 +1163,8 @@ export function initJobEventDelegation() {
     // 8. ClickUp Transfer Button (Admin Only)
     const clickupBtn = e.target.closest(".btn-manual-clickup-transfer");
     if (clickupBtn) {
+      e.preventDefault();
+      e.stopPropagation();
       if (!state.isAdmin) {
         ensureAdminAuth(() => clickupBtn.click());
         return;
@@ -1243,25 +1256,67 @@ export function initJobEventDelegation() {
     }
   });
 
-  // Notes Auto-Save on Blur / Change (Admin Only)
-  document.addEventListener("change", async (e) => {
+  // Notes Auto-Save while typing (accessible to all users, automatic save)
+  const notesDebounceTimers = new Map();
+
+  async function saveJobNotes(jobId, val, container) {
+    try {
+      const res = await apiRequest(`/api/jobs/${jobId}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ notes: val }),
+      });
+      if (res && res.success !== false) {
+        const indicator = container ? container.querySelector(".notes-save-indicator") : null;
+        if (indicator) {
+          indicator.style.display = "inline-flex";
+          setTimeout(() => {
+            indicator.style.display = "none";
+          }, 2000);
+        }
+      }
+    } catch (err) {
+      console.error("Fehler beim Speichern der Notiz:", err);
+    }
+  }
+
+  document.addEventListener("input", (e) => {
     const textarea = e.target.closest(".job-notes-input");
     if (textarea) {
-      if (!state.isAdmin) {
-        showToast("Nur für Administratoren bearbeitbar.", "warning");
-        return;
-      }
       const jobId = textarea.getAttribute("data-job-id");
-      const notes = textarea.value.trim();
-      try {
-        await apiRequest(`/api/jobs/${jobId}/notes`, {
-          method: "POST",
-          body: JSON.stringify({ notes }),
-        });
-        showToast("Notiz gespeichert.", "success");
-      } catch (err) {
-        showToast("Fehler beim Speichern der Notiz: " + err.message, "error");
+      const val = textarea.value;
+
+      // Update in-memory state immediately for live search
+      if (state.jobs) {
+        const j = state.jobs.find((job) => String(job.id) === String(jobId));
+        if (j) j.notes = val;
       }
+      if (state.driveOnlySearchResults) {
+        const dj = state.driveOnlySearchResults.find((job) => String(job.id) === String(jobId));
+        if (dj) dj.notes = val;
+      }
+
+      if (notesDebounceTimers.has(jobId)) {
+        clearTimeout(notesDebounceTimers.get(jobId));
+      }
+
+      const timer = setTimeout(() => {
+        notesDebounceTimers.delete(jobId);
+        saveJobNotes(jobId, val, textarea.closest(".border-top") || textarea.parentElement);
+      }, 500);
+
+      notesDebounceTimers.set(jobId, timer);
+    }
+  });
+
+  document.addEventListener("change", (e) => {
+    const textarea = e.target.closest(".job-notes-input");
+    if (textarea) {
+      const jobId = textarea.getAttribute("data-job-id");
+      if (notesDebounceTimers.has(jobId)) {
+        clearTimeout(notesDebounceTimers.get(jobId));
+        notesDebounceTimers.delete(jobId);
+      }
+      saveJobNotes(jobId, textarea.value, textarea.closest(".border-top") || textarea.parentElement);
     }
   });
 }

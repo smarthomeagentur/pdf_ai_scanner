@@ -39,13 +39,23 @@ router.get("/api/documents/deep-search", async (req, res) => {
           });
 
           const files = driveRes.data.files || [];
-          const driveSnippetPromises = files.slice(0, 8).map(async (file) => {
+          const driveSnippetPromises = files.slice(0, 15).map(async (file) => {
             try {
+              // 1. Try to download and parse text directly from Google Drive PDF
               const driveText = await Promise.race([
                 getDrivePdfText(drive, file.id, file.modifiedTime),
-                new Promise((resolve) => setTimeout(() => resolve(""), 1500)),
+                new Promise((resolve) => setTimeout(() => resolve(""), 3500)),
               ]);
-              return extractExactSnippet(driveText, q);
+              let snip = extractExactSnippet(driveText, q, 80);
+              if (snip) return snip;
+
+              // 2. If drive description contains the search term, extract context snippet
+              if (file.description) {
+                snip = extractExactSnippet(file.description, q, 80);
+                if (snip) return snip;
+              }
+
+              return "";
             } catch (e) {
               return "";
             }
@@ -54,7 +64,13 @@ router.get("/api/documents/deep-search", async (req, res) => {
           const snippets = await Promise.all(driveSnippetPromises);
 
           files.forEach((file, index) => {
-            const snippet = snippets[index] || file.description || "Gefunden in Dokument-Volltext (Google Drive)";
+            let snippet = snippets[index];
+            if (!snippet && file.description) {
+              snippet = extractExactSnippet(file.description, q, 80) || file.description;
+            }
+            if (!snippet) {
+              snippet = "Gefunden in Dokument-Volltext (Google Drive)";
+            }
             seenNames.add(normalizeDocName(file.name));
 
             results.push({
@@ -76,7 +92,9 @@ router.get("/api/documents/deep-search", async (req, res) => {
             });
           });
         }
-      } catch (driveErr) {}
+      } catch (driveErr) {
+        console.error("[SEARCH] Google Drive Volltextsuche Fehler:", driveErr.message || driveErr);
+      }
     }
 
     // 2. Search local jobs

@@ -26,7 +26,7 @@ export function formatFileSize(bytes) {
  * Formats a Date object or ISO string for display in German format.
  */
 export function formatDateDisplay(dateInput) {
-  if (!dateInput) return "-";
+  if (!dateInput || dateInput === "unknown" || dateInput === "none" || dateInput === "-") return "-";
   try {
     const d = new Date(dateInput);
     if (isNaN(d.getTime())) return String(dateInput);

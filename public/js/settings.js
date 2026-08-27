@@ -189,6 +189,9 @@ export async function openSettingsModal() {
       return;
     } else {
       state.isAdmin = true;
+      const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+      if (navRechnungenTab) navRechnungenTab.style.display = "inline-flex";
+      if (window.renderJobsList) window.renderJobsList(state.jobs, true);
     }
   } catch (e) {
     console.error("Admin Check Error", e);
@@ -798,6 +801,52 @@ export function initSettingsEvents() {
     } catch (err) {
       showToast("Fehler beim Wiederherstellen: " + err.message, "error");
     }
+  });
+
+  const handleRescanDuplicates = async (e) => {
+    const btn = e.currentTarget;
+    const origHtml = btn.innerHTML;
+    const resultBox = document.getElementById("ai-duplicates-scan-result");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" style="width: 14px; height: 14px;"></span> Prüfe Duplikate...';
+    if (resultBox) {
+      resultBox.style.display = "block";
+      resultBox.innerHTML = '<span class="text-muted"><span class="spinner-border spinner-border-sm me-1" style="width: 12px; height: 12px;"></span> Belege werden analysiert...</span>';
+    }
+
+    try {
+      const data = await apiRequest("/api/jobs/rescan-duplicates", { method: "POST" });
+      if (data.success) {
+        const msg = `✅ ${data.markedCount || 0} Duplikat(e) in ${data.scanned || 0} Belegen gefunden.`;
+        showToast(msg, "success");
+        if (resultBox) {
+          resultBox.innerHTML = `<div class="p-2 rounded bg-success-subtle text-success border border-success-subtle fw-medium">${msg}</div>`;
+        }
+        const statusData = await apiRequest("/api/status?ids=all").catch(() => null);
+        if (statusData && statusData.statuses) {
+          state.jobs = statusData.statuses;
+          if (window.renderJobsList) window.renderJobsList(state.jobs, true);
+        }
+      } else {
+        const errMsg = "Fehler: " + (data.error || "Unbekannt");
+        showToast(errMsg, "error");
+        if (resultBox) {
+          resultBox.innerHTML = `<div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle">${escapeHtml(errMsg)}</div>`;
+        }
+      }
+    } catch (err) {
+      showToast("Netzwerkfehler: " + err.message, "error");
+      if (resultBox) {
+        resultBox.innerHTML = `<div class="p-2 rounded bg-danger-subtle text-danger border border-danger-subtle">${escapeHtml(err.message)}</div>`;
+      }
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  };
+
+  document.querySelectorAll(".btn-trigger-rescan-duplicates, #ai-trigger-rescan-duplicates-btn").forEach((btn) => {
+    btn.addEventListener("click", handleRescanDuplicates);
   });
 
   document.getElementById("trigger-clear-jobs-btn")?.addEventListener("click", async () => {

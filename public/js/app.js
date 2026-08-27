@@ -1,17 +1,17 @@
 /**
  * Main Frontend Coordinator & Bootstrapping
  */
-import { apiRequest } from "./api.js?v=20260826_v67";
-import { state } from "./state.js?v=20260826_v67";
-import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js?v=20260826_v67";
-import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js?v=20260826_v67";
-import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js?v=20260826_v67";
-import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js?v=20260826_v67";
-import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js?v=20260826_v67";
-import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js?v=20260826_v67";
-import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js?v=20260826_v67";
-import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js?v=20260826_v67";
-import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview, ensureAdminAuth } from "./jobs.js?v=20260826_v67";
+import { apiRequest } from "./api.js";
+import { state } from "./state.js";
+import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js";
+import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js";
+import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js";
+import { initGmailScannerEvents, requestGmailAccountAuth, loadInboxData } from "./gmailScanner.js";
+import { openSettingsModal, openAdminLoginModal, saveAllSettings, initSettingsEvents } from "./settings.js";
+import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAccountingEvents } from "./accounting.js";
+import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js";
+import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js";
+import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview, ensureAdminAuth } from "./jobs.js";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
@@ -81,11 +81,26 @@ window.dismissDuplicate = async (jobId) => {
   }
 };
 
-async function refreshStatus() {
+export function updateAdminUiState() {
+  const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
+  if (navRechnungenTab) {
+    navRechnungenTab.style.display = state.isAdmin ? "inline-flex" : "none";
+  }
+}
+
+async function refreshStatus(force = false) {
   try {
     const data = await apiRequest("/api/status?ids=all");
+    if (typeof data.isAdmin === "boolean") {
+      const prevAdmin = state.isAdmin;
+      state.isAdmin = data.isAdmin;
+      if (prevAdmin !== state.isAdmin) {
+        updateAdminUiState();
+        force = true;
+      }
+    }
     state.jobs = data.statuses || [];
-    renderJobsList(state.jobs);
+    renderJobsList(state.jobs, force);
     updateAllFilterCounts();
   } catch (e) {}
 }
@@ -110,34 +125,44 @@ function initUploadHandlers() {
     ["dragenter", "dragover"].forEach((eventName) => {
       dropArea.addEventListener(eventName, (e) => {
         e.preventDefault();
-        dropArea.classList.add("highlight");
+        e.stopPropagation();
+        dropArea.classList.add("drag-over");
       });
     });
+
     ["dragleave", "drop"].forEach((eventName) => {
       dropArea.addEventListener(eventName, (e) => {
         e.preventDefault();
-        dropArea.classList.remove("highlight");
+        e.stopPropagation();
+        dropArea.classList.remove("drag-over");
       });
     });
+
     dropArea.addEventListener("drop", (e) => {
-      const files = Array.from(e.dataTransfer?.files || []);
+      const files = Array.from(e.dataTransfer.files || []);
       if (files.length > 0) uploadFiles(files);
     });
   }
 }
 
 async function uploadFiles(files) {
+  const isPrivate = document.getElementById("private-upload-checkbox")?.checked || false;
   const formData = new FormData();
   files.forEach((f) => formData.append("files", f));
+  formData.append("isPrivate", isPrivate ? "true" : "false");
+
+  showToast(`${files.length} Datei(en) werden hochgeladen...`, "info");
   try {
-    showToast(`${files.length} Datei(en) werden hochgeladen...`, "info");
-    const data = await apiRequest("/api/upload", {
+    const res = await fetch("/api/upload", {
       method: "POST",
       body: formData,
     });
-    if (data.success) {
-      showToast(`${files.length} Datei(en) erfolgreich zur Pipeline hinzugefügt!`, "success");
+    const data = await res.json();
+    if (data.jobs) {
+      showToast(`${data.jobs.length} Dokument(e) zur KI-Verarbeitung eingereiht.`, "success");
       refreshStatus();
+    } else {
+      showToast(data.error || "Upload fehlgeschlagen", "error");
     }
   } catch (err) {
     showToast("Upload-Fehler: " + err.message, "error");
@@ -145,11 +170,11 @@ async function uploadFiles(files) {
 }
 
 function initTabSwitching() {
-  const uploadTab = document.getElementById("nav-upload-tab");
+  const uploadTab = document.getElementById("nav-upload-tab") || document.getElementById("nav-main-tab");
   const rechnungenTab = document.getElementById("nav-rechnungen-tab");
   const inboxTab = document.getElementById("nav-inbox-tab");
 
-  const viewUpload = document.getElementById("view-upload");
+  const viewUpload = document.getElementById("view-upload") || document.getElementById("view-main");
   const viewRechnungen = document.getElementById("view-rechnungen");
   const viewInbox = document.getElementById("view-inbox");
 
@@ -176,7 +201,7 @@ function initTabSwitching() {
 }
 
 // Bootstrapping
-window.addEventListener("DOMContentLoaded", async () => {
+async function initApp() {
   initSettingsEvents();
   initDriveSyncEvents();
   initJobEventDelegation();
@@ -196,20 +221,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       apiRequest("/api/admin-check").catch(() => ({})),
     ]);
     state.isAdmin = !!(config.isAdmin || adminCheck.isAdmin);
-
-    const navRechnungenTab = document.getElementById("nav-rechnungen-tab");
-    const navInboxTab = document.getElementById("nav-inbox-tab");
-    if (navRechnungenTab) {
-      navRechnungenTab.style.display = state.isAdmin ? "inline-flex" : "none";
-    }
-    if (navInboxTab) {
-      navInboxTab.style.display = "inline-flex";
-    }
+    updateAdminUiState();
   } catch (e) {}
 
   document.getElementById("openDriveSyncBtn")?.addEventListener("click", openDriveSyncModal);
 
-  // Initial load & Polling
-  await refreshStatus();
-  setInterval(refreshStatus, 8000);
-});
+  // Initial load & Polling (force render with verified admin state)
+  await refreshStatus(true);
+  setInterval(() => refreshStatus(false), 8000);
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initApp);
+} else {
+  initApp();
+};
