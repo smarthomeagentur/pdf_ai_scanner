@@ -96,7 +96,7 @@ export function initDeepSearch() {
       state.searchQuery = "";
       state.dateFilter = "alle";
       state.companyFilter = "alle";
-      state.sortOrder = "docdate_desc";
+      state.sortOrder = "uploaddate_desc";
       state.selectedCategories.clear();
       state.deepSearchSnippets.clear();
       state.driveOnlySearchResults = [];
@@ -105,7 +105,7 @@ export function initDeepSearch() {
       if (clearBtn) clearBtn.style.display = "none";
       if (dateFilter) dateFilter.value = "alle";
       if (companyFilter) companyFilter.value = "alle";
-      if (sortSelect) sortSelect.value = "docdate_desc";
+      if (sortSelect) sortSelect.value = "uploaddate_desc";
 
       setSearchIconSpinning(false);
       updateAllFilterCounts();
@@ -263,7 +263,7 @@ export function updateResetFiltersVisibility() {
   const hasDate = state.dateFilter !== "alle";
   const hasComp = state.companyFilter !== "alle";
   const hasCats = state.selectedCategories.size > 0;
-  const hasCustomSort = state.sortOrder !== "docdate_desc";
+  const hasCustomSort = state.sortOrder !== "uploaddate_desc";
 
   const isFiltered = hasSearch || hasDate || hasComp || hasCats || hasCustomSort;
 

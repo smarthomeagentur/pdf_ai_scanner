@@ -23,8 +23,8 @@
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 
-    <link rel="stylesheet" href="/index.css?v=20260827_admin_modal_v67" />
-    <link rel="stylesheet" href="/md3-theme.css" />
+    <link rel="stylesheet" href="/index.css?v=20260827_checkbox_fix_v74" />
+    <link rel="stylesheet" href="/md3-theme.css?v=20260827_checkbox_fix_v3" />
 
     <!-- ONNX Modell & WASM Prefetch für blitzschnelles Öffnen des Scanners -->
     <link rel="prefetch" href="/models/doc_corner_net.onnx" as="fetch" crossorigin="anonymous" />
@@ -33,13 +33,17 @@
     <style>
       .pdf-preview-container {
         position: relative;
-        width: 62px;
-        height: 80px;
+        width: 90px;
+        min-width: 90px;
+        max-width: 90px;
+        height: 127px;
+        aspect-ratio: 1 / 1.414;
         text-decoration: none;
-        display: block;
+        display: flex;
         flex-shrink: 0;
-        border-radius: 8px;
+        border-radius: 10px;
         cursor: pointer;
+        align-self: center;
       }
       .pdf-preview-container:hover {
         z-index: 50;
@@ -49,8 +53,8 @@
         height: 100%;
         object-fit: cover;
         object-position: top center;
-        border-radius: 8px;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
         background: #fff;
         display: block;
         border: 1px solid #cbd5e1;
@@ -58,9 +62,28 @@
         transform-origin: top right;
       }
       .pdf-preview-container:hover .pdf-preview-img {
-        transform: scale(3.2);
+        transform: scale(2.5);
         box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
         border-color: #94a3b8;
+      }
+      @media (max-width: 576px) {
+        .pdf-preview-container {
+          width: 82px !important;
+          min-width: 82px !important;
+          max-width: 82px !important;
+          height: 116px !important;
+          min-height: unset !important;
+          max-height: 116px !important;
+          aspect-ratio: 1 / 1.414 !important;
+          align-self: center !important;
+        }
+        .pdf-preview-img {
+          border-radius: 8px !important;
+        }
+        .pdf-preview-container:hover .pdf-preview-img {
+          transform: none !important;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12) !important;
+        }
       }
     </style>
   </head>
@@ -165,9 +188,9 @@
               <div class="row g-2 align-items-center mb-2">
                 <div class="col-12 col-md-4">
                   <select id="start-sort-select" class="form-select start-filter-dropdown app-select-slim" title="Sortierung">
-                    <option value="docdate_desc" selected>📅 Belegdatum (Neu ➔ Alt)</option>
+                    <option value="uploaddate_desc" selected>🕒 Upload (Neu ➔ Alt)</option>
+                    <option value="docdate_desc">📅 Belegdatum (Neu ➔ Alt)</option>
                     <option value="docdate_asc">📅 Belegdatum (Alt ➔ Neu)</option>
-                    <option value="uploaddate_desc">🕒 Upload (Neu ➔ Alt)</option>
                     <option value="company_asc">🏢 Unternehmen (A ➔ Z)</option>
                     <option value="amount_desc">💶 Betrag (Höchste zuerst)</option>
                   </select>
@@ -365,19 +388,22 @@
           <!-- Filter & Batch Toolbar Card -->
           <div class="app-filter-card">
             <!-- Tabs: Erkannt vs Posteingang vs Übersprungen -->
-            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2 pb-2 border-bottom" style="border-color: #f1f5f9 !important;">
+            <div class="inbox-subtabs-header d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2 pb-2 border-bottom" style="border-color: #f1f5f9 !important;">
               <div class="app-segmented-tabs">
                 <button type="button" id="inbox-tab-detected" class="app-segmented-tab active inbox-subtab-btn">
-                  <span class="material-symbols-outlined" style="font-size: 15px;">auto_fix_high</span>
-                  Erkannt (<span id="inbox-count-detected">0</span>)
+                  <span class="material-symbols-outlined tab-icon">auto_fix_high</span>
+                  <span class="tab-label">Erkannt</span>
+                  <span class="inbox-tab-badge" id="inbox-count-detected">0</span>
                 </button>
                 <button type="button" id="inbox-tab-active" class="app-segmented-tab inbox-subtab-btn">
-                  <span class="material-symbols-outlined" style="font-size: 15px;">inbox</span>
-                  Posteingang (<span id="inbox-count-active">0</span>)
+                  <span class="material-symbols-outlined tab-icon">inbox</span>
+                  <span class="tab-label">Posteingang</span>
+                  <span class="inbox-tab-badge" id="inbox-count-active">0</span>
                 </button>
                 <button type="button" id="inbox-tab-skipped" class="app-segmented-tab inbox-subtab-btn">
-                  <span class="material-symbols-outlined" style="font-size: 15px;">playlist_remove</span>
-                  Übersprungen (<span id="inbox-count-skipped">0</span>)
+                  <span class="material-symbols-outlined tab-icon">playlist_remove</span>
+                  <span class="tab-label">Übersprungen</span>
+                  <span class="inbox-tab-badge" id="inbox-count-skipped">0</span>
                 </button>
               </div>
 
@@ -431,7 +457,7 @@
 
               <div class="col-6 col-md-4 d-flex justify-content-md-end align-items-center gap-2 flex-wrap">
                 <div class="d-flex align-items-center gap-1" id="inbox-selection-controls">
-                  <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer;" />
+                  <input type="checkbox" id="inbox-select-all-cb" class="form-check-input m-0" style="cursor: pointer; width: 16px; height: 16px; min-width: 16px; max-width: 16px;" />
                   <label for="inbox-select-all-cb" class="small text-muted m-0" style="cursor: pointer; font-size: 11.5px;">Alle</label>
                 </div>
                 <button
@@ -646,24 +672,29 @@
           <!-- Google Developer Style Segment Tabs -->
           <div class="gdev-tabs-bar">
             <button type="button" class="gdev-tab-btn active" data-tab-target="drive">
-              <span class="material-symbols-outlined" style="font-size: 18px;">cloud</span>
-              <span>Google Drive</span>
+              <span class="material-symbols-outlined gdev-tab-icon">cloud</span>
+              <span class="gdev-tab-label-full">Google Drive</span>
+              <span class="gdev-tab-label-short">Drive</span>
             </button>
             <button type="button" class="gdev-tab-btn" data-tab-target="gmail">
-              <span class="material-symbols-outlined" style="font-size: 18px;">mail</span>
-              <span>Gmail Scanner</span>
+              <span class="material-symbols-outlined gdev-tab-icon">mail</span>
+              <span class="gdev-tab-label-full">Gmail Scanner</span>
+              <span class="gdev-tab-label-short">Gmail</span>
             </button>
             <button type="button" class="gdev-tab-btn" data-tab-target="ai">
-              <span class="material-symbols-outlined" style="font-size: 18px;">psychology</span>
-              <span>KI-Erkennung</span>
+              <span class="material-symbols-outlined gdev-tab-icon">psychology</span>
+              <span class="gdev-tab-label-full">KI-Erkennung</span>
+              <span class="gdev-tab-label-short">KI</span>
             </button>
             <button type="button" class="gdev-tab-btn" data-tab-target="accounting">
-              <span class="material-symbols-outlined" style="font-size: 18px;">account_balance</span>
-              <span>Buchhaltung & ClickUp</span>
+              <span class="material-symbols-outlined gdev-tab-icon">account_balance</span>
+              <span class="gdev-tab-label-full">Buchhaltung & ClickUp</span>
+              <span class="gdev-tab-label-short">Buchhaltung</span>
             </button>
             <button type="button" class="gdev-tab-btn" data-tab-target="system">
-              <span class="material-symbols-outlined" style="font-size: 18px;">tune</span>
-              <span>System & Wartung</span>
+              <span class="material-symbols-outlined gdev-tab-icon">tune</span>
+              <span class="gdev-tab-label-full">System & Wartung</span>
+              <span class="gdev-tab-label-short">System</span>
             </button>
           </div>
 
@@ -779,8 +810,8 @@
                 </div>
                 <div class="setting-group mb-3">
                   <label class="gdev-label">Firmen / Rechnungsempfänger (Komma-getrennt):</label>
-                  <textarea id="ai-company-input" class="form-control gdev-input" rows="3" placeholder="wirewire GmbH, The Wire UG, Polyxo Studios GmbH..."></textarea>
-                  <div class="gdev-helper">Erkannte Zielunternehmen für die automatische Zuordnung und Buchhaltung.</div>
+                  <textarea id="ai-company-input" class="form-control gdev-input" rows="3" placeholder="wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel (Privat)..."></textarea>
+                  <div class="gdev-helper">Erkannte Zielunternehmen für die Zuordnung. <strong>Tipp:</strong> Enthält der Name <code>(Privat)</code> oder <code>privat</code> (z.B. <em>Daniel (Privat)</em>), werden Belege automatisch als privat markiert und für Nicht-Admins verborgen.</div>
                 </div>
               </div>
               <div class="gdev-card" id="ai-duplicates-settings-container">
@@ -1546,7 +1577,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20260827_doc_preview_fix_v86"></script>
+      <script type="module" src="/js/app.js?v=20260827_inbox_file_selection_v95"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

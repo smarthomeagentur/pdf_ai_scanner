@@ -17,10 +17,11 @@ export function renderJobsList(jobs = state.jobs, force = false) {
   const jobList = document.getElementById("job-list");
   if (!jobList) return;
 
-  // Don't re-render if user is currently interacting with an open category/company picker or typing notes
+  // Don't re-render if user is currently interacting with an open category/company/tags picker or typing notes
   if (
     document.querySelector(".category-picker-box") ||
     document.querySelector(".company-picker-box") ||
+    document.querySelector(".tags-picker-box") ||
     document.activeElement?.classList.contains("job-notes-input")
   ) {
     return;
@@ -67,6 +68,9 @@ export function renderJobsList(jobs = state.jobs, force = false) {
       j.status,
       j.error,
       j.result?.full,
+      j.result?.company,
+      j.result?.category,
+      (j.result?.tags || []).join(","),
       j.result?.documentDate,
       j.result?.invoiceNumber,
       j.result?.invoiceAmmount,
@@ -111,50 +115,51 @@ export function renderJobsList(jobs = state.jobs, force = false) {
       const thumbUrl = job.thumbnailLink || `/api/thumbnail/${rawDriveId}`;
 
       div.innerHTML = `
-        <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
-          <div class="flex-grow-1" style="min-width: 0; display: flex; flex-direction: column;">
-            <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
-              <div class="d-flex align-items-center gap-1 flex-wrap">
-                <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;">
-                  <span class="material-symbols-outlined" style="font-size: 14px;">cloud</span> Google Drive
-                </span>
-                <span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 8px; border-radius: 6px; font-weight: 500;">
-                  <span class="material-symbols-outlined text-muted" style="font-size: 13px;">description</span> ${highlightedTitle}
-                </span>
-              </div>
-              <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size: 12.5px; color: #64748b; margin-top: 4px;">
-                <span class="d-inline-flex align-items-center gap-1">
-                  <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">calendar_today</span>
-                  <span><strong style="color: #475569; font-weight: 600;">Datum:</strong> <span style="color: #1e293b;">${escapeHtml(docDateDisplay)}</span></span>
-                </span>
-              </div>
-            </div>
-            ${highlightedSnippet ? `
-              <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
-                <div class="d-flex align-items-center gap-1 text-primary small fw-bold mb-1">
-                  <span class="material-symbols-outlined" style="font-size: 14px;">manage_search</span>
-                  <span>Textausschnitt / OCR-Fundstelle (Google Drive):</span>
+        <div class="d-flex justify-content-between align-items-stretch gap-3">
+          <div class="flex-grow-1 d-flex flex-column justify-content-between" style="min-width: 0;">
+            <div>
+              <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
+                <div class="d-flex align-items-center gap-1 flex-wrap">
+                  <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 9px; border-radius: 6px; font-weight: 600;">
+                    <span class="material-symbols-outlined" style="font-size: 14px;">cloud</span> Google Drive
+                  </span>
+                  <span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 4px 8px; border-radius: 6px; font-weight: 500;">
+                    <span class="material-symbols-outlined text-muted" style="font-size: 13px;">description</span> ${highlightedTitle}
+                  </span>
                 </div>
-                <div class="font-monospace text-dark bg-white p-2 rounded border" style="font-size: 11.5px; line-height: 1.4; word-break: break-word;">${highlightedSnippet}</div>
-              </div>` : ""}
+                <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size: 12.5px; color: #64748b; margin-top: 4px;">
+                  <span class="d-inline-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">calendar_today</span>
+                    <span><strong style="color: #475569; font-weight: 600;">Datum:</strong> <span style="color: #1e293b;">${escapeHtml(docDateDisplay)}</span></span>
+                  </span>
+                </div>
+              </div>
+              ${highlightedSnippet ? `
+                <div class="p-2 my-2 rounded border bg-light text-secondary" style="font-size: 12px; line-height: 1.4; border-left: 3px solid #0d6efd !important;">
+                  <div class="d-flex align-items-center gap-1 text-primary small fw-bold mb-1">
+                    <span class="material-symbols-outlined" style="font-size: 14px;">manage_search</span>
+                    <span>Textausschnitt / OCR-Fundstelle (Google Drive):</span>
+                  </div>
+                  <div class="font-monospace text-dark bg-white p-2 rounded border" style="font-size: 11.5px; line-height: 1.4; word-break: break-word;">${highlightedSnippet}</div>
+                </div>` : ""}
+            </div>
+            <!-- Action buttons inside left column, shortened to left -->
+            <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap mt-2 pt-1">
+              ${state.isAdmin ? `
+                <button type="button" class="job-action-btn btn-import-drive btn-import-drive-file" data-drive-id="${rawDriveId}" data-file-name="${escapeHtml(job.originalName || job.name || '')}" title="In System importieren und per KI analysieren">
+                  <span class="material-symbols-outlined">cloud_download</span>
+                  <span>Importieren & analysieren</span>
+                </button>
+              ` : ""}
+              <a href="${webViewLink}" target="_blank" class="job-action-btn btn-open-gdrive" title="Dokument in Google Drive öffnen">
+                <span class="material-symbols-outlined">open_in_new</span>
+                <span>In Google Drive</span>
+              </a>
+            </div>
           </div>
-          <div class="flex-shrink-0">
+          <div class="flex-shrink-0 d-flex align-items-stretch">
             <a href="${webViewLink}" data-job-id="${job.id}" class="pdf-preview-container btn-open-doc-preview" title="Dokument in Google Drive öffnen">
               <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
-            </a>
-          </div>
-        </div>
-        <div class="job-body-section" style="width: 100%;">
-          <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
-            ${state.isAdmin ? `
-              <button type="button" class="job-action-btn btn-import-drive btn-import-drive-file" data-drive-id="${rawDriveId}" data-file-name="${escapeHtml(job.originalName || job.name || '')}" title="In System importieren und per KI analysieren">
-                <span class="material-symbols-outlined">cloud_download</span>
-                <span>Importieren & per KI verarbeiten</span>
-              </button>
-            ` : ""}
-            <a href="${webViewLink}" target="_blank" class="job-action-btn btn-open-gdrive" title="Dokument in Google Drive öffnen">
-              <span class="material-symbols-outlined">open_in_new</span>
-              <span>In Google Drive öffnen</span>
             </a>
           </div>
         </div>`;
@@ -225,12 +230,42 @@ export function renderJobsList(jobs = state.jobs, force = false) {
       duplicateBadgeHtml = `<span class="badge-open-duplicate-compare" data-job-id="${job.id}" style="background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; padding: 2px 8px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;"><span class="material-symbols-outlined" style="font-size: 12px;">warning</span> DUPLIKAT VERDACHT</span>`;
     }
 
-    // 4. Status badge (Processing/Pending)
+    // 4. Status badge & AI Processing Progress Bar
     let statusHtml = "";
     if (job.status === "pending") {
-      statusHtml = `<div class="job-status mt-1"><span class="badge bg-warning-subtle text-dark border d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px;"><span class="spinner-border spinner-border-sm text-warning" style="width: 10px; height: 10px;"></span> In Warteschlange...</span></div>`;
+      statusHtml = `
+        <div class="ai-processing-box mt-2 p-2 rounded-2 border" style="background: #f8fafc; border-color: #e2e8f0 !important;">
+          <div class="d-flex align-items-center justify-content-between mb-1" style="font-size: 11px;">
+            <span class="d-flex align-items-center gap-1 text-warning-emphasis fw-semibold">
+              <span class="spinner-border spinner-border-sm text-warning" style="width: 10px; height: 10px;"></span>
+              <span>In Warteschlange...</span>
+            </span>
+            <span class="text-muted" style="font-size: 10.5px;">Warten auf KI</span>
+          </div>
+          <div class="progress" style="height: 6px; border-radius: 9999px; background: #e2e8f0; overflow: hidden;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width: 12%;"></div>
+          </div>
+        </div>`;
     } else if (job.status === "processing") {
-      statusHtml = `<div class="job-status mt-1"><span class="badge bg-info-subtle text-primary border border-info-subtle d-inline-flex align-items-center gap-1" style="font-size: 11px; padding: 3px 8px;"><span class="spinner-border spinner-border-sm text-primary" style="width: 10px; height: 10px;"></span> In KI-Pipeline...</span></div>`;
+      const startTime = job.processingStartedAt
+        ? new Date(job.processingStartedAt).getTime()
+        : (job.uploadDate ? new Date(job.uploadDate).getTime() : Date.now());
+      const elapsedSec = Math.max(0, (Date.now() - startTime) / 1000);
+      const progressPercent = Math.min(96, Math.max(10, Math.round(100 * (1 - Math.exp(-elapsedSec / 22)))));
+
+      statusHtml = `
+        <div class="ai-processing-box mt-2 p-2 rounded-2 border" style="background: #eff6ff; border-color: #bfdbfe !important;">
+          <div class="d-flex align-items-center justify-content-between mb-1" style="font-size: 11.5px;">
+            <span class="d-flex align-items-center gap-1 text-primary fw-semibold">
+              <span class="spinner-border spinner-border-sm text-primary" style="width: 11px; height: 11px;"></span>
+              <span>KI-Analyse & Extraktion läuft...</span>
+            </span>
+            <span class="ai-progress-percent text-primary fw-bold font-monospace" style="font-size: 11.5px;">${progressPercent}%</span>
+          </div>
+          <div class="progress" style="height: 6px; border-radius: 9999px; background: #dbeafe; overflow: hidden;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary ai-progress-bar" data-job-id="${job.id}" data-start-time="${startTime}" style="width: ${progressPercent}%; transition: width 0.5s ease;"></div>
+          </div>
+        </div>`;
     }
 
     // 5. Title Line: 3 Prominente Tags mit Suchhervorhebung
@@ -276,70 +311,94 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     const safeCompany = escapeHtml(res.company || job.targetCompany || "Unbekannt");
     const safeCategory = escapeHtml(res.category || "-");
 
+    // Tags for Details section
+    let detailTags = [];
+    if (Array.isArray(res.tags)) {
+      detailTags = res.tags;
+    } else if (typeof res.tags === "string" && res.tags.trim()) {
+      detailTags = res.tags.split(",").map((t) => t.trim());
+    }
+    detailTags = detailTags
+      .map((t) => String(t).trim().replace(/^[-_\s]+|[-_\s]+$/g, ""))
+      .filter((t) => {
+        const lower = t.toLowerCase();
+        return (
+          t.length >= 2 &&
+          !["unknown", "unbekannt", "none", "null", "pdf", "scan", "dokument", "document", "rechnung", "invoice"].includes(lower) &&
+          !/^(isinvoice|datum|date|invoicenumber|invoiceammount|betrag|firma|company|kategorie|category):/i.test(t)
+        );
+      });
+
+    const tagsPillsHtml = detailTags.length > 0
+      ? detailTags.map((t) => `<span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: 500;"><span class="material-symbols-outlined text-muted" style="font-size: 13px;">label</span> ${escapeHtml(t)}</span>`).join(" ")
+      : `<span class="text-muted small fst-italic">Keine Tags</span>`;
+
     div.innerHTML = `
-      <!-- Top header section: info on left, thumbnail on right -->
-      <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
-        <div class="flex-grow-1" style="min-width: 0; display: flex; flex-direction: column;">
-          ${errorHeaderHtml}
-          <div class="job-title" style="display: flex; flex-direction: column; gap: 3px;">
-            <!-- Zeile 1: Die 3 prominenten Tags -->
-            <div>${titleBadgesHtml}</div>
-            
-            <!-- Zeile 2: Status-Pills -->
-            ${(privateBadgeHtml || duplicateBadgeHtml || lexofficeBadgeHtml) ? `
-              <div class="d-flex align-items-center gap-1 flex-wrap mt-1">
+      <!-- Main Row: Left content + Right receipt image spanning full height -->
+      <div class="d-flex justify-content-between align-items-stretch gap-3">
+        <div class="flex-grow-1 d-flex flex-column justify-content-between" style="min-width: 0;">
+          <div>
+            ${errorHeaderHtml}
+            <div class="job-title text-start" style="display: flex; flex-direction: column; gap: 3px; text-align: left !important; align-items: flex-start !important;">
+              <!-- Zeile 1: Die 3 prominenten Tags -->
+              <div class="job-title-badges text-start" style="text-align: left !important; width: 100%;">${titleBadgesHtml}</div>
+              
+              <!-- Zeile 2: Status-Pills -->
+              <div class="job-status-pills d-flex align-items-center justify-content-start gap-1 flex-wrap mt-1 text-start" style="text-align: left !important; ${!(privateBadgeHtml || duplicateBadgeHtml || lexofficeBadgeHtml) ? 'display: none !important;' : ''}">
                 ${privateBadgeHtml}
                 ${duplicateBadgeHtml}
                 ${lexofficeBadgeHtml}
-              </div>` : ""}
+              </div>
 
-            <!-- Zeile 3: Dokumentendatum & Rechnungs-Info (Datum, Rechnungs-Nr, Betrag linksbündig) -->
-            <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size: 12.5px; color: #64748b; margin-top: 4px;">
-              <span class="d-inline-flex align-items-center gap-1">
-                <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">calendar_today</span>
-                <span><strong style="color: #475569; font-weight: 600;">Datum:</strong> <span style="color: #1e293b;">${escapeHtml(docDateDisplay)}</span></span>
-              </span>
-              ${isInvoice && invoiceNumber ? `
-                <span class="d-inline-flex align-items-center gap-1 border-start ps-2">
-                  <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">receipt_long</span>
-                  <span><strong style="color: #475569; font-weight: 600;">Rechnungs-Nr:</strong> <span style="color: #1e293b;">${highlightQueryText(invoiceNumber, state.searchQuery)}</span></span>
-                </span>` : ""}
-              ${isInvoice && invoiceAmtDisplay ? `
-                <span class="d-inline-flex align-items-center gap-1 border-start ps-2">
-                  <span class="material-symbols-outlined text-success" style="font-size: 15px;">payments</span>
-                  <span><strong style="color: #475569; font-weight: 600;">Betrag:</strong> <span class="fw-bold text-success font-monospace">${invoiceAmtDisplay}</span></span>
-                </span>` : ""}
+              <!-- Zeile 3: Dokumentendatum & Rechnungs-Info (Datum, Rechnungs-Nr, Betrag linksbündig) -->
+              <div class="d-flex align-items-center justify-content-start gap-2 flex-wrap text-start" style="font-size: 12.5px; color: #64748b; margin-top: 4px; text-align: left !important;">
+                <span class="d-inline-flex align-items-center gap-1">
+                  <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">calendar_today</span>
+                  <span><strong style="color: #475569; font-weight: 600;">Datum:</strong> <span style="color: #1e293b;">${escapeHtml(docDateDisplay)}</span></span>
+                </span>
+                ${isInvoice && invoiceNumber ? `
+                  <span class="d-inline-flex align-items-center gap-1 border-start ps-2">
+                    <span class="material-symbols-outlined" style="font-size: 15px; color: #64748b;">receipt_long</span>
+                    <span><strong style="color: #475569; font-weight: 600;">Rechnungs-Nr:</strong> <span style="color: #1e293b;">${highlightQueryText(invoiceNumber, state.searchQuery)}</span></span>
+                  </span>` : ""}
+                ${isInvoice && invoiceAmtDisplay ? `
+                  <span class="d-inline-flex align-items-center gap-1 border-start ps-2">
+                    <span class="material-symbols-outlined text-success" style="font-size: 15px;">payments</span>
+                    <span><strong style="color: #475569; font-weight: 600;">Betrag:</strong> <span class="fw-bold text-success font-monospace">${invoiceAmtDisplay}</span></span>
+                  </span>` : ""}
+              </div>
             </div>
+            ${statusHtml}
+            ${snippetHtml}
           </div>
-          ${statusHtml}
-          ${snippetHtml}
+
+          <!-- Action Bar (Shortened to left, inside left column) -->
+          <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap mt-2 pt-1">
+            <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}">
+              <span class="material-symbols-outlined">${isDetailsOpen ? "expand_less" : "info"}</span>
+              <span>Details</span>
+            </button>
+            ${state.isAdmin ? `
+              <button type="button" class="job-action-btn btn-manual-clickup-transfer ${isClickupSynced ? "btn-clickup-synced" : "btn-clickup-pending"}" data-job-id="${job.id}">
+                <span class="material-symbols-outlined">${isClickupSynced ? "check_circle" : "cloud_upload"}</span>
+                <span>ClickUp</span>
+              </button>
+              <button type="button" class="job-action-btn btn-manual-lexoffice-sync ${isLexTransferred ? "btn-accounting-synced" : "btn-accounting-pending"}" data-job-id="${job.id}">
+                <span class="material-symbols-outlined">${isLexTransferred ? "check_circle" : "sync"}</span>
+                <span>Buchhalt.</span>
+              </button>
+            ` : ""}
+          </div>
         </div>
-        <div class="flex-shrink-0">
+
+        <!-- Right Column: Receipt Image maintaining document shape -->
+        <div class="flex-shrink-0 d-flex align-items-center justify-content-center">
           ${previewHtml}
         </div>
       </div>
 
-      <!-- Action Bar & Details Section (Spans 100% full width of card) -->
-      <div class="job-body-section" style="width: 100%;">
-        <div class="job-action-bar d-flex align-items-center gap-2 flex-wrap">
-          <button type="button" class="job-action-btn btn-toggle-details btn-details" data-job-id="${job.id}">
-            <span class="material-symbols-outlined">${isDetailsOpen ? "expand_less" : "info"}</span>
-            <span>Details</span>
-          </button>
-          ${state.isAdmin ? `
-            <button type="button" class="job-action-btn btn-manual-clickup-transfer ${isClickupSynced ? "btn-clickup-synced" : "btn-clickup-pending"}" data-job-id="${job.id}">
-              <span class="material-symbols-outlined">${isClickupSynced ? "check_circle" : "cloud_upload"}</span>
-              <span>ClickUp</span>
-            </button>
-            <button type="button" class="job-action-btn btn-manual-lexoffice-sync ${isLexTransferred ? "btn-accounting-synced" : "btn-accounting-pending"}" data-job-id="${job.id}">
-              <span class="material-symbols-outlined">${isLexTransferred ? "check_circle" : "sync"}</span>
-              <span>Buchhalt.</span>
-            </button>
-          ` : ""}
-        </div>
-
-        <!-- Details Accordion (100% Full Width) -->
-        <details class="job-result" data-job-id="${job.id}" style="width: 100%; transition: all 0.3s;" ${isDetailsOpen ? "open" : ""}>
+      <!-- Details Accordion (100% Full Width) -->
+      <details class="job-result" data-job-id="${job.id}" style="width: 100%; transition: all 0.3s;" ${isDetailsOpen ? "open" : ""}>
           <summary style="display: none;"></summary>
           <div class="mt-2 p-3 bg-white rounded-3 border shadow-sm" style="font-size: 13px; line-height: 1.6; width: 100%;">
             <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom flex-wrap gap-2">
@@ -381,6 +440,17 @@ export function renderJobsList(jobs = state.jobs, force = false) {
               <div style="position: relative; display: inline-block;">
                 <span class="category-editable" data-job-id="${job.id}" data-current-cat="${safeCategory}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #f3e8ff; color: #6b21a8; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
                   ${highlightQueryText(safeCategory, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Bearbeitbare Tags -->
+            <div class="my-1 d-flex align-items-center gap-2 flex-wrap">
+              <strong style="color: #475569;">Tags:</strong> 
+              <div class="tags-editable-container" style="position: relative; display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+                <span class="tags-display-area d-inline-flex align-items-center gap-1 flex-wrap">${tagsPillsHtml}</span>
+                <span class="tags-editable" data-job-id="${job.id}" data-current-tags="${escapeHtml(detailTags.join(', '))}" style="cursor: pointer; padding: 2px 8px; border-radius: 12px; background: #f1f5f9; color: #475569; font-size: 11.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 3px; border: 1px solid #e2e8f0;" title="Tags bearbeiten">
+                  <span class="material-symbols-outlined" style="font-size: 13px;">edit</span> <span>Tags bearbeiten</span>
                 </span>
               </div>
             </div>
@@ -455,7 +525,7 @@ function formatTitleBadgesHtml(job, searchQuery = "") {
   }
 
   return `
-    <div class="d-flex align-items-center gap-1 flex-wrap" style="line-height: 1.4;">
+    <div class="d-flex align-items-center justify-content-start gap-1 flex-wrap text-start" style="line-height: 1.4; text-align: left !important;">
       ${categoryBadge}
       ${tagsBadges ? `${tagsBadges}` : ""}
       ${companyBadge}
@@ -590,15 +660,16 @@ function parseDocTimestamp(dateStr, maxUploadDateStr) {
   // 6. Sorting
   list.sort((a, b) => {
     const getDate = (j) => parseDocTimestamp(j.result?.documentDate, j.uploadDate) || (j.uploadDate ? new Date(j.uploadDate).getTime() : 0);
-    const getUploadDate = (j) => (j.uploadDate ? new Date(j.uploadDate).getTime() : 0);
+    const getUploadDate = (j) => (j.uploadDate ? new Date(j.uploadDate).getTime() : (j.aiPipelineStartedAt ? new Date(j.aiPipelineStartedAt).getTime() : (j.id && !isNaN(parseInt(j.id)) ? parseInt(j.id) : 0)));
     const getAmt = (j) => j.result?.invoiceAmmount || j.invoiceAmmount || 0;
     const getComp = (j) => (j.result?.company || j.targetCompany || "").toLowerCase();
 
+    if (state.sortOrder === "docdate_desc") return getDate(b) - getDate(a);
     if (state.sortOrder === "docdate_asc") return getDate(a) - getDate(b);
     if (state.sortOrder === "uploaddate_desc") return getUploadDate(b) - getUploadDate(a);
     if (state.sortOrder === "company_asc") return getComp(a).localeCompare(getComp(b));
     if (state.sortOrder === "amount_desc") return getAmt(b) - getAmt(a);
-    return getDate(b) - getDate(a); // Default: docdate_desc
+    return getUploadDate(b) - getUploadDate(a); // Default: uploaddate_desc
   });
 
   return list;
@@ -1066,16 +1137,31 @@ export function initJobEventDelegation() {
       e.preventDefault();
       const newCategory = catOptionPill.getAttribute("data-value");
       const pickerBox = catOptionPill.closest(".category-picker-box");
-      const editableSpan = pickerBox.parentElement.querySelector(".category-editable");
-      const jobId = editableSpan.getAttribute("data-job-id");
-      pickerBox.remove();
+      const editableSpan = pickerBox?.parentElement?.querySelector(".category-editable");
+      const jobId = editableSpan?.getAttribute("data-job-id");
+      if (pickerBox) pickerBox.remove();
+      if (!jobId) return;
 
-      const job = state.jobs.find((j) => j.id === jobId);
+      const job = (state.jobs || []).find((j) => String(j.id) === String(jobId)) || (window.allRechnungenJobs || []).find((j) => String(j.id) === String(jobId));
       if (job) {
         if (!job.result) job.result = {};
         job.result.category = newCategory;
       }
-      renderJobsList();
+
+      // Real-time DOM update
+      const card = editableSpan ? editableSpan.closest(".job-item") : document.querySelector(`.category-editable[data-job-id="${jobId}"]`)?.closest(".job-item");
+      if (card && job) {
+        if (editableSpan) {
+          editableSpan.setAttribute("data-current-cat", newCategory);
+          editableSpan.innerHTML = `${highlightQueryText(newCategory, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>`;
+        }
+        const titleBadgesEl = card.querySelector(".job-title-badges");
+        if (titleBadgesEl) {
+          titleBadgesEl.innerHTML = formatTitleBadgesHtml(job, state.searchQuery);
+        }
+      }
+
+      renderJobsList(state.jobs, true);
       try {
         await apiRequest(`/api/jobs/${jobId}/category`, {
           method: "POST",
@@ -1098,23 +1184,32 @@ export function initJobEventDelegation() {
       if (compTarget.parentElement.querySelector(".company-picker-box")) return;
       e.stopPropagation();
       e.preventDefault();
-      document.querySelectorAll(".category-picker-box, .company-picker-box").forEach((b) => b.remove());
+      document.querySelectorAll(".category-picker-box, .company-picker-box, .tags-picker-box").forEach((b) => b.remove());
 
       const currentComp = compTarget.getAttribute("data-current-comp") || "";
       const jobId = compTarget.getAttribute("data-job-id");
-      const companies = ["wirewire GmbH", "The Wire UG", "Polyxo Studios GmbH", "Daniel (Privat)", "Andere / Unbekannt"];
+
+      let configuredCompanies = [];
+      if (state.settings && state.settings.AI_COMPANY) {
+        configuredCompanies = state.settings.AI_COMPANY.split(",").map((c) => c.trim()).filter(Boolean);
+      }
+      const companies = configuredCompanies.length > 0
+        ? [...new Set([...configuredCompanies, "Andere / Unbekannt"])]
+        : ["wirewire GmbH", "The Wire UG", "Polyxo Studios GmbH", "Daniel (Privat)", "Andere / Unbekannt"];
 
       const pillsHtml = companies
         .map((c) => {
           const isSelected = c.toLowerCase() === currentComp.toLowerCase();
-          const bg = isSelected ? "#0284c7" : "#e0f2fe";
-          const color = isSelected ? "#ffffff" : "#0369a1";
-          return `<span class="comp-option-pill" data-value="${c}" style="cursor: pointer; padding: 5px 12px; border-radius: 16px; background: ${bg}; color: ${color}; font-size: 12.5px; font-weight: 500; white-space: nowrap;">${c}</span>`;
+          const isPrivat = c.toLowerCase().includes("privat");
+          const bg = isSelected ? "#0284c7" : isPrivat ? "#fef2f2" : "#e0f2fe";
+          const color = isSelected ? "#ffffff" : isPrivat ? "#991b1b" : "#0369a1";
+          const lockIcon = isPrivat ? `<span class="material-symbols-outlined" style="font-size: 13px; vertical-align: -2px;">lock</span> ` : "";
+          return `<span class="comp-option-pill" data-value="${escapeHtml(c)}" style="cursor: pointer; padding: 5px 12px; border-radius: 16px; background: ${bg}; color: ${color}; font-size: 12.5px; font-weight: 500; white-space: nowrap;">${lockIcon}${escapeHtml(c)}</span>`;
         })
         .join("");
 
       const pickerBoxHtml = `
-        <div class="company-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); border: 1px solid #e0e0e0; z-index: 1000; width: 300px; display: flex; flex-wrap: wrap; gap: 6px;">
+        <div class="company-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); border: 1px solid #e0e0e0; z-index: 1000; width: 310px; display: flex; flex-wrap: wrap; gap: 6px;">
           <div style="width: 100%; font-size: 11.5px; color: #666; font-weight: 600; margin-bottom: 2px;">Unternehmen auswählen:</div>
           ${pillsHtml}
         </div>`;
@@ -1130,24 +1225,154 @@ export function initJobEventDelegation() {
       e.preventDefault();
       const newCompany = compOptionPill.getAttribute("data-value");
       const pickerBox = compOptionPill.closest(".company-picker-box");
-      const editableSpan = pickerBox.parentElement.querySelector(".company-editable");
-      const jobId = editableSpan.getAttribute("data-job-id");
-      pickerBox.remove();
+      const editableSpan = pickerBox?.parentElement?.querySelector(".company-editable");
+      const jobId = editableSpan?.getAttribute("data-job-id");
+      if (pickerBox) pickerBox.remove();
+      if (!jobId) return;
 
-      const job = state.jobs.find((j) => j.id === jobId);
+      const isCompPrivat = newCompany.toLowerCase().includes("privat");
+      const job = (state.jobs || []).find((j) => String(j.id) === String(jobId)) || (window.allRechnungenJobs || []).find((j) => String(j.id) === String(jobId));
       if (job) {
         if (!job.result) job.result = {};
         job.result.company = newCompany;
+        if (isCompPrivat) {
+          job.isPrivate = true;
+        }
       }
-      renderJobsList();
+
+      // Real-time DOM updates
+      const card = editableSpan ? editableSpan.closest(".job-item") : document.querySelector(`.company-editable[data-job-id="${jobId}"]`)?.closest(".job-item");
+      if (card && job) {
+        if (editableSpan) {
+          editableSpan.setAttribute("data-current-comp", newCompany);
+          editableSpan.innerHTML = `${highlightQueryText(newCompany, state.searchQuery)} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>`;
+        }
+        const titleBadgesEl = card.querySelector(".job-title-badges");
+        if (titleBadgesEl) {
+          titleBadgesEl.innerHTML = formatTitleBadgesHtml(job, state.searchQuery);
+        }
+        if (isCompPrivat) {
+          let statusPillsRow = card.querySelector(".job-status-pills");
+          if (statusPillsRow) {
+            statusPillsRow.style.removeProperty("display");
+            if (!statusPillsRow.querySelector(".badge-private-doc")) {
+              const privBadge = document.createElement("span");
+              privBadge.className = "badge bg-danger-subtle text-danger border border-danger-subtle d-inline-flex align-items-center gap-1 badge-private-doc";
+              privBadge.style.cssText = "font-size: 11px; padding: 2px 7px; border-radius: 6px; font-weight: 600;";
+              privBadge.innerHTML = `<span class="material-symbols-outlined" style="font-size: 12px;">lock</span> PRIVAT`;
+              statusPillsRow.prepend(privBadge);
+            }
+          }
+        }
+      }
+
+      renderJobsList(state.jobs, true);
       try {
         await apiRequest(`/api/jobs/${jobId}/company`, {
           method: "POST",
           body: JSON.stringify({ company: newCompany }),
         });
-        showToast(`Unternehmen auf "${newCompany}" geändert.`, "success");
+        showToast(`Unternehmen auf "${newCompany}" geändert${isCompPrivat ? " (automatisch als privat markiert)" : ""}.`, "success");
       } catch (err) {
         showToast("Fehler beim Speichern: " + err.message, "error");
+      }
+      return;
+    }
+
+    // 6b. Tags Picker Opening
+    const tagsTarget = e.target.closest(".tags-editable");
+    if (tagsTarget) {
+      if (!state.isAdmin) {
+        ensureAdminAuth(() => tagsTarget.click());
+        return;
+      }
+      if (tagsTarget.parentElement.querySelector(".tags-picker-box")) return;
+      e.stopPropagation();
+      e.preventDefault();
+      document.querySelectorAll(".category-picker-box, .company-picker-box, .tags-picker-box").forEach((b) => b.remove());
+
+      const currentTagsStr = tagsTarget.getAttribute("data-current-tags") || "";
+      const jobId = tagsTarget.getAttribute("data-job-id");
+
+      const pickerBoxHtml = `
+        <div class="tags-picker-box" style="position: absolute; top: 100%; left: 0; margin-top: 6px; padding: 12px; background: #ffffff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); border: 1px solid #e0e0e0; z-index: 1000; width: 320px;">
+          <div style="font-size: 11.5px; color: #475569; font-weight: 600; margin-bottom: 6px;">Tags bearbeiten (Komma-getrennt):</div>
+          <input type="text" class="form-control form-control-sm tags-input-field mb-2" value="${escapeHtml(currentTagsStr)}" placeholder="z.B. Software, Lizenz, Adobe..." style="font-size: 12.5px; border-radius: 8px;" />
+          <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-sm btn-light py-1 px-2 btn-cancel-tags" style="font-size: 12px; border-radius: 6px;">Abbrechen</button>
+            <button type="button" class="btn btn-sm btn-primary py-1 px-3 btn-save-tags" data-job-id="${jobId}" style="font-size: 12px; border-radius: 6px; font-weight: 500;">Speichern</button>
+          </div>
+        </div>`;
+      tagsTarget.parentElement.insertAdjacentHTML("beforeend", pickerBoxHtml);
+      const input = tagsTarget.parentElement.querySelector(".tags-input-field");
+      if (input) input.focus();
+      return;
+    }
+
+    // 6c. Tags Picker Cancel Button
+    const cancelTagsBtn = e.target.closest(".btn-cancel-tags");
+    if (cancelTagsBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      cancelTagsBtn.closest(".tags-picker-box")?.remove();
+      return;
+    }
+
+    // 6d. Tags Picker Save Button
+    const saveTagsBtn = e.target.closest(".btn-save-tags");
+    if (saveTagsBtn) {
+      if (!state.isAdmin) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const pickerBox = saveTagsBtn.closest(".tags-picker-box");
+      const input = pickerBox?.querySelector(".tags-input-field");
+      const jobId = saveTagsBtn.getAttribute("data-job-id");
+      const rawTagsStr = input?.value || "";
+      const newTags = rawTagsStr
+        .split(",")
+        .map((t) => t.trim().replace(/^[-_\s]+|[-_\s]+$/g, ""))
+        .filter((t) => t.length > 0);
+
+      if (pickerBox) pickerBox.remove();
+      if (!jobId) return;
+
+      const job = (state.jobs || []).find((j) => String(j.id) === String(jobId)) || (window.allRechnungenJobs || []).find((j) => String(j.id) === String(jobId));
+      if (job) {
+        if (!job.result) job.result = {};
+        job.result.tags = newTags;
+      }
+
+      // Real-time DOM updates
+      const card = saveTagsBtn.closest(".job-item") || document.querySelector(`.tags-editable[data-job-id="${jobId}"]`)?.closest(".job-item");
+      if (card && job) {
+        // Title badges in real-time
+        const titleBadgesEl = card.querySelector(".job-title-badges");
+        if (titleBadgesEl) {
+          titleBadgesEl.innerHTML = formatTitleBadgesHtml(job, state.searchQuery);
+        }
+        // Tags bubble in details in real-time
+        const tagsArea = card.querySelector(".tags-display-area");
+        if (tagsArea) {
+          tagsArea.innerHTML = newTags.length > 0
+            ? newTags.map((t) => `<span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: 500;"><span class="material-symbols-outlined text-muted" style="font-size: 13px;">label</span> ${escapeHtml(t)}</span>`).join(" ")
+            : `<span class="text-muted small fst-italic">Keine Tags</span>`;
+        }
+        const tagsTargetSpan = card.querySelector(".tags-editable");
+        if (tagsTargetSpan) {
+          tagsTargetSpan.setAttribute("data-current-tags", newTags.join(", "));
+        }
+      }
+
+      renderJobsList(state.jobs, true);
+
+      try {
+        await apiRequest(`/api/jobs/${jobId}/tags`, {
+          method: "POST",
+          body: JSON.stringify({ tags: newTags }),
+        });
+        showToast("Tags erfolgreich aktualisiert.", "success");
+      } catch (err) {
+        showToast("Fehler beim Speichern der Tags: " + err.message, "error");
       }
       return;
     }
@@ -1157,9 +1382,11 @@ export function initJobEventDelegation() {
       !e.target.closest(".category-picker-box") &&
       !e.target.closest(".category-editable") &&
       !e.target.closest(".company-picker-box") &&
-      !e.target.closest(".company-editable")
+      !e.target.closest(".company-editable") &&
+      !e.target.closest(".tags-picker-box") &&
+      !e.target.closest(".tags-editable")
     ) {
-      document.querySelectorAll(".category-picker-box, .company-picker-box").forEach((b) => b.remove());
+      document.querySelectorAll(".category-picker-box, .company-picker-box, .tags-picker-box").forEach((b) => b.remove());
     }
 
     // 8. ClickUp Transfer Button (Admin Only)
@@ -1251,10 +1478,24 @@ export function initJobEventDelegation() {
     }
   });
 
-  // Close modal on Escape
+  // Close modal on Escape & handle tags input
   document.addEventListener("keydown", (e) => {
+    if (e.target?.classList?.contains("tags-input-field")) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const saveBtn = e.target.closest(".tags-picker-box")?.querySelector(".btn-save-tags");
+        if (saveBtn) saveBtn.click();
+        return;
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        const cancelBtn = e.target.closest(".tags-picker-box")?.querySelector(".btn-cancel-tags");
+        if (cancelBtn) cancelBtn.click();
+        return;
+      }
+    }
     if (e.key === "Escape") {
       closeDocPreview();
+      document.querySelectorAll(".category-picker-box, .company-picker-box, .tags-picker-box").forEach((b) => b.remove());
     }
   });
 
@@ -1292,6 +1533,10 @@ export function initJobEventDelegation() {
         const j = state.jobs.find((job) => String(job.id) === String(jobId));
         if (j) j.notes = val;
       }
+      if (window.allRechnungenJobs) {
+        const rj = window.allRechnungenJobs.find((job) => String(job.id) === String(jobId));
+        if (rj) rj.notes = val;
+      }
       if (state.driveOnlySearchResults) {
         const dj = state.driveOnlySearchResults.find((job) => String(job.id) === String(jobId));
         if (dj) dj.notes = val;
@@ -1322,3 +1567,21 @@ export function initJobEventDelegation() {
     }
   });
 }
+
+// Auto-advance progress bars for processing jobs smoothly in real-time
+setInterval(() => {
+  const bars = document.querySelectorAll(".ai-progress-bar");
+  if (!bars || bars.length === 0) return;
+  const now = Date.now();
+  bars.forEach((bar) => {
+    const startTime = parseFloat(bar.getAttribute("data-start-time")) || now;
+    const elapsedSec = Math.max(0, (now - startTime) / 1000);
+    const progressPercent = Math.min(96, Math.max(10, Math.round(100 * (1 - Math.exp(-elapsedSec / 22)))));
+    bar.style.width = `${progressPercent}%`;
+    const box = bar.closest(".ai-processing-box");
+    if (box) {
+      const percentEl = box.querySelector(".ai-progress-percent");
+      if (percentEl) percentEl.innerText = `${progressPercent}%`;
+    }
+  });
+}, 800);

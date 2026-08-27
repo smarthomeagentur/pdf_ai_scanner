@@ -46,6 +46,16 @@ function persistAppState() {
   }
 }
 
+function fixUmlauts(str) {
+  if (!str || typeof str !== "string") return str || "";
+  try {
+    if (/[\u00C2-\u00C3][\u0080-\u00BF]/.test(str)) {
+      return Buffer.from(str, "latin1").toString("utf8");
+    }
+  } catch (e) {}
+  return str;
+}
+
 async function loadJobs() {
   try {
     await dbWrapper.initDatabase();
@@ -73,6 +83,17 @@ async function loadJobs() {
     let recoveredCount = 0;
     for (const job of allJobs) {
       if (!job || !job.id) continue;
+
+      if (job.originalName) job.originalName = fixUmlauts(job.originalName);
+      if (job.result) {
+        if (job.result.full) job.result.full = fixUmlauts(job.result.full);
+        if (job.result.company) job.result.company = fixUmlauts(job.result.company);
+        if (job.result.category) job.result.category = fixUmlauts(job.result.category);
+        if (Array.isArray(job.result.tags)) job.result.tags = job.result.tags.map(fixUmlauts);
+        if (job.result.company && job.result.company.toLowerCase().includes("privat")) {
+          job.isPrivate = true;
+        }
+      }
 
       if (job.isHidden) {
         if (job.rawDriveId && !hiddenDriveFiles.includes(job.rawDriveId)) {
@@ -335,6 +356,17 @@ async function processSingleJob(jobId) {
 
     if (sortedName.success === false) {
       throw new Error(sortedName.error || "KI-Verarbeitung fehlgeschlagen.");
+    }
+
+    if (sortedName.full) sortedName.full = fixUmlauts(sortedName.full);
+    if (sortedName.company) sortedName.company = fixUmlauts(sortedName.company);
+    if (sortedName.category) sortedName.category = fixUmlauts(sortedName.category);
+    if (Array.isArray(sortedName.tags)) sortedName.tags = sortedName.tags.map(fixUmlauts);
+    if (job.originalName) job.originalName = fixUmlauts(job.originalName);
+
+    if (sortedName.company && sortedName.company.toLowerCase().includes("privat")) {
+      job.isPrivate = true;
+      console.log(`[PRIVAT] Beleg ${jobId} automatisch als privat markiert (Unternehmen: "${sortedName.company}").`);
     }
 
     const dateCheck = validateDocumentDate(sortedName.documentDate, job.uploadDate);

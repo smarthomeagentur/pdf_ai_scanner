@@ -8,7 +8,7 @@ const appSettings = {
   MONITOR_GMAIL: false,
   GMAIL_AUTO_ARCHIVE: true,
   GMAIL_SCAN_QUERY: "in:inbox filename:pdf",
-  AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt",
+  AI_COMPANY: "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel (Privat), Unbekannt",
   AI_CATEGORIES:
     "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige",
   CLICKUP_AUTO_TASK: true,

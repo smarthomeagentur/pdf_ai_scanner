@@ -79,11 +79,21 @@ export function initRechnungenEvents() {
         return;
       }
 
-      const detailsBtn = e.target.closest(".rechnung-details-btn, .rechnung-preview-link");
-      if (detailsBtn) {
-        const jobId = detailsBtn.getAttribute("data-job-id");
+      const previewLink = e.target.closest(".rechnung-preview-link");
+      if (previewLink) {
+        const jobId = previewLink.getAttribute("data-job-id");
         if (jobId) {
           openDocPreview(jobId);
+        }
+        return;
+      }
+
+      const detailsBtn = e.target.closest(".rechnung-details-btn");
+      if (detailsBtn) {
+        const card = detailsBtn.closest(".card, .job-item");
+        const detailsEl = card?.querySelector("details.job-result");
+        if (detailsEl) {
+          detailsEl.open = !detailsEl.open;
         }
         return;
       }
@@ -952,6 +962,7 @@ export async function loadRechnungenView() {
     const data = await apiRequest("/api/status?ids=all");
     if (data.success) {
       allRechnungenJobs = (data.statuses || []).filter((j) => j.status === "completed" && j.result);
+      window.allRechnungenJobs = allRechnungenJobs;
       populateYearFilter(allRechnungenJobs);
       renderRechnungenList();
     } else {
@@ -1150,11 +1161,15 @@ function createRechnungCard(job, searchQuery = "") {
   const defaultTarget = job.targetCompany || detectDefaultTargetCompany(res.company) || "thewire";
 
   const card = document.createElement("div");
-  card.className = "card shadow-sm border-0 mb-2";
+  card.className = "card shadow-sm border-0 mb-2 text-start job-item";
   card.style.borderRadius = "12px";
+  card.style.textAlign = "left";
 
-  const thumbSrc = `/api/thumbnail/${job.id}`;
-  const thumbnailHtml = `<img src="${thumbSrc}" loading="lazy" style="width: 65px; height: 85px; object-fit: cover; border-radius: 6px; border: 1px solid #e2e8f0;" onerror="this.onerror=null; this.parentElement.innerHTML='<div style=\\'width:65px;height:85px;background:#f1f5f9;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#94a3b8;\\'><span class=\\'material-symbols-outlined\\'>description</span></div>';" />`;
+  const thumbUrl = `/api/thumbnail/${job.id}?v=${job.aiPipelineCompletedAt || job.uploadDate || 1}`;
+  const previewHtml = `
+    <a href="javascript:void(0)" onclick="openDocPreview('${job.id}'); return false;" data-job-id="${job.id}" class="pdf-preview-container rechnung-preview-link" title="Beleg öffnen">
+      <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
+    </a>`;
 
   // Format amount
   let amountFormatted = "";
@@ -1173,9 +1188,20 @@ function createRechnungCard(job, searchQuery = "") {
     ? "BuchhaltungsButler"
     : (activeCompany === "thewire" ? "BuchhaltungsButler" : "Lexoffice");
 
-  const isInvoiceBadge = res.isInvoice
+  const isInvoice = !!(res.isInvoice || job.isInvoice);
+  const isInvoiceBadge = isInvoice
     ? `<span class="badge bg-success-subtle text-success border border-success-subtle me-1">Rechnung</span>`
     : `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle me-1">Dokument</span>`;
+
+  // Keine doppelte Kategorie bei Rechnungen (Rechnung reicht am Anfang)
+  const catLower = (res.category || "").trim().toLowerCase();
+  const isRedundantCat = !res.category ||
+    catLower === "unknown" || catLower === "unbekannt" || catLower === "none" ||
+    catLower === "rechnung" || catLower === "rechnungen" ||
+    catLower === "dokument" || catLower === "dokumente";
+  const categoryBadgeHtml = !isRedundantCat
+    ? `<span class="badge bg-light text-dark border">${escapeHtml(res.category)}</span>`
+    : "";
 
   let lexStatusBadgeHtml = "";
   if (activeTransfer) {
@@ -1187,7 +1213,7 @@ function createRechnungCard(job, searchQuery = "") {
       minute: "2-digit",
     });
     lexStatusBadgeHtml = `
-      <span class="badge bg-success text-white d-inline-flex align-items-center gap-1 p-1 px-2" style="font-weight: 500; font-size: 11.5px;">
+      <span class="badge bg-success text-white d-inline-flex align-items-center gap-1 p-1 px-2 mt-1" style="font-weight: 500; font-size: 11.5px;">
         <span class="material-symbols-outlined" style="font-size: 14px;">check_circle</span>
         Übertragen an ${providerLabel} (${activeCompany}) am ${dateStr}
       </span>
@@ -1198,49 +1224,181 @@ function createRechnungCard(job, searchQuery = "") {
   const safeCategory = res.category ? escapeHtml(res.category) : "";
   const safeDocTitle = highlightQueryText(res.full || job.originalName || "Dokument", searchQuery);
   const safeDocDate = escapeHtml(formatDateDisplay(res.documentDate || job.uploadDate));
+  const uploadDateDisplay = job.uploadDate ? new Date(job.uploadDate).toLocaleString("de-DE") : "-";
   const safeInvNum = res.invoiceNumber && res.invoiceNumber !== "none" ? highlightQueryText(res.invoiceNumber, searchQuery) : "";
   const safeAmt = amountFormatted ? escapeHtml(amountFormatted) : "";
+
+  // Details Tags
+  let detailTags = [];
+  if (Array.isArray(res.tags)) {
+    detailTags = res.tags;
+  } else if (typeof res.tags === "string" && res.tags.trim()) {
+    detailTags = res.tags.split(",").map((t) => t.trim());
+  }
+  detailTags = detailTags
+    .map((t) => String(t).trim().replace(/^[-_\s]+|[-_\s]+$/g, ""))
+    .filter((t) => {
+      const lower = t.toLowerCase();
+      return (
+        t.length >= 2 &&
+        !["unknown", "unbekannt", "none", "null", "pdf", "scan", "dokument", "document", "rechnung", "invoice"].includes(lower) &&
+        !/^(isinvoice|datum|date|invoicenumber|invoiceammount|betrag|firma|company|kategorie|category):/i.test(t)
+      );
+    });
+
+  const tagsPillsHtml = detailTags.length > 0
+    ? detailTags.map((t) => `<span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1" style="font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: 500;"><span class="material-symbols-outlined text-muted" style="font-size: 13px;">label</span> ${escapeHtml(t)}</span>`).join(" ")
+    : `<span class="text-muted small fst-italic">Keine Tags</span>`;
 
   const isClickupSynced = !!(job.clickup && job.clickup.taskId);
 
   card.innerHTML = `
-    <div class="card-body p-3">
-      <div class="d-flex gap-3 align-items-start">
-        <div class="flex-shrink-0">
-          <a href="javascript:void(0)" class="pdf-preview-container rechnung-preview-link" data-job-id="${job.id}" title="Beleg öffnen">
-            ${thumbnailHtml}
-          </a>
+    <div class="card-body p-3 text-start" style="text-align: left;">
+      <div class="d-flex justify-content-between align-items-stretch gap-3">
+        <!-- Left Column: Content left-aligned with no gaps -->
+        <div class="flex-grow-1 d-flex flex-column justify-content-between text-start" style="min-width: 0; text-align: left;">
+          <div class="text-start" style="text-align: left;">
+            <!-- Zeile 1: Badges & Datum (Rechnung reicht am Anfang, keine doppelte Kategorie) -->
+            <div class="d-flex align-items-center justify-content-start gap-2 flex-wrap mb-1 text-start" style="text-align: left;">
+              ${isInvoiceBadge}
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${safeCompany}</span>
+              ${categoryBadgeHtml}
+              <span class="text-muted small d-inline-flex align-items-center gap-1">
+                <span class="material-symbols-outlined" style="font-size: 14px;">calendar_today</span> ${safeDocDate}
+              </span>
+            </div>
+
+            <!-- Zeile 2: Titel (streng linksbündig ohne Lücken) -->
+            <div class="text-start my-1" style="text-align: left !important;">
+              <span class="fw-bold text-dark d-block text-truncate text-start" style="font-size: 14px; text-align: left !important; line-height: 1.35;" title="${escapeHtml(res.full || job.originalName || '')}">
+                ${safeDocTitle}
+              </span>
+            </div>
+
+            <!-- Zeile 3: Rechnungs-Nr & Betrag (streng linksbündig) -->
+            <div class="small text-muted d-flex gap-3 flex-wrap align-items-center justify-content-start mt-1 text-start" style="text-align: left;">
+              ${safeInvNum ? `<span>Rechnungs-Nr: <strong class="text-dark font-monospace">${safeInvNum}</strong></span>` : ""}
+              ${safeAmt ? `<span class="text-success font-monospace">Betrag: <strong class="text-success font-monospace">${safeAmt}</strong></span>` : ""}
+            </div>
+            ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-1 text-start" style="text-align: left;">${lexStatusBadgeHtml}</div>` : ""}
+          </div>
+
+          <!-- Action Bar (Shortened to left, inside left column) -->
+          <div class="job-action-bar d-flex align-items-center justify-content-start gap-2 mt-2 pt-2 border-top text-start" style="border-color: #f1f5f9 !important; text-align: left;">
+            <button type="button" class="job-action-btn btn-details rechnung-details-btn" data-job-id="${job.id}" title="Details anzeigen / ausblenden">
+              <span class="material-symbols-outlined">info</span>
+              <span>Details</span>
+            </button>
+            <button type="button" class="job-action-btn ${isClickupSynced ? "btn-clickup-synced" : "btn-clickup-pending"} rechnung-clickup-btn" data-job-id="${job.id}" title="Zu ClickUp übertragen">
+              <span class="material-symbols-outlined">${isClickupSynced ? "check_circle" : "cloud_upload"}</span>
+              <span>ClickUp</span>
+            </button>
+            <button type="button" class="job-action-btn ${isLexTransferred ? "btn-accounting-synced" : "btn-accounting-pending"} rechnung-lex-btn" data-job-id="${job.id}" title="An Buchhaltung übertragen">
+              <span class="material-symbols-outlined">${isLexTransferred ? "check_circle" : "sync"}</span>
+              <span>${isLexTransferred ? "Buchhalt. ✓" : "Buchhalt."}</span>
+            </button>
+          </div>
         </div>
-        <div class="flex-grow-1" style="min-width: 0;">
-          <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-            ${isInvoiceBadge}
-            <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${safeCompany}</span>
-            ${safeCategory ? `<span class="badge bg-light text-dark border">${safeCategory}</span>` : ""}
-            <span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${safeDocDate}</span>
-          </div>
-          <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 14.5px;">${safeDocTitle}</h6>
-          <div class="small text-muted d-flex gap-3 flex-wrap align-items-center mt-1">
-            ${safeInvNum ? `<span>Rechnungs-Nr: <strong>${safeInvNum}</strong></span>` : ""}
-            ${safeAmt ? `<span class="text-success font-monospace">Betrag: <strong>${safeAmt}</strong></span>` : ""}
-          </div>
-          ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>` : ""}
+
+        <!-- Right Column: Receipt Image maintaining document shape -->
+        <div class="flex-shrink-0 d-flex align-items-center justify-content-center">
+          ${previewHtml}
         </div>
       </div>
 
-      <div class="job-action-bar d-flex align-items-center gap-2 mt-2 pt-2 border-top" style="border-color: #f1f5f9 !important;">
-        <button type="button" class="job-action-btn btn-details rechnung-details-btn" data-job-id="${job.id}" title="Beleg öffnen">
-          <span class="material-symbols-outlined">info</span>
-          <span>Details</span>
-        </button>
-        <button type="button" class="job-action-btn ${isClickupSynced ? "btn-clickup-synced" : "btn-clickup-pending"} rechnung-clickup-btn" data-job-id="${job.id}" title="Zu ClickUp übertragen">
-          <span class="material-symbols-outlined">${isClickupSynced ? "check_circle" : "cloud_upload"}</span>
-          <span>ClickUp</span>
-        </button>
-        <button type="button" class="job-action-btn ${isLexTransferred ? "btn-accounting-synced" : "btn-accounting-pending"} rechnung-lex-btn" data-job-id="${job.id}" title="An Buchhaltung übertragen">
-          <span class="material-symbols-outlined">${isLexTransferred ? "check_circle" : "sync"}</span>
-          <span>${isLexTransferred ? "Buchhalt. ✓" : "Buchhalt."}</span>
-        </button>
-      </div>
+      <!-- Details Accordion (100% Full Width, identisch zur Upload-Übersicht) -->
+      <details class="job-result" data-job-id="${job.id}" style="width: 100%; transition: all 0.3s;">
+        <summary style="display: none;"></summary>
+        <div class="mt-2 p-3 bg-white rounded-3 border shadow-sm text-start" style="font-size: 13px; line-height: 1.6; width: 100%; text-align: left;">
+          <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom flex-wrap gap-2">
+            <span class="fw-bold text-muted small" style="text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Dokumentendetails</span>
+            <div class="d-flex align-items-center gap-2">
+              <button type="button" class="job-action-btn btn-reprocess-ai" data-job-id="${job.id}" title="KI-Erkennung wiederholen">
+                <span class="material-symbols-outlined">psychology</span>
+                <span>KI wiederholen</span>
+              </button>
+              <button type="button" class="job-action-btn btn-hide-job ${job.isHidden ? "btn-hidden-active" : ""}" data-job-id="${job.id}" data-is-hidden="${!!job.isHidden}" title="${job.isHidden ? "Beleg einblenden" : "Beleg ausblenden"}">
+                <span class="material-symbols-outlined">${job.isHidden ? "visibility" : "visibility_off"}</span>
+                <span>${job.isHidden ? "Einblenden" : "Ausblenden"}</span>
+              </button>
+            </div>
+          </div>
+
+          <div><strong style="color: #475569;">Generierter Dateiname:</strong> ${escapeHtml(res.full || "-")}</div>
+          <div><strong style="color: #475569;">Originaler Dateiname:</strong> ${escapeHtml(job.originalName || "-")}</div>
+          <div><strong style="color: #475569;">Hochgeladen am:</strong> ${escapeHtml(uploadDateDisplay)}</div>
+          <div><strong style="color: #475569;">Dokumentendatum:</strong> ${escapeHtml(safeDocDate)}</div>
+          
+          <!-- Bearbeitbares Unternehmen -->
+          <div class="my-1 d-flex align-items-center gap-2">
+            <strong style="color: #475569;">Unternehmen:</strong> 
+            <div style="position: relative; display: inline-block;">
+              <span class="company-editable" data-job-id="${job.id}" data-current-comp="${safeCompany}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #e0f2fe; color: #0369a1; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
+                ${safeCompany} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Bearbeitbare Kategorie -->
+          <div class="my-1 d-flex align-items-center gap-2">
+            <strong style="color: #475569;">Kategorie:</strong> 
+            <div style="position: relative; display: inline-block;">
+              <span class="category-editable" data-job-id="${job.id}" data-current-cat="${safeCategory}" style="cursor: pointer; padding: 3px 10px; border-radius: 16px; background: #f3e8ff; color: #6b21a8; font-size: 12.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;" title="Klicken zum Ändern">
+                ${safeCategory || "Rechnungen"} <span class="material-symbols-outlined" style="font-size: 14px;">edit</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Bearbeitbare Tags -->
+          <div class="my-1 d-flex align-items-center gap-2 flex-wrap">
+            <strong style="color: #475569;">Tags:</strong> 
+            <div class="tags-editable-container" style="position: relative; display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+              <span class="tags-display-area d-inline-flex align-items-center gap-1 flex-wrap">${tagsPillsHtml}</span>
+              <span class="tags-editable" data-job-id="${job.id}" data-current-tags="${escapeHtml(detailTags.join(', '))}" style="cursor: pointer; padding: 2px 8px; border-radius: 12px; background: #f1f5f9; color: #475569; font-size: 11.5px; font-weight: 500; display: inline-flex; align-items: center; gap: 3px; border: 1px solid #e2e8f0;" title="Tags bearbeiten">
+                <span class="material-symbols-outlined" style="font-size: 13px;">edit</span> <span>Tags bearbeiten</span>
+              </span>
+            </div>
+          </div>
+
+          ${isInvoice ? `
+            <div><strong style="color: #475569;">Rechnungs-Nr:</strong> ${safeInvNum || "-"}</div>
+            <div><strong style="color: #475569;">Rechnungsbetrag:</strong> ${safeAmt || "-"}</div>
+          ` : ""}
+
+          ${res.duration ? `<div><strong style="color: #475569;">Verarbeitungszeit:</strong> ${res.duration} s</div>` : ""}
+
+          <!-- Schnittstellen-Status: ClickUp & Buchhaltung -->
+          <div class="mt-2 pt-2 border-top d-flex flex-column gap-1">
+            <div>
+              <strong style="color: #475569;">ClickUp:</strong> 
+              ${job.clickup && job.clickup.taskId
+                ? `<a href="${job.clickup.taskUrl || `https://app.clickup.com/t/${encodeURIComponent(job.clickup.taskId)}`}" target="_blank" style="color: #7b68ee; font-weight: 500; text-decoration: none;">Task #${escapeHtml(job.clickup.taskId)} (${escapeHtml(job.clickup.status || "offen")})</a>`
+                : `<span class="text-muted">Nicht übertragen</span>`
+              }
+            </div>
+            <div>
+              <strong style="color: #475569;">Buchhaltung:</strong> 
+              ${activeTransfer
+                ? `<span class="text-success fw-medium">✓ Übertragen an ${providerLabel} (${activeCompany}) am ${new Date(activeTransfer.transferredAt).toLocaleDateString("de-DE")}</span>`
+                : `<span class="text-muted">Nicht übertragen</span>`
+              }
+            </div>
+          </div>
+
+          <!-- Auto-saving Notizen -->
+          <div class="mt-2 pt-2 border-top">
+            <label class="fw-semibold text-muted small d-flex align-items-center justify-content-between mb-1">
+              <span class="d-flex align-items-center gap-1">
+                <span class="material-symbols-outlined" style="font-size: 15px;">edit_note</span> Notizen zu diesem Beleg:
+              </span>
+              <span class="notes-save-indicator text-success small" style="display: none; font-size: 11px; font-weight: 500;">
+                <span class="material-symbols-outlined" style="font-size: 13px; vertical-align: middle;">check_circle</span> Gespeichert
+              </span>
+            </label>
+            <textarea class="form-control job-notes-input" data-job-id="${job.id}" rows="2" placeholder="Notizen hinterlegen (speichert automatisch)..." style="font-size: 12.5px; border-radius: 8px; resize: vertical; line-height: 1.4;">${escapeHtml(job.notes || "")}</textarea>
+          </div>
+        </div>
+      </details>
     </div>
   `;
 

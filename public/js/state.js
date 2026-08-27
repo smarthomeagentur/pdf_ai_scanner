@@ -25,7 +25,7 @@ export const state = window.appState || {
   selectedCategories: new Set(),
   dateFilter: "alle",
   companyFilter: "alle",
-  sortOrder: "docdate_desc",
+  sortOrder: "uploaddate_desc",
   jobs: [],
   selectedJobId: null,
   gmailAccounts: [],

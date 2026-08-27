@@ -9,6 +9,7 @@ let inboxAccounts = [];
 let inboxActiveEmails = [];
 let inboxSkippedEmails = [];
 let selectedInboxMessageIds = new Set();
+let selectedInboxFileIndices = new Map(); // mailId -> Set of selected attachment indices
 let currentInboxSubtab = "detected";
 let isProcessingInboxBatch = false;
 
@@ -58,6 +59,14 @@ export function initGmailScannerEvents() {
     inboxAccountSelect.addEventListener("change", () => loadInboxData(false));
   }
 
+  // Periodically refresh accounts list status badges every 30 seconds if inbox view is active
+  setInterval(() => {
+    const viewInbox = document.getElementById("view-inbox");
+    if (viewInbox && viewInbox.style.display !== "none") {
+      updateAccountsDropdown(getStoredGmailAccounts());
+    }
+  }, 30000);
+
   if (inboxTabDetected) inboxTabDetected.addEventListener("click", () => setInboxSubtab("detected"));
   if (inboxTabActive) inboxTabActive.addEventListener("click", () => setInboxSubtab("active"));
   if (inboxTabSkipped) inboxTabSkipped.addEventListener("click", () => setInboxSubtab("skipped"));
@@ -86,7 +95,8 @@ export function initGmailScannerEvents() {
       if (currentInboxSubtab === "detected") {
         const visible = getVisibleInboxEmails();
         selectedInboxMessageIds.clear();
-        visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+        selectedInboxFileIndices.clear();
+        visible.forEach((m) => setAllFilesForMail(m, true));
       }
       updateInboxBatchButton();
       renderInboxList();
@@ -96,11 +106,7 @@ export function initGmailScannerEvents() {
   if (inboxSelectAllCb) {
     inboxSelectAllCb.addEventListener("change", () => {
       const visibleActive = getVisibleInboxEmails();
-      if (inboxSelectAllCb.checked) {
-        visibleActive.forEach((m) => selectedInboxMessageIds.add(m.id));
-      } else {
-        selectedInboxMessageIds.clear();
-      }
+      visibleActive.forEach((m) => setAllFilesForMail(m, inboxSelectAllCb.checked));
       updateInboxBatchButton();
       renderInboxList();
     });
@@ -164,7 +170,8 @@ export function saveStoredGmailAccounts(accounts) {
 
 /**
  * Ensures that the given account has a valid access token.
- * If token is missing, expired, or expiring within 2 minutes, attempts silent refresh via GIS (prompt: '').
+ * 1. First attempts zero-popup server-side refresh via stored permanent refresh_token.
+ * 2. Falls back to GIS silent refresh if account hasn't been upgraded to server refresh tokens yet.
  */
 export async function ensureAccountTokenValid(account, forceRefresh = false) {
   const isExpiringSoon = !account.expiresAt || (Date.now() > (account.expiresAt - 2 * 60 * 1000));
@@ -172,8 +179,39 @@ export async function ensureAccountTokenValid(account, forceRefresh = false) {
     return { valid: true, accessToken: account.accessToken };
   }
 
-  debugLog("GMAIL", `Token for ${account.email} needs refresh. Attempting silent GIS refresh...`);
+  debugLog("GMAIL", `Token for ${account.email} needs refresh. Trying zero-popup server refresh first...`);
 
+  // 1. Zero-Popup Server-Side Refresh (via permanent Google refresh_token)
+  try {
+    const serverRefresh = await apiRequest("/api/inbox/auth/refresh", {
+      method: "POST",
+      body: JSON.stringify({ email: account.email }),
+    });
+
+    if (serverRefresh && serverRefresh.success && serverRefresh.accessToken) {
+      const accessToken = serverRefresh.accessToken;
+      const expiresAt = serverRefresh.expiresAt;
+      account.accessToken = accessToken;
+      account.expiresAt = expiresAt;
+      account.needsReauth = false;
+      account.hasServerRefreshToken = true;
+
+      const accounts = getStoredGmailAccounts();
+      const idx = accounts.findIndex((a) => (a.id && a.id === account.id) || a.email.toLowerCase() === account.email.toLowerCase());
+      if (idx >= 0) {
+        accounts[idx] = { ...accounts[idx], accessToken, expiresAt, needsReauth: false, hasServerRefreshToken: true };
+        saveStoredGmailAccounts(accounts);
+        updateAccountsDropdown(accounts); // Status in Inbox UI sofort aktualisieren!
+      }
+
+      debugLog("GMAIL", `Server-side silent token refresh successful for ${account.email}! Expires: ${new Date(expiresAt).toLocaleTimeString()}`);
+      return { valid: true, accessToken };
+    }
+  } catch (serverErr) {
+    debugLog("GMAIL", `Server-side refresh not available for ${account.email}: ${serverErr.message}. Falling back to GIS...`);
+  }
+
+  // 2. Client-side GIS Silent Refresh Fallback
   try {
     const data = await apiRequest("/api/auth/client-id");
     const clientId = data?.clientId;
@@ -197,7 +235,7 @@ export async function ensureAccountTokenValid(account, forceRefresh = false) {
           scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
           include_granted_scopes: false,
           hint: account.email,
-          prompt: "", // Silent mode (no user popup)
+          prompt: "", // Silent mode
           callback: (res) => {
             if (!resolved) {
               resolved = true;
@@ -225,12 +263,13 @@ export async function ensureAccountTokenValid(account, forceRefresh = false) {
       account.expiresAt = expiresAt;
       account.needsReauth = false;
 
-      // Update in storage
+      // Update in storage and refresh UI
       const accounts = getStoredGmailAccounts();
       const idx = accounts.findIndex((a) => (a.id && a.id === account.id) || a.email.toLowerCase() === account.email.toLowerCase());
       if (idx >= 0) {
         accounts[idx] = { ...accounts[idx], accessToken, expiresAt, needsReauth: false };
         saveStoredGmailAccounts(accounts);
+        updateAccountsDropdown(accounts); // Status in UI sofort aktualisieren!
       }
 
       debugLog("GMAIL", `Silent refresh successful for ${account.email}! New expiry: ${new Date(expiresAt).toLocaleTimeString()}`);
@@ -243,6 +282,7 @@ export async function ensureAccountTokenValid(account, forceRefresh = false) {
       if (idx >= 0) {
         accounts[idx].needsReauth = true;
         saveStoredGmailAccounts(accounts);
+        updateAccountsDropdown(accounts); // Status in UI sofort aktualisieren!
       }
       return { valid: false, needsReauth: true, error: tokenResponse?.error || "Silent refresh failed" };
     }
@@ -268,41 +308,46 @@ export async function requestGmailAccountAuth(accountHint = null) {
       return;
     }
 
-    const tokenClient = google.accounts.oauth2.initTokenClient({
+    // Google Authorization Code Flow for offline access & permanent refresh_token (zero popups in future!)
+    const codeClient = google.accounts.oauth2.initCodeClient({
       client_id: clientId,
       scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
-      include_granted_scopes: false,
+      ux_mode: "popup",
       hint: accountHint || undefined,
-      callback: async (tokenResponse) => {
-        if (tokenResponse.error) {
-          debugLog("GMAIL", "Token error:", tokenResponse);
-          if (tokenResponse.error !== "popup_closed_by_user") {
-            showToast("Google-Anmeldung fehlgeschlagen: " + (tokenResponse.error_description || tokenResponse.error), "error");
+      prompt: accountHint ? "consent" : "consent select_account",
+      callback: async (response) => {
+        if (response.error) {
+          debugLog("GMAIL", "Code auth error:", response);
+          if (response.error !== "popup_closed_by_user") {
+            showToast("Google-Anmeldung fehlgeschlagen: " + (response.error_description || response.error), "error");
           }
           return;
         }
 
-        const accessToken = tokenResponse.access_token;
-        const expiresIn = parseInt(tokenResponse.expires_in, 10) || 3599;
-        const expiresAt = Date.now() + (expiresIn - 60) * 1000;
+        if (!response.code) {
+          showToast("Kein Autorisierungscode von Google erhalten.", "error");
+          return;
+        }
 
         try {
-          const profRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
-            headers: { Authorization: `Bearer ${accessToken}` },
+          const exchangeRes = await apiRequest("/api/inbox/auth/exchange", {
+            method: "POST",
+            body: JSON.stringify({ code: response.code }),
           });
-          const prof = await profRes.json();
-          if (!prof || !prof.emailAddress) {
-            throw new Error("Konnte E-Mail-Adresse nicht ermitteln.");
+
+          if (!exchangeRes || !exchangeRes.success || !exchangeRes.email) {
+            throw new Error(exchangeRes?.error || "Fehler beim Token-Austausch mit dem Server.");
           }
 
           const accounts = getStoredGmailAccounts();
-          const existingIdx = accounts.findIndex((a) => a.email.toLowerCase() === prof.emailAddress.toLowerCase());
+          const existingIdx = accounts.findIndex((a) => a.email.toLowerCase() === exchangeRes.email.toLowerCase());
           const accObj = {
-            id: prof.emailAddress,
-            email: prof.emailAddress,
-            name: prof.emailAddress,
-            accessToken: accessToken,
-            expiresAt: expiresAt,
+            id: exchangeRes.email,
+            email: exchangeRes.email,
+            name: exchangeRes.email,
+            accessToken: exchangeRes.accessToken,
+            expiresAt: exchangeRes.expiresAt,
+            hasServerRefreshToken: true,
             needsReauth: false,
             connectedAt: new Date().toISOString(),
           };
@@ -315,16 +360,16 @@ export async function requestGmailAccountAuth(accountHint = null) {
 
           saveStoredGmailAccounts(accounts);
           updateAccountsDropdown(accounts);
-          showToast(`Gmail-Konto ${prof.emailAddress} erfolgreich verbunden & reaktiviert!`, "success");
+          showToast(`Gmail-Konto ${exchangeRes.email} erfolgreich verbunden & reaktiviert! (Künftig ohne Popups)`, "success");
           await loadInboxData(false);
-        } catch (profErr) {
-          debugLog("GMAIL", "Profile error:", profErr);
-          showToast("Fehler beim Abrufen des Gmail-Profils: " + profErr.message, "error");
+        } catch (exchangeErr) {
+          debugLog("GMAIL", "Exchange error:", exchangeErr);
+          showToast("Fehler bei der Konto-Aktivierung: " + exchangeErr.message, "error");
         }
       },
     });
 
-    tokenClient.requestAccessToken({ prompt: accountHint ? "" : "select_account" });
+    codeClient.requestCode();
   } catch (err) {
     debugLog("GMAIL", "Auth error:", err);
     showToast("Fehler bei der Gmail-Authentifizierung: " + err.message, "error");
@@ -371,12 +416,9 @@ function renderAccountsListToContainer(container, accounts) {
       </div>
     `;
 
-    item.querySelector(".reauth-gmail-btn")?.addEventListener("click", () => {
-      handleAddNewAccount();
-    });
-
-    item.querySelector(".remove-gmail-acc-btn")?.addEventListener("click", () => {
+    item.querySelector(".remove-gmail-acc-btn")?.addEventListener("click", async () => {
       if (confirm(`Möchtest du das Google-Konto "${acc.email}" trennen?`)) {
+        apiRequest(`/api/inbox/auth/account/${encodeURIComponent(acc.email)}`, { method: "DELETE" }).catch(() => {});
         const updated = getStoredGmailAccounts().filter((a) => a.id !== acc.id && a.email !== acc.email);
         saveStoredGmailAccounts(updated);
         updateAccountsDropdown(updated);
@@ -481,6 +523,9 @@ export async function loadInboxData(silent = false) {
     inboxLoadingContainer.style.setProperty("display", "none", "important");
   }
 
+  // Update status badges in Inbox and Settings after scan / token renewal
+  updateAccountsDropdown(getStoredGmailAccounts());
+
   if (expiredAccounts.length > 0) {
     if (inboxErrorAlert) {
       const errorTextEl = document.getElementById("inbox-error-text");
@@ -514,7 +559,8 @@ export async function loadInboxData(silent = false) {
   if (currentInboxSubtab === "detected") {
     const visible = getVisibleInboxEmails();
     selectedInboxMessageIds.clear();
-    visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+    selectedInboxFileIndices.clear();
+    visible.forEach((m) => setAllFilesForMail(m, true));
   }
 
   updateInboxBatchButton();
@@ -697,7 +743,8 @@ function setInboxSubtab(tabName) {
   if (tabName === "detected") {
     const visible = getVisibleInboxEmails();
     selectedInboxMessageIds.clear();
-    visible.forEach((m) => selectedInboxMessageIds.add(m.id));
+    selectedInboxFileIndices.clear();
+    visible.forEach((m) => setAllFilesForMail(m, true));
   }
 
   updateInboxBatchButton();
@@ -769,13 +816,55 @@ function matchDateFilter(dateStr, filterVal) {
   return true;
 }
 
+function getSelectedFileIndicesForMail(mail) {
+  if (!selectedInboxFileIndices.has(mail.id)) {
+    const initialIndices = new Set((mail.attachments || []).map((_, i) => i));
+    selectedInboxFileIndices.set(mail.id, initialIndices);
+  }
+  return selectedInboxFileIndices.get(mail.id);
+}
+
+function setFileSelected(mail, attIdx, isSelected) {
+  const set = getSelectedFileIndicesForMail(mail);
+  if (isSelected) {
+    set.add(attIdx);
+    selectedInboxMessageIds.add(mail.id);
+  } else {
+    set.delete(attIdx);
+    if (set.size === 0) {
+      selectedInboxMessageIds.delete(mail.id);
+    }
+  }
+  updateInboxBatchButton();
+}
+
+function setAllFilesForMail(mail, isSelected) {
+  if (isSelected) {
+    selectedInboxMessageIds.add(mail.id);
+    const set = new Set((mail.attachments || []).map((_, i) => i));
+    selectedInboxFileIndices.set(mail.id, set);
+  } else {
+    selectedInboxMessageIds.delete(mail.id);
+    selectedInboxFileIndices.set(mail.id, new Set());
+  }
+  updateInboxBatchButton();
+}
+
 function updateInboxBatchButton() {
   const batchBtn = document.getElementById("inbox-batch-process-btn");
   const countSpan = document.getElementById("inbox-selected-count");
   if (!batchBtn) return;
-  const count = selectedInboxMessageIds.size;
-  if (countSpan) countSpan.innerText = count;
-  batchBtn.disabled = count === 0 || isProcessingInboxBatch;
+
+  let totalFiles = 0;
+  selectedInboxMessageIds.forEach((mailId) => {
+    const indices = selectedInboxFileIndices.get(mailId);
+    if (indices) totalFiles += indices.size;
+  });
+
+  if (countSpan) {
+    countSpan.innerText = totalFiles > 0 ? `${totalFiles} ${totalFiles === 1 ? "Datei" : "Dateien"}` : "0";
+  }
+  batchBtn.disabled = totalFiles === 0 || isProcessingInboxBatch;
 }
 
 function renderInboxList() {
@@ -796,31 +885,48 @@ function renderInboxList() {
   container.innerHTML = "";
 
   visibleEmails.forEach((mail) => {
-    const isSelected = selectedInboxMessageIds.has(mail.id);
-    const isSkippedTab = currentInboxSubtab === "skipped";
     const attachments = mail.attachments || [];
+    const selectedIndices = getSelectedFileIndicesForMail(mail);
+    const selectedCount = (attachments || []).filter((_, idx) => selectedIndices.has(idx)).length;
+    const isAllChecked = attachments.length > 0 && selectedCount === attachments.length;
+    const isPartialChecked = selectedCount > 0 && selectedCount < attachments.length;
+    const isSkippedTab = currentInboxSubtab === "skipped";
 
     const card = document.createElement("div");
-    card.className = `card shadow-sm border p-3 inbox-email-card ${isSelected ? "border-primary bg-primary-subtle" : "bg-white"}`;
+    card.className = `card shadow-sm border p-3 inbox-email-card ${selectedCount > 0 ? "border-primary bg-primary-subtle" : "bg-white"}`;
     card.style.borderRadius = "12px";
 
     const attPillsHtml = attachments
-      .map((att, idx) => `
-        <span class="badge bg-white text-dark border p-2 d-inline-flex align-items-center gap-1 preview-att-btn" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; border-radius: 8px; font-weight: 500; font-size: 11.5px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);" title="Vorschau öffnen">
-          <span class="material-symbols-outlined text-danger" style="font-size: 16px;">picture_as_pdf</span>
-          <span class="fw-medium">${escapeHtml(att.filename)}</span>
-          <span class="text-muted small">(${formatFileSize(att.size)})</span>
-        </span>`)
-      .join(" ");
+      .map((att, idx) => {
+        const isAttChecked = selectedIndices.has(idx);
+        return `
+          <div class="inbox-att-item rounded-3 p-2 d-flex align-items-center justify-content-between gap-2 shadow-xs mb-1 ${isAttChecked ? "att-selected" : ""}" style="width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;">
+            <div class="d-flex align-items-center gap-2 flex-grow-1" style="min-width: 0; max-width: calc(100% - 85px);">
+              ${!isSkippedTab ? `
+                <input type="checkbox" class="form-check-input att-select-cb flex-shrink-0" data-mail-id="${mail.id}" data-att-idx="${idx}" ${isAttChecked ? "checked" : ""} style="cursor: pointer; width: 16px; height: 16px; margin: 0;" title="Diese Datei auswählen" />
+              ` : ""}
+              <div class="preview-att-btn d-flex align-items-center gap-1 text-truncate flex-grow-1" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; min-width: 0;" title="Klicken für Beleg-Vorschau: ${escapeHtml(att.filename)}">
+                <span class="material-symbols-outlined text-danger flex-shrink-0" style="font-size: 18px;">picture_as_pdf</span>
+                <span class="fw-medium text-dark text-truncate d-inline-block" style="font-size: 12px; min-width: 0;">${escapeHtml(att.filename)}</span>
+              </div>
+            </div>
+            <div class="preview-att-btn d-flex align-items-center gap-1 flex-shrink-0 text-muted small" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; font-size: 11px; white-space: nowrap;" title="Vorschau öffnen">
+              <span>(${formatFileSize(att.size)})</span>
+              <span class="material-symbols-outlined text-primary" style="font-size: 15px;">visibility</span>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
 
     card.innerHTML = `
       <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-        <div class="d-flex align-items-start gap-3 flex-grow-1" style="min-width: 260px;">
+        <div class="d-flex align-items-start gap-2 flex-grow-1" style="min-width: 0; max-width: 100%;">
           ${!isSkippedTab ? `
             <div class="pt-1">
-              <input type="checkbox" class="form-check-input mail-select-cb" data-mail-id="${mail.id}" ${isSelected ? "checked" : ""} style="cursor: pointer; width: 18px; height: 18px;" />
+              <input type="checkbox" class="form-check-input mail-select-cb" data-mail-id="${mail.id}" ${isAllChecked ? "checked" : ""} style="cursor: pointer; width: 18px; height: 18px;" title="Alle Dateien dieser E-Mail auswählen" />
             </div>` : ""}
-          <div class="flex-grow-1" style="min-width: 0;">
+          <div class="flex-grow-1" style="min-width: 0; max-width: 100%;">
             <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
               <span class="badge bg-primary-subtle text-primary border border-primary-subtle d-inline-flex align-items-center gap-1 px-2 py-1" style="font-size: 11px; font-weight: 600;" title="Posteingang: ${escapeHtml(mail.accountEmail || mail.accountId)}">
                 <span class="material-symbols-outlined" style="font-size: 14px;">mail</span>
@@ -830,20 +936,20 @@ function renderInboxList() {
               <span class="text-muted small ms-auto"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${formatDateDisplay(mail.date)}</span>
             </div>
             <h6 class="fw-bold mb-1 text-dark text-truncate" title="${escapeHtml(mail.subject)}">${escapeHtml(mail.subject || "(Kein Betreff)")}</h6>
-            <div class="small text-muted mb-2">Von: <strong>${escapeHtml(mail.fromName || mail.fromEmail)}</strong> &lt;${escapeHtml(mail.fromEmail)}&gt;</div>
+            <div class="small text-muted mb-2 text-truncate">Von: <strong>${escapeHtml(mail.fromName || mail.fromEmail)}</strong> &lt;${escapeHtml(mail.fromEmail)}&gt;</div>
             <div class="small text-secondary mb-2 text-truncate" style="max-width: 650px;">${escapeHtml(mail.snippet)}</div>
-            <div class="d-flex flex-wrap gap-1 mt-2">${attPillsHtml}</div>
+            <div class="d-flex flex-column gap-1 mt-2 w-100" style="max-width: 100%; min-width: 0;">${attPillsHtml}</div>
           </div>
         </div>
-        <div class="d-flex align-items-center gap-2 ms-auto">
+        <div class="d-flex align-items-center gap-2 ms-auto mt-2">
           ${!isSkippedTab ? `
             <button type="button" class="app-btn app-btn-subtle skip-single-mail-btn" data-mail-id="${mail.id}" title="Nicht verarbeiten / ignorieren">
               <span class="material-symbols-outlined" style="font-size: 15px;">playlist_remove</span>
               <span>Überspringen</span>
             </button>
-            <button type="button" class="app-btn app-btn-primary process-single-mail-btn" data-mail-id="${mail.id}">
+            <button type="button" class="app-btn app-btn-primary process-single-mail-btn" data-mail-id="${mail.id}" ${selectedCount === 0 ? "disabled" : ""}>
               <span class="material-symbols-outlined" style="font-size: 15px;">play_arrow</span>
-              <span>Importieren (${attachments.length})</span>
+              <span>Importieren (${selectedCount})</span>
             </button>
           ` : `
             <button type="button" class="app-btn app-btn-subtle unskip-single-mail-btn" data-mail-id="${mail.id}">
@@ -855,15 +961,36 @@ function renderInboxList() {
       </div>
     `;
 
-    card.querySelector(".mail-select-cb")?.addEventListener("change", (e) => {
-      if (e.target.checked) selectedInboxMessageIds.add(mail.id);
-      else selectedInboxMessageIds.delete(mail.id);
-      updateInboxBatchButton();
-      renderInboxList();
+    const mailSelectCb = card.querySelector(".mail-select-cb");
+    if (mailSelectCb) {
+      if (isPartialChecked) {
+        mailSelectCb.indeterminate = true;
+        mailSelectCb.checked = false;
+      } else {
+        mailSelectCb.indeterminate = false;
+        mailSelectCb.checked = isAllChecked;
+      }
+      mailSelectCb.addEventListener("change", (e) => {
+        setAllFilesForMail(mail, e.target.checked);
+        renderInboxList();
+      });
+    }
+
+    card.querySelectorAll(".att-select-cb").forEach((cb) => {
+      cb.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+      cb.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const attIdx = parseInt(cb.getAttribute("data-att-idx"), 10) || 0;
+        setFileSelected(mail, attIdx, cb.checked);
+        renderInboxList();
+      });
     });
 
     card.querySelectorAll(".preview-att-btn").forEach((pBtn) => {
-      pBtn.addEventListener("click", () => {
+      pBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
         const attIdx = parseInt(pBtn.getAttribute("data-att-idx"), 10) || 0;
         openInboxPdfPreview(mail, attIdx);
       });
@@ -927,6 +1054,13 @@ async function unskipInboxEmail(mailId) {
 }
 
 async function processSingleInboxEmail(mail, btnElement = null) {
+  const selectedIndices = getSelectedFileIndicesForMail(mail);
+  const targetAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.has(idx));
+  if (targetAttachments.length === 0) {
+    showToast("Keine Dateien für diese E-Mail ausgewählt.", "warning");
+    return;
+  }
+
   if (btnElement) {
     btnElement.disabled = true;
     btnElement.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Verarbeite...`;
@@ -941,7 +1075,7 @@ async function processSingleInboxEmail(mail, btnElement = null) {
     formData.append("gmailMessageId", mail.id);
     formData.append("source", "gmail");
 
-    for (const att of mail.attachments || []) {
+    for (const att of targetAttachments) {
       const blob = await getGmailAttachmentBlob(account, mail.id, att);
       formData.append("files", blob, att.filename || "Anhang.pdf");
     }
@@ -952,7 +1086,7 @@ async function processSingleInboxEmail(mail, btnElement = null) {
     });
 
     if (data.success) {
-      showToast(`${mail.attachments?.length || 1} PDF-Anhang/Anhänge zur Pipeline hinzugefügt!`, "success");
+      showToast(`${targetAttachments.length} PDF-Anhang/Anhänge zur Pipeline hinzugefügt!`, "success");
 
       // Auto-archive if enabled
       const archiveCb = document.getElementById("inbox-archive-toggle");
@@ -974,19 +1108,26 @@ async function processSingleInboxEmail(mail, btnElement = null) {
 
 async function processBatchSelectedEmails() {
   const visible = getVisibleInboxEmails();
-  const toProcess = visible.filter((m) => selectedInboxMessageIds.has(m.id));
-  if (toProcess.length === 0) return;
+  const toProcess = visible.filter((m) => {
+    const indices = selectedInboxFileIndices.get(m.id);
+    return indices && indices.size > 0;
+  });
+  if (toProcess.length === 0) {
+    showToast("Keine Dateien zur Verarbeitung ausgewählt.", "warning");
+    return;
+  }
 
   isProcessingInboxBatch = true;
   updateInboxBatchButton();
 
-  showToast(`Verarbeite ${toProcess.length} ausgewählte E-Mails...`, "info");
+  showToast(`Verarbeite ausgewählte Dateien...`, "info");
   for (const mail of toProcess) {
     await processSingleInboxEmail(mail);
   }
 
   isProcessingInboxBatch = false;
   selectedInboxMessageIds.clear();
+  selectedInboxFileIndices.clear();
   updateInboxBatchButton();
   showToast("Stapelverarbeitung abgeschlossen!", "success");
 }

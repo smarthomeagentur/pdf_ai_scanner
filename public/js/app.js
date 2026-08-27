@@ -122,25 +122,45 @@ function initUploadHandlers() {
   }
 
   if (dropArea) {
+    let dragCounter = 0;
+
     ["dragenter", "dragover"].forEach((eventName) => {
       dropArea.addEventListener(eventName, (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (eventName === "dragenter") dragCounter++;
         dropArea.classList.add("drag-over");
       });
     });
 
-    ["dragleave", "drop"].forEach((eventName) => {
-      dropArea.addEventListener(eventName, (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+    dropArea.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
         dropArea.classList.remove("drag-over");
-      });
+      }
     });
 
     dropArea.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter = 0;
+      dropArea.classList.remove("drag-over");
+
       const files = Array.from(e.dataTransfer.files || []);
-      if (files.length > 0) uploadFiles(files);
+      if (files.length > 0) {
+        // Trigger distinct drop-absorption animation
+        dropArea.classList.remove("drop-absorbed");
+        void dropArea.offsetWidth; // Force reflow
+        dropArea.classList.add("drop-absorbed");
+        setTimeout(() => {
+          dropArea.classList.remove("drop-absorbed");
+        }, 900);
+
+        uploadFiles(files);
+      }
     });
   }
 }

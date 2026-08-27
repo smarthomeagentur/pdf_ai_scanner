@@ -185,7 +185,7 @@ function populateSettingsForm() {
       window.currentSettings.AI_CATEGORIES ||
       "Administration, Personal, Projekte, Rechnungen, Verträge, Marketing, Förderung, Buchhaltung, Dokumentation, Vertrieb, Privat, Sonstige";
     document.getElementById("ai-company-input").value =
-      window.currentSettings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel, Unbekannt";
+      window.currentSettings.AI_COMPANY || "wirewire GmbH, The Wire UG, Polyxo Studios GmbH, Daniel (Privat), Unbekannt";
     document.getElementById("monitor-drive-checkbox").checked = window.currentSettings.MONITOR_DRIVE || false;
 
     const autoArchCb = document.getElementById("gmail-auto-archive-checkbox");
@@ -775,7 +775,7 @@ startPolling();
 
 // Startseite Filter & Paginierung State
 let startSearchQuery = "";
-let startSortOrder = "docdate_desc";
+let startSortOrder = "uploaddate_desc";
 let startDateFilter = "alle";
 let startCompanyFilter = "alle";
 let startSelectedCategories = new Set();
@@ -1145,7 +1145,7 @@ function updateStartResetButtonVisibility() {
   const hasDate = startDateFilter !== "alle";
   const hasComp = startCompanyFilter !== "alle";
   const hasCats = startSelectedCategories.size > 0;
-  const hasCustomSort = startSortOrder !== "docdate_desc";
+  const hasCustomSort = startSortOrder !== "uploaddate_desc";
 
   const isFiltered = hasSearch || hasDate || hasComp || hasCats || hasCustomSort;
 
@@ -2712,25 +2712,26 @@ function createRechnungCard(job) {
     const safeInvNum = res.invoiceNumber && res.invoiceNumber !== "none" ? escapeHtml(res.invoiceNumber) : "";
     const safeAmt = amountFormatted ? escapeHtml(amountFormatted) : "";
 
+    card.style.textAlign = "left";
     card.innerHTML = `
-    <div class="card-body p-3">
-      <div class="d-flex gap-3 align-items-start">
+    <div class="card-body p-3 text-start" style="text-align: left;">
+      <div class="d-flex gap-3 align-items-start text-start">
         <div class="flex-shrink-0">
           ${thumbnailHtml}
         </div>
-        <div class="flex-grow-1" style="min-width: 0;">
-          <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+        <div class="flex-grow-1 text-start" style="min-width: 0; text-align: left;">
+          <div class="d-flex align-items-center justify-content-start gap-2 flex-wrap mb-1 text-start" style="text-align: left;">
             ${isInvoiceBadge}
             <span class="badge bg-primary-subtle text-primary border border-primary-subtle">${safeCompany}</span>
             ${safeCategory ? `<span class="badge bg-light text-dark border">${safeCategory}</span>` : ""}
-            <span class="text-muted small"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${safeDocDate}</span>
+            <span class="text-muted small d-inline-flex align-items-center gap-1"><span class="material-symbols-outlined align-text-top" style="font-size: 14px;">calendar_today</span> ${safeDocDate}</span>
           </div>
-          <h6 class="mb-1 fw-bold text-dark text-truncate" style="font-size: 14px;" title="${safeDocTitle}">${safeDocTitle}</h6>
-          <div class="small text-muted d-flex gap-3 flex-wrap">
+          <h6 class="mb-1 fw-bold text-dark text-truncate text-start" style="font-size: 14px; text-align: left !important;" title="${safeDocTitle}">${safeDocTitle}</h6>
+          <div class="small text-muted d-flex gap-3 flex-wrap justify-content-start align-items-center text-start" style="text-align: left;">
             ${safeInvNum ? `<span>Rechnungs-Nr: <strong>${safeInvNum}</strong></span>` : ""}
             ${safeAmt ? `<span class="text-success font-monospace">Betrag: <strong>${safeAmt}</strong></span>` : ""}
           </div>
-          ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-2 small">${lexStatusBadgeHtml}</div>` : ""}
+          ${lexStatusBadgeHtml ? `<div class="lexoffice-status-area mt-2 small text-start" style="text-align: left;">${lexStatusBadgeHtml}</div>` : ""}
         </div>
       </div>
 
@@ -4449,7 +4450,7 @@ if (startFilterCompany) {
 if (startResetFiltersBtn) {
   startResetFiltersBtn.addEventListener("click", () => {
     startSearchQuery = "";
-    startSortOrder = "docdate_desc";
+    startSortOrder = "uploaddate_desc";
     startDateFilter = "alle";
     startCompanyFilter = "alle";
     startSelectedCategories.clear();
@@ -4459,7 +4460,7 @@ if (startResetFiltersBtn) {
 
     if (startSearchInput) startSearchInput.value = "";
     if (searchClearBtn) searchClearBtn.style.display = "none";
-    if (startSortSelect) startSortSelect.value = "docdate_desc";
+    if (startSortSelect) startSortSelect.value = "uploaddate_desc";
     if (startFilterDate) startFilterDate.value = "alle";
     if (startFilterCompany) startFilterCompany.value = "alle";
 
