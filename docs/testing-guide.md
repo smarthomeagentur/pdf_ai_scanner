@@ -178,7 +178,12 @@ sequenceDiagram
    - Ensures that native system dependencies (`tesseract-ocr`, `poppler-utils`, `ghostscript`, Python virtual environment) install and build cleanly.
    - Blocks broken container configurations from reaching production.
 
-4. **Production Deployment Gate (`deploy`):**
+4. **Automated Pull Request to Main (`auto-pr`):**
+   - Runs automatically after successful tests and container verification on `develop`.
+   - Checks if an open Release PR towards `main` already exists.
+   - If not, opens a new Release Candidate PR; if yes, GitHub automatically accumulates all new commits into the open PR until it is reviewed and merged.
+
+5. **Production Deployment Gate (`deploy`):**
    - Executes only when all preceding jobs pass on the `main` branch.
    - Triggers the production webhook (such as Coolify) if the `COOLIFY_DEPLOY_WEBHOOK` secret is configured.
 

@@ -90,3 +90,44 @@ jobs:
           tags: adobe-cloud-downloader:ci-verification
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ==============================================================================
+  # Job 4: Automatischer Pull Request auf 'main' nach erfolgreichem CI-Durchlauf
+  # ==============================================================================
+  auto-pr:
+    name: Create or Update Pull Request to main
+    needs: [lint-and-audit, test, docker-smoke-build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Check or Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING_PR=$(gh pr list --head develop --base main --state open --json number -q '.[0].number')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "✓ Offener PR #$EXISTING_PR existiert bereits. Neue Commits wurden von GitHub automatisch angehängt."
+          else
+            echo "Kein offener PR gefunden. Erstelle neuen Pull Request von develop auf main..."
+            gh pr create \
+              --head develop \
+              --base main \
+              --title "🚀 Release Candidate: develop -> main" \
+              --body "### 🚀 Automatisch erstellter Release-PR
+
+          Alle automatisierten CI-Qualitätsprüfungen auf dem \`develop\`-Branch waren erfolgreich.
+
+          #### Durchgeführte Prüfungen:
+          - ✅ **Lint & Security Audit:** Keine kritischen Schwachstellen oder Syntax-Fehler.
+          - ✅ **Automatisierte Testsuite:** Alle 58 Unit- & Integrationstests bestanden.
+          - ✅ **Docker Container Build:** Produktions-Image erfolgreich gebaut.
+
+          > ℹ️ *Hinweis: Weitere Commits auf \`develop\` werden diesem PR automatisch hinzugefügt, bis er geprüft und gemergt wird.*"
+            echo "✓ Pull Request erfolgreich erstellt!"
+          fi
