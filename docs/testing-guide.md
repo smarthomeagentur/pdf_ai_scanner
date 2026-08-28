@@ -135,9 +135,10 @@ The repository includes an automated workflow defined in `.github/workflows/ci.y
 
 ### Workflow Triggers
 
-The pipeline runs automatically on:
-- Every `push` to the `develop` branch.
-- Every `pull_request` targeting the `develop` branch.
+The pipeline runs:
+- Automatically on every `push` to the `develop` branch.
+- Automatically on every `pull_request` targeting the `develop` branch.
+- Manually on demand via the **Actions** tab in GitHub (**Run workflow** button).
 - Actions on `main` do not trigger this pipeline.
 
 ### Pipeline Stages

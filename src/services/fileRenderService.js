@@ -1,6 +1,5 @@
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
 const { execFile } = require("child_process");
 const util = require("util");
 const { fromPath } = require("pdf2pic");
@@ -110,8 +109,12 @@ async function renderPdfToJpeg(pdfPath, targetThumbPath) {
   return false;
 }
 
+const inFlightThumbnails = new Map();
+
 /**
  * Resolves or generates a thumbnail file path on disk for a given job/file identifier.
+ * Checks local disk cache first. If missing, attempts to render from local PDF,
+ * or fallback-fetches from Google Drive (metadata thumbnail or PDF download) and caches on disk.
  */
 async function getOrGenerateThumbnailPath(identifier, getJobFn) {
   if (!identifier) return null;
@@ -132,16 +135,111 @@ async function getOrGenerateThumbnailPath(identifier, getJobFn) {
     if (fs.existsSync(p)) return p;
   }
 
-  if (typeof getJobFn === "function") {
-    const job = getJobFn(identifier) || getJobFn(cleanId);
-    const targetThumbPath = path.join(DOWNLOADS_DIR, `thumb_${identifier}.jpg`);
-    if (job && job.filePath && fs.existsSync(job.filePath)) {
-      const rendered = await renderPdfToJpeg(job.filePath, targetThumbPath);
-      if (rendered && fs.existsSync(targetThumbPath)) return targetThumbPath;
-    }
+  // Prevent duplicate concurrent downloads/renders for the same identifier
+  if (inFlightThumbnails.has(identifier)) {
+    return inFlightThumbnails.get(identifier);
   }
 
-  return null;
+  const promise = (async () => {
+    try {
+      if (typeof getJobFn === "function") {
+        const job = getJobFn(identifier) || getJobFn(cleanId);
+        const targetThumbPath = path.join(DOWNLOADS_DIR, `thumb_${identifier}.jpg`);
+
+        // 1. If local PDF file exists on disk, render directly
+        if (job && job.filePath && fs.existsSync(job.filePath)) {
+          const rendered = await renderPdfToJpeg(job.filePath, targetThumbPath);
+          if (rendered && fs.existsSync(targetThumbPath)) return targetThumbPath;
+        }
+
+        // 2. Drive Fallback: Check if job is linked to Google Drive
+        let driveFileId = job?.driveFileId || job?.rawDriveId;
+        if (!driveFileId && job?.result?.webViewLink) {
+          const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (match) driveFileId = match[1];
+        }
+        if (!driveFileId && job?.webViewLink) {
+          const match = job.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+          if (match) driveFileId = match[1];
+        }
+        if (!driveFileId && /^[a-zA-Z0-9_-]{20,}$/.test(cleanId)) {
+          driveFileId = cleanId;
+        }
+
+        if (driveFileId) {
+          try {
+            const { driveApi } = require("./driveService");
+            const drive = await driveApi.getClient();
+
+            // 2a. Fast path: Fetch native Google Drive thumbnailLink and cache locally
+            try {
+              const fileMeta = await drive.files.get({
+                fileId: driveFileId,
+                fields: "id, thumbnailLink",
+              });
+              const thumbLink = fileMeta?.data?.thumbnailLink;
+              if (thumbLink) {
+                // Request a higher resolution thumbnail (=s400 instead of default =s220)
+                const highResLink = thumbLink.replace(/=s\d+$/, "=s400");
+                const imgRes = await fetch(highResLink);
+                if (imgRes.ok) {
+                  const arrayBuffer = await imgRes.arrayBuffer();
+                  const buffer = Buffer.from(arrayBuffer);
+                  if (buffer.length > 500) {
+                    await fs.promises.writeFile(targetThumbPath, buffer);
+                    if (cleanId !== identifier) {
+                      const cleanThumbPath = path.join(DOWNLOADS_DIR, `thumb_${cleanId}.jpg`);
+                      await fs.promises.writeFile(cleanThumbPath, buffer).catch(() => {});
+                    }
+                    return targetThumbPath;
+                  }
+                }
+              }
+            } catch (thumbMetaErr) {
+              // Proceed to PDF streaming fallback if thumbnailLink metadata is not available
+            }
+
+            // 2b. PDF streaming fallback: Download PDF from Drive to local cache and render
+            const cachedPdfPath = path.join(DOWNLOADS_DIR, `redownload_${cleanId}.pdf`);
+            if (!fs.existsSync(cachedPdfPath)) {
+              const downloadRes = await drive.files.get(
+                { fileId: driveFileId, alt: "media" },
+                { responseType: "stream" }
+              );
+              await new Promise((resolve, reject) => {
+                const dest = fs.createWriteStream(cachedPdfPath);
+                downloadRes.data.pipe(dest);
+                dest.on("finish", resolve);
+                dest.on("error", reject);
+              });
+            }
+
+            if (fs.existsSync(cachedPdfPath)) {
+              if (job && (!job.filePath || !fs.existsSync(job.filePath))) {
+                job.filePath = cachedPdfPath;
+              }
+              const rendered = await renderPdfToJpeg(cachedPdfPath, targetThumbPath);
+              if (rendered && fs.existsSync(targetThumbPath)) {
+                if (cleanId !== identifier) {
+                  const cleanThumbPath = path.join(DOWNLOADS_DIR, `thumb_${cleanId}.jpg`);
+                  await fs.promises.copyFile(targetThumbPath, cleanThumbPath).catch(() => {});
+                }
+                return targetThumbPath;
+              }
+            }
+          } catch (driveErr) {
+            console.warn(`[THUMBNAIL] Drive fallback failed for ${identifier}:`, driveErr.message);
+          }
+        }
+      }
+      return null;
+    } finally {
+      inFlightThumbnails.delete(identifier);
+    }
+  })();
+
+  inFlightThumbnails.set(identifier, promise);
+  return promise;
 }
 
 module.exports = {
