@@ -1887,9 +1887,9 @@ function updateConfirmBtnText() {
   const finishBtn = document.getElementById("finishScanBtn");
   if (!finishBtn) return;
   const count = scanPagesArray.length + 1;
-  const icon = '<span class="material-symbols-outlined" style="font-size: 20px;">check_circle</span>';
+  const icon = '<span class="material-symbols-outlined" style="font-size: 18px;">check_circle</span>';
   if (count > 1) {
-    finishBtn.innerHTML = `${icon} <span>Abschließen (${count} Seiten)</span>`;
+    finishBtn.innerHTML = `${icon} <span>Abschließen (${count})</span>`;
   } else {
     finishBtn.innerHTML = `${icon} <span>Abschließen</span>`;
   }
