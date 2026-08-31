@@ -119,13 +119,15 @@ router.get("/api/jobs/:id/file", async (req, res) => {
     const disposition = isDownload ? `attachment; filename="${safeFilename}"` : `inline; filename="${safeFilename}"`;
 
     // 1. Check local file on disk
-    if (job && job.filePath && fs.existsSync(job.filePath)) {
+    if (job && job.filePath) {
       if (!isSafeSubpath(DOWNLOADS_DIR, job.filePath)) {
         return res.status(403).send("Invalid file path");
       }
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", disposition);
-      return res.sendFile(job.filePath);
+      if (fs.existsSync(job.filePath)) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", disposition);
+        return res.sendFile(job.filePath);
+      }
     }
 
     // 2. Stream from Google Drive if available

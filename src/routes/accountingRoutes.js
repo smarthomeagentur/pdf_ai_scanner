@@ -58,14 +58,14 @@ async function checkSingleModularAccount(job, account) {
 
     if (client && secret && key) {
       try {
-        const testRes = await butlerApi.testConnection({ client, secret, key });
-        if (testRes.success) {
+        const testRes = await (butlerApi.testConnection || butlerApi.verifyConnection)({ client, secret, key });
+        if (testRes.success || testRes.valid) {
           apiValid = true;
-          organizationName = testRes.companyName || accountName;
+          organizationName = testRes.companyName || testRes.organizationName || accountName;
           const invNum = job.result?.invoiceNumber && job.result?.invoiceNumber !== "none" ? job.result.invoiceNumber : "";
           const fName = job.result?.full || job.originalName || "";
           const amountCents = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : job.invoiceAmmount;
-          const searchRes = await butlerApi.searchDocuments({
+          const searchRes = await (butlerApi.searchDocuments || butlerApi.searchReceipts)({
             client,
             secret,
             key,
@@ -188,8 +188,12 @@ router.post("/api/accounting/test-connection", requireAdmin, async (req, res) =>
       if (!client || !secret || !key) {
         return res.json({ success: false, error: "Client, Secret und Key sind erforderlich." });
       }
-      const testRes = await butlerApi.testConnection({ client, secret, key });
-      return res.json(testRes);
+      const testRes = await (butlerApi.testConnection || butlerApi.verifyConnection)({ client, secret, key });
+      return res.json({
+        success: testRes.success !== undefined ? testRes.success : Boolean(testRes.valid),
+        companyName: testRes.companyName || testRes.organizationName || client,
+        error: testRes.error,
+      });
     } else {
       // Lexoffice
       const apiKey = (credentials.apiKey || "").trim();

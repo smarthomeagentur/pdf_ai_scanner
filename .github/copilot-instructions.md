@@ -60,13 +60,37 @@ Bei Weiterentwicklungen am Code dürfen die folgenden reparierten Sicherheits- u
 - Wenn Metadaten in ein PDF injeziert werden (z. B. Title, Author, Keywords), **darf niemals** eine Library verwendet werden, die die grundlegende PDF-Struktur (wie `pdf-lib`) neu kompiliert. Handy-Scanner-Dateien (iOS Notes etc.) werfen bei Re-Kompilierung ihre `/MediaBox` oder `/Rotate` Matrizen weg und werden danach gestretcht / verzerrt dargestellt.
 - Nutze stattdessen immer **`exiftool-vendored`**, welches die Injektion der Eigenschaften vornimmt, ohne das Byte-Layout des PDFs in Bezug auf die Geometrie anzufassen.
 
+### H. Referenz-Integrität bei State & Jobs (uploadJobs)
+
+- Das zentrale Job-Objekt `uploadJobs` darf niemals per Reassignment `uploadJobs = {}` neu instanziiert werden, da sonst destructurierte Module-Imports (`const { uploadJobs } = require(...)`) ihre Referenz verlieren.
+- Zum Leeren immer in-place mutieren: `for (const key of Object.keys(uploadJobs)) delete uploadJobs[key];`.
+
+### I. Path Traversal Reihenfolge
+
+- Bei Dateizugriffen über Routen (`/api/jobs/:id/file`) muss `isSafeSubpath(DOWNLOADS_DIR, job.filePath)` **vor** `fs.existsSync(job.filePath)` geprüft werden. Dies verhindert, dass unbefugte Dateipfade das Vorhandensein von Dateien auf dem Server eruieren können.
+
 ## 4. Frontend & UX Historie (Ältere Fixes)
 
 - **iPhone Perspective Stretch Bug:** Bilder von iOS-Geräten wurden verzerrt dargestellt. Dies wurde durch das Entfernen hartcodierter Bild-Dimensionen in `pdf2pic` und flexible CSS-Regeln behoben. Setze keine fixen `width`/`height`-Attribute, die die Aspect-Ratio brechen.
 - **Zero-Delay Polling:** Die Job-Queue (`uploadQueue`) wird im Frontend ohne Start-Verzögerung gepollt, um sofortiges Feedback zu garantieren.
 - **Frontend Code-Split:** Die Benutzeroberfläche wurde bereinigt. HTML, JS und CSS liegen sauber getrennt im `public/` Ordner (z.B. `index.html`, `scanner.html`, `login.html`). Diese strikte Trennung ist bei UI-Erweiterungen beizubehalten. Formatiere neuen Code immer sauber (Prettier-Standard).
 
-## 5. Arbeitsanweisungen für den KI-Agenten (WICHTIG!)
+## 5. Testing & CI/CD Pipeline (GitHub Actions)
+
+- **Test Runner:** Nativer Node.js Test Runner (`node:test`) + `node:assert/strict` kombiniert mit `supertest`.
+- **Ausführung:**
+  - `npm test`: Führt alle Unit-, Integrations- und Regressionstests aus.
+  - `npm run test:coverage`: Ermittelt Testabdeckung mit nativer Node-Coverage.
+  - `npm run lint`: Prüft Codequalität mit ESLint 9 Flat Config.
+  - `npm run lint:check`: Prüft Formatierung mit Prettier.
+- **Test-Isolation:** Unter `NODE_ENV=test` agiert die SQLite WASM-Datenbank rein im Arbeitsspeicher (In-Memory Isolation). Dateischreibvorgänge auf die produktive `database.sqlite` sind unterbunden.
+- **CI/CD Workflow (`.github/workflows/ci.yml`):**
+  1. `lint-and-audit`: ESLint, Prettier, `npm audit --audit-level=high`.
+  2. `test`: Unit- und Integrationsprüfungen.
+  3. `docker-smoke-build`: Verifiziert fehlerfreien Docker-Build inklusive aller Systempakete (Poppler, Ghostscript, Python venv, OCR).
+  4. `deploy`: Optionaler Webhook-Trigger für Coolify nach erfolgreichem Pass auf `main`.
+
+## 6. Arbeitsanweisungen für den KI-Agenten (WICHTIG!)
 
 1. **Immer Fragen stellen:** Bevor du große, komplexe oder unklare Änderungen an der Codebase vornimmst, MUSS beim Nutzer nachgefragt werden. Nimm keine massiven Umbauten auf bloße Vermutungen hin vor.
 2. **Kontinuierliches Update dieses Dokuments:** Sobald in einem Chat neue Architekturentscheidungen getroffen, Frameworks hinzugefügt oder hartnäckige Bugs gelöst wurden, bist du VERPFLICHTET, diese Datei (`.github/copilot-instructions.md`) entsprechend zu aktualisieren. Das Projekt-Gedächtnis muss immer auf dem neuesten Stand bleiben!

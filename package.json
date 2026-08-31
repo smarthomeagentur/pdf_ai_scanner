@@ -3,8 +3,13 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "node index.js --debug --test",
+    "test": "node --require ./tests/setup.js --test tests/unit/*.test.js tests/integration/*.test.js tests/regression/*.test.js",
+    "test:coverage": "node --require ./tests/setup.js --test --experimental-test-coverage tests/unit/*.test.js tests/integration/*.test.js tests/regression/*.test.js",
+    "test:manual": "node index.js --debug --test",
     "testlocal": "node testLocalAi.js --debug",
+    "lint": "eslint src/",
+    "lint:check": "eslint src/ && prettier --check \"tests/**/*.js\"",
+    "format": "prettier --write \"tests/**/*.js\" \"src/**/*.js\"",
     "start": "node index.js",
     "debug": "nodemon --watch . --ext js index.js --debug"
   },
@@ -32,6 +37,11 @@
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "nodemon": "^3.1.9",
+    "prettier": "^3.9.6",
+    "supertest": "^7.2.2"
   }
 }

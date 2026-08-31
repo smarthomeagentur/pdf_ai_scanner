@@ -14,7 +14,7 @@ function verifyToken(req) {
 
 function checkIsAdmin(req) {
   const user = verifyToken(req);
-  return user && user.role === "admin";
+  return Boolean(user && user.role === "admin");
 }
 
 function requireAppAuth(req, res, next) {

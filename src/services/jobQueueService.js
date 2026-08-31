@@ -78,7 +78,9 @@ async function loadJobs() {
 
     // 2. Jobs aus SQLite laden
     const allJobs = dbWrapper.getAllJobs();
-    uploadJobs = {};
+    for (const key of Object.keys(uploadJobs)) {
+      delete uploadJobs[key];
+    }
 
     let recoveredCount = 0;
     for (const job of allJobs) {
