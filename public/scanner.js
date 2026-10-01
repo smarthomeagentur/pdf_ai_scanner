@@ -56,6 +56,17 @@ if (smoothingSlider) {
   };
 }
 
+let swapAfAxes = localStorage.getItem("scanner_swap_af_axes") !== "false"; // Standard: true (X <-> Y Tausch für Smartphone-Portrait)
+const swapAfAxesToggle = document.getElementById("swapAfAxesToggle") || document.getElementById("invertAfToggle");
+if (swapAfAxesToggle) {
+  swapAfAxesToggle.checked = swapAfAxes;
+  swapAfAxesToggle.onchange = function () {
+    swapAfAxes = this.checked;
+    localStorage.setItem("scanner_swap_af_axes", swapAfAxes ? "true" : "false");
+    console.log(`[Fokus] AF-Achsentausch (X <-> Y) gesetzt auf: ${swapAfAxes}`);
+  };
+}
+
 let streaming = false;
 
 // Dedicated 256x256 working canvas for ONNX inference
@@ -73,7 +84,8 @@ let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
 const MAX_FRAMES_LOSE_TRACK = 12;
 
-// Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
+// Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left).
+// Verwendet die robuste Summen- & Differenz-Methode (OpenCV order_points), um ein Überkreuzen/Verdrehen der Ecken zu verhindern.
 function sortAndOrderCorners(ptsData) {
   let pts = [];
   if (Array.isArray(ptsData) && typeof ptsData[0] === "object") {
@@ -83,18 +95,70 @@ function sortAndOrderCorners(ptsData) {
       pts.push({ x: ptsData[i * 2], y: ptsData[i * 2 + 1] });
     }
   }
-  let cx = 0,
-    cy = 0;
-  pts.forEach((p) => {
-    cx += p.x;
-    cy += p.y;
-  });
-  cx /= 4;
-  cy /= 4;
+  if (pts.length !== 4) return pts;
 
-  return pts.sort((a, b) => {
+  // 1. Primär: Robuste 4-Punkte-Zuordnung über Summe & Differenz (OpenCV-Standard)
+  // Top-Left: minimale Summe (x + y)
+  // Bottom-Right: maximale Summe (x + y)
+  // Top-Right: minimale Differenz (y - x) bzw. maximale Differenz (x - y)
+  // Bottom-Left: maximale Differenz (y - x) bzw. minimale Differenz (x - y)
+  let tl = pts[0], br = pts[0], tr = pts[0], bl = pts[0];
+  let minSum = Infinity, maxSum = -Infinity;
+  let minDiff = Infinity, maxDiff = -Infinity;
+
+  for (let i = 0; i < 4; i++) {
+    const p = pts[i];
+    const sum = p.x + p.y;
+    const diff = p.y - p.x;
+
+    if (sum < minSum) {
+      minSum = sum;
+      tl = p;
+    }
+    if (sum > maxSum) {
+      maxSum = sum;
+      br = p;
+    }
+    if (diff < minDiff) {
+      minDiff = diff;
+      tr = p;
+    }
+    if (diff > maxDiff) {
+      maxDiff = diff;
+      bl = p;
+    }
+  }
+
+  const assigned = [tl, tr, br, bl];
+  if (new Set(assigned).size === 4) {
+    return assigned;
+  }
+
+  // 2. Fallback für extreme Drehungen: Zyklisch im Uhrzeigersinn sortieren,
+  // startend bei der Ecke, die (0, 0) am nächsten liegt.
+  const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+  const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+
+  const sortedClockwise = pts.slice().sort((a, b) => {
     return Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx);
   });
+
+  let bestTlIdx = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const d = sortedClockwise[i].x * sortedClockwise[i].x + sortedClockwise[i].y * sortedClockwise[i].y;
+    if (d < bestDist) {
+      bestDist = d;
+      bestTlIdx = i;
+    }
+  }
+
+  return [
+    sortedClockwise[bestTlIdx],
+    sortedClockwise[(bestTlIdx + 1) % 4],
+    sortedClockwise[(bestTlIdx + 2) % 4],
+    sortedClockwise[(bestTlIdx + 3) % 4],
+  ];
 }
 
 // Plausibilitäts- & Geometrieprüfung für Dokumente:
@@ -488,12 +552,57 @@ async function initAutofocus() {
   }
 }
 
+// Hilfsfunktion: Mappt Bildschirm- bzw. VideoWrapper-Koordinaten (0.0..1.0)
+// unter Berücksichtigung von CSS object-fit: cover exakt auf den ungeschnittenen Sensor-Videostream
+function mapScreenToVideoCoords(normScreenX, normScreenY) {
+  let targetX = normScreenX;
+  let targetY = normScreenY;
+
+  if (video && video.videoWidth && video.videoHeight && videoWrapper) {
+    const rect = videoWrapper.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const srcW = video.videoWidth;
+      const srcH = video.videoHeight;
+      const wScale = srcW / rect.width;
+      const hScale = srcH / rect.height;
+      const scale = Math.min(wScale, hScale);
+
+      const sWidth = rect.width * scale;
+      const sHeight = rect.height * scale;
+      const sx = Math.max(0, (srcW - sWidth) / 2);
+      const sy = Math.max(0, (srcH - sHeight) / 2);
+
+      targetX = (sx + normScreenX * sWidth) / srcW;
+      targetY = (sy + normScreenY * sHeight) / srcH;
+    }
+  }
+
+  targetX = Math.min(Math.max(targetX, 0), 1);
+  targetY = Math.min(Math.max(targetY, 0), 1);
+
+  // Auf Smartphones im Hochformat (Portrait) ist der Kamerasensor physisch im Querformat (Landscape) montiert.
+  // Das Betriebssystem dreht den Stream für die Anzeige, doch die Web API pointsOfInterest erwartet die Koordinaten im nativen Sensorraum.
+  // Dadurch sind die X- und Y-Achsen im Treiber vertauscht (Transposition: Screen X -> Sensor Y, Screen Y -> Sensor X).
+  // Durch das Vertauschen von targetX und targetY (X <-> Y) fokussiert die Kamera hardwareseitig an allen 4 Ecken exakt.
+  if (swapAfAxes) {
+    const temp = targetX;
+    targetX = targetY;
+    targetY = temp;
+  }
+
+  return {
+    x: targetX,
+    y: targetY,
+  };
+}
+
 // Fixiert den Fokus einmalig auf das ruhige Motiv bis zur nächsten Bewegung
 async function lockSteadyFocus(relX, relY) {
   if (isFocusLocked || !videoTrack) return;
+  const target = mapScreenToVideoCoords(relX, relY);
   try {
     await videoTrack.applyConstraints({
-      advanced: [{ pointsOfInterest: [{ x: relX, y: relY }], focusMode: "single-shot" }],
+      advanced: [{ pointsOfInterest: [{ x: target.x, y: target.y }], focusMode: "single-shot" }],
     });
   } catch (_) {
     try {
@@ -512,7 +621,7 @@ async function lockSteadyFocus(relX, relY) {
   isTapLocked = false;
   focusLockTimestamp = Date.now();
   focusLockDocCenter = { x: relX, y: relY };
-  console.log("[Fokus] Beleg ruhig im Bild -> Einmalig fokussiert & gesperrt bis zur nächsten Bewegung");
+  console.log(`[Fokus] Beleg ruhig im Bild -> Fokus fixiert auf Stream (${(target.x * 100).toFixed(0)}%, ${(target.y * 100).toFixed(0)}%)`);
 }
 
 async function unlockFocus(reason = "Automatisch") {
@@ -586,7 +695,8 @@ function setupTapToFocus() {
       try { navigator.vibrate(40); } catch (_) {}
     }
 
-    console.log(`[Fokus] Angetippt bei (${(relX * 100).toFixed(0)}%, ${(relY * 100).toFixed(0)}%) -> Bereich fokussieren & halten`);
+    const target = mapScreenToVideoCoords(relX, relY);
+    console.log(`[Fokus] Angetippt bei Display (${(relX * 100).toFixed(0)}%, ${(relY * 100).toFixed(0)}%) -> Stream (${(target.x * 100).toFixed(0)}%, ${(target.y * 100).toFixed(0)}%)`);
 
     // Hardware-Kamerasteuerung (Best-effort je nach Smartphone-Treiber)
     const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
@@ -595,7 +705,7 @@ function setupTapToFocus() {
     let applied = false;
     try {
       await videoTrack.applyConstraints({
-        advanced: [{ pointsOfInterest: [{ x: relX, y: relY }] }],
+        advanced: [{ pointsOfInterest: [{ x: target.x, y: target.y }] }],
       });
       applied = true;
     } catch (_) {}
@@ -1850,7 +1960,8 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   }
 
   // Rechne die 4 Originalecken in das lokale (abgeschnittene) Review-Bild um
-  reviewState.corners = relativeCorners.map((c) => ({
+  const orderedRelativeCorners = sortAndOrderCorners(relativeCorners);
+  reviewState.corners = orderedRelativeCorners.map((c) => ({
     x: Math.round(c.x * highResCanvas.width - reviewState.cropX),
     y: Math.round(c.y * highResCanvas.height - reviewState.cropY),
   }));
@@ -2220,6 +2331,7 @@ function extractCroppedBlob() {
         x: c.x + reviewState.cropX,
         y: c.y + reviewState.cropY,
       }));
+      finalAbsoluteCorners = sortAndOrderCorners(finalAbsoluteCorners);
 
       let srcMat = cv.imread(reviewState.highResCanvas);
       let ptsArray = [];
