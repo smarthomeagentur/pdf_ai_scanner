@@ -32,6 +32,9 @@ body {
   align-items: center;
   overflow: hidden;
   background: #fff;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
 }
 #video {
   width: 100%;
@@ -53,13 +56,72 @@ body {
   display: none;
 }
 .scanner-header {
+  position: relative;
   background: rgba(255, 255, 255, 0.95) !important;
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
-  border-bottom: 1px solid #e2e8f0 !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
   flex-shrink: 0 !important;
   z-index: 1020;
+}
+
+.camera-res-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  line-height: 1;
+  padding: 0 9px;
+  background: rgba(241, 245, 249, 0.9);
+  border: 1px solid rgba(203, 213, 225, 0.7);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  letter-spacing: 0.3px;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.camera-res-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.camera-fps-text {
+  color: #64748b;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+#filterMenu {
+  position: absolute;
+  top: 52px;
+  left: 0;
+  width: 100%;
+  z-index: 1030;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+#filterMenu:not([open]) {
+  display: none !important;
+}
+
+#filterMenu summary {
+  display: none !important;
 }
 
 .back-link {
@@ -89,48 +151,53 @@ body {
   font-weight: bold;
   margin-top: 50px;
 }
-
-/* Engine Mode Toggle Button in Top Bar */
-.mode-toggle-btn {
-  height: 36px !important;
-  padding: 4px 12px !important;
-  font-weight: 500 !important;
-  font-size: 12.5px !important;
-  border-radius: 8px !important;
-  background: #f8fafc !important;
-  border: 1px solid #cbd5e1 !important;
-  color: #1e293b !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 6px !important;
-  cursor: pointer !important;
-  transition: all 0.15s ease !important;
-  white-space: nowrap !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+/* Focus Indicator / Tap-to-Focus Ring */
+.focus-indicator {
+  position: absolute;
+  pointer-events: none;
+  z-index: 15;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.25s ease;
 }
 
-.mode-toggle-btn:hover {
-  background: #f1f5f9 !important;
-  border-color: #94a3b8 !important;
-  color: #0f172a !important;
+.focus-box {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: 2px solid rgba(250, 204, 21, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.4), inset 0 0 8px rgba(250, 204, 21, 0.2);
+  animation: focusSnap 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
-.mode-toggle-btn.btn-primary {
-  background: #2563eb !important;
-  border-color: #2563eb !important;
-  color: #fff !important;
+@keyframes focusSnap {
+  0% {
+    transform: scale(1.6);
+    opacity: 0.2;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
-.mode-toggle-btn .mode-icon {
-  font-size: 18px !important;
-  vertical-align: middle;
-}
-
-.mode-toggle-btn .mode-spinner {
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
+.focus-lock-badge {
+  position: absolute;
+  bottom: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(234, 179, 8, 0.92);
+  color: #000;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
 }
 
 /* Modern Scanner Control Buttons (Auto-Capture & Settings) */

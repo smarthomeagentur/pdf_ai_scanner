@@ -2,16 +2,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const { DOWNLOADS_DIR } = require("../config/paths");
-
-function fixUmlauts(str) {
-  if (!str || typeof str !== "string") return str || "";
-  try {
-    if (/[\u00C2-\u00C3][\u0080-\u00BF]/.test(str)) {
-      return Buffer.from(str, "latin1").toString("utf8");
-    }
-  } catch (e) {}
-  return str;
-}
+const { fixUmlauts } = require("../utils/textUtils");
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {

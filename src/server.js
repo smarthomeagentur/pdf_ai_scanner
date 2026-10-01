@@ -1,14 +1,13 @@
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const path = require("path");
-const fs = require("fs");
 const dotenv = require("dotenv");
 
 dotenv.config();
 
 const { AUTH_ENABLED } = require("./config/secrets");
-const { verifyToken, checkIsAdmin } = require("./middleware/auth");
-const { ROOT_DIR, DOWNLOADS_DIR, THUMBS_DIR } = require("./config/paths");
+const { verifyToken } = require("./middleware/auth");
+const { ROOT_DIR, THUMBS_DIR } = require("./config/paths");
 
 // Route modules
 const authRoutes = require("./routes/authRoutes");

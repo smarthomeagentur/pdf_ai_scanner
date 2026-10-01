@@ -8,15 +8,13 @@ const loader = document.getElementById("loader");
 const loaderStatus = document.getElementById("loader-status");
 const loadingText = document.getElementById("opencv-loading");
 
-// --- Erkennungs-Engine State & Toggle ---
-let currentEngine = localStorage.getItem("scanner_detection_engine") || "onnx";
+// --- KI-Kantenerkennung State ---
 let onnxSession = null;
 let onnxLoading = false;
 let onnxReady = false;
 let onnxLoadFailed = false;
-let openCvReady = false;
+let openCvReady = false; // Wird für Perspektivtransformation / Entzerrung beim Speichern genutzt
 let cameraStarted = false;
-let cvAutoEnabled = true;
 
 // Bildquelle (Live Kamera oder Test-Bilder)
 const sourceSelect = document.getElementById("sourceSelect");
@@ -29,71 +27,7 @@ if (isDebugMode && sourceSelect) {
   console.log("[Scanner] Debug-Modus aktiv: Testbild-Auswahl sichtbar");
 }
 
-
-// UI Elements for Engine Toggle
-const engineToggleBtn = document.getElementById("engineToggleBtn");
-const modeIcon = document.getElementById("modeIcon");
-const modeText = document.getElementById("modeText");
-const modeSpinner = document.getElementById("modeSpinner");
-const cvSettingsGroup = document.getElementById("cvSettingsGroup");
-const cvAutoThresholds = document.getElementById("cvAutoThresholds");
-const cvManualSliders = document.getElementById("cvManualSliders");
-
-function updateEngineUI() {
-  if (currentEngine === "onnx") {
-    if (onnxLoading) {
-      if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
-      if (modeIcon) modeIcon.innerText = "psychology";
-      if (modeText) modeText.innerText = "KI lädt...";
-      if (modeSpinner) modeSpinner.style.display = "inline-block";
-    } else if (onnxReady) {
-      if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
-      if (modeIcon) modeIcon.innerText = "psychology";
-      if (modeText) modeText.innerText = "KI: ONNX";
-      if (modeSpinner) modeSpinner.style.display = "none";
-    } else if (onnxLoadFailed) {
-      if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-warning d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
-      if (modeIcon) modeIcon.innerText = "warning";
-      if (modeText) modeText.innerText = "KI Fehler (OpenCV aktiv)";
-      if (modeSpinner) modeSpinner.style.display = "none";
-    }
-
-    if (cvSettingsGroup) cvSettingsGroup.style.display = "none";
-  } else {
-    if (engineToggleBtn) engineToggleBtn.className = "btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1 mode-toggle-btn";
-    if (modeIcon) modeIcon.innerText = "crop_free";
-    if (modeText) modeText.innerText = cvAutoEnabled ? "OpenCV (Auto)" : "OpenCV";
-    if (modeSpinner) modeSpinner.style.display = "none";
-
-    if (cvSettingsGroup) cvSettingsGroup.style.display = "block";
-  }
-}
-
-if (engineToggleBtn) {
-  engineToggleBtn.addEventListener("click", () => {
-    if (currentEngine === "onnx") {
-      currentEngine = "cv";
-    } else {
-      currentEngine = "onnx";
-      if (!onnxReady && !onnxLoading) initOnnx();
-    }
-    localStorage.setItem("scanner_detection_engine", currentEngine);
-    updateEngineUI();
-  });
-}
-
-if (cvAutoThresholds) {
-  cvAutoThresholds.addEventListener("change", (e) => {
-    cvAutoEnabled = e.target.checked;
-    if (cvManualSliders) cvManualSliders.style.display = cvAutoEnabled ? "none" : "block";
-    updateEngineUI();
-  });
-}
-
 // UI-Slider Handler
-let optBlur = 3;
-let optCanny1 = 40;
-let optCanny2 = 125;
 let onnxSensitivity = 0.85;
 
 const sensitivitySlider = document.getElementById("sensitivitySlider");
@@ -104,11 +38,7 @@ if (sensitivitySlider) {
   sensitivitySlider.oninput = function () {
     let s = parseInt(this.value);
     if (sensVal) sensVal.innerText = s + "%";
-    let norm = s / 100.0;
-    onnxSensitivity = norm;
-    optBlur = norm > 0.8 ? 3 : norm > 0.4 ? 5 : norm > 0.2 ? 7 : 9;
-    optCanny1 = 150 - Math.round(norm * 130);
-    optCanny2 = 250 - Math.round(norm * 150);
+    onnxSensitivity = s / 100.0;
   };
 }
 
@@ -128,14 +58,6 @@ if (smoothingSlider) {
 
 let streaming = false;
 
-// Für die Kanten-Detektion wird das Bild auf eine kleine Arbeitskopie reduziert (Performance!)
-const processWidth = 320;
-const processHeight = 240;
-const canvasProcess = document.createElement("canvas");
-canvasProcess.width = processWidth;
-canvasProcess.height = processHeight;
-const ctxProcess = canvasProcess.getContext("2d", { willReadFrequently: true });
-
 // Dedicated 256x256 working canvas for ONNX inference
 const canvasOnnx = document.createElement("canvas");
 canvasOnnx.width = 256;
@@ -145,27 +67,11 @@ const onnxTensorBuffer = new Float32Array(3 * 256 * 256);
 const IMAGENET_MEAN = [0.485, 0.456, 0.406];
 const IMAGENET_STD = [0.229, 0.224, 0.225];
 
-let src, gray, blurred, edges, contours, hierarchy;
 let currentRelativeDocumentCorners = null;
 
 let smoothedCornersRaw = null;
 let framesWithoutDetection = 0;
 const MAX_FRAMES_LOSE_TRACK = 12;
-
-function initCvMats() {
-  if (typeof cv !== "undefined" && !src && typeof cv.Mat !== "undefined") {
-    try {
-      src = new cv.Mat(processHeight, processWidth, cv.CV_8UC4);
-      gray = new cv.Mat();
-      blurred = new cv.Mat();
-      edges = new cv.Mat();
-      hierarchy = new cv.Mat();
-      contours = new cv.MatVector();
-    } catch (e) {
-      console.warn("Fehler beim Initialisieren der OpenCV Matrizen:", e);
-    }
-  }
-}
 
 // Hilfsfunktion, um die 4 Punkte in eine verlässliche Form zu Sortieren (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
 function sortAndOrderCorners(ptsData) {
@@ -190,9 +96,6 @@ function sortAndOrderCorners(ptsData) {
     return Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx);
   });
 }
-
-let cornerHistoryBuffer = [];
-const MAX_HISTORY_FRAMES = 4;
 
 // Plausibilitäts- & Geometrieprüfung für Dokumente:
 // Verhindert komplett verzerrte Trapeze, spitze Dreiecke, Strichformen und unplausible Vierecke
@@ -480,133 +383,10 @@ async function detectCornersOnnx(source, sx = 0, sy = 0, sWidth = null, sHeight 
   }
 }
 
-// --- OpenCV Corner Detection (Optimiert mit CLAHE & Auto-Canny) ---
-function detectCornersCv(source, sx = 0, sy = 0, sWidth = null, sHeight = null, isHighRes = false) {
-  if (!openCvReady || !src) return null;
-
-  try {
-    const sw = sWidth || source.videoWidth || source.naturalWidth || source.width;
-    const sh = sHeight || source.videoHeight || source.naturalHeight || source.height;
-
-    ctxProcess.drawImage(source, sx, sy, sw, sh, 0, 0, processWidth, processHeight);
-    const imageData = ctxProcess.getImageData(0, 0, processWidth, processHeight);
-    src.data.set(imageData.data);
-
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-
-    let blurVal = optBlur;
-    let c1 = optCanny1;
-    let c2 = optCanny2;
-
-    if (cvAutoEnabled) {
-      try {
-        let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
-        clahe.apply(gray, gray);
-        clahe.delete();
-      } catch (ce) { }
-
-      let meanVal = cv.mean(gray)[0];
-      c1 = Math.max(15, Math.floor(0.67 * meanVal));
-      c2 = Math.min(240, Math.floor(1.33 * meanVal));
-      blurVal = 5;
-    }
-
-    cv.GaussianBlur(gray, blurred, new cv.Size(blurVal, blurVal), 0, 0, cv.BORDER_DEFAULT);
-    cv.Canny(blurred, edges, c1, c2);
-
-    let kernel = cv.Mat.ones(5, 5, cv.CV_8U);
-    cv.dilate(edges, edges, kernel);
-    cv.erode(edges, edges, kernel);
-    kernel.delete();
-
-    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-
-    let maxArea = 0;
-    let bestCnt = null;
-    const minAreaThresh = isHighRes ? processWidth * processHeight * 0.03 : processWidth * processHeight * 0.05;
-
-    function checkContoursList(cntList) {
-      for (let i = 0; i < cntList.size(); ++i) {
-        let cnt = cntList.get(i);
-        let area = cv.contourArea(cnt);
-
-        if (area > minAreaThresh) {
-          let peri = cv.arcLength(cnt, true);
-          let epsilons = isHighRes ? [0.015, 0.03, 0.05, 0.08, 0.12, 0.15] : [0.04, 0.07, 0.11];
-
-          for (let eps of epsilons) {
-            let approx = new cv.Mat();
-            cv.approxPolyDP(cnt, approx, eps * peri, true);
-
-            if (approx.rows === 4 && area > maxArea && cv.isContourConvex(approx)) {
-              let maxCosine = 0;
-              for (let j = 2; j < 6; j++) {
-                let pt1 = { x: approx.data32S[(j % 4) * 2], y: approx.data32S[(j % 4) * 2 + 1] };
-                let pt2 = { x: approx.data32S[((j - 2) % 4) * 2], y: approx.data32S[((j - 2) % 4) * 2 + 1] };
-                let pt0 = { x: approx.data32S[((j - 1) % 4) * 2], y: approx.data32S[((j - 1) % 4) * 2 + 1] };
-
-                let dx1 = pt1.x - pt0.x;
-                let dy1 = pt1.y - pt0.y;
-                let dx2 = pt2.x - pt0.x;
-                let dy2 = pt2.y - pt0.y;
-                let cosine = Math.abs(
-                  (dx1 * dx2 + dy1 * dy2) / Math.sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10)
-                );
-                maxCosine = Math.max(maxCosine, cosine);
-              }
-
-              const cosineMaxThresh = isHighRes ? 0.9 : 0.82;
-              if (maxCosine < cosineMaxThresh) {
-                maxArea = area;
-                if (bestCnt) bestCnt.delete();
-                bestCnt = approx.clone();
-              }
-            }
-            approx.delete();
-          }
-        }
-      }
-    }
-
-    checkContoursList(contours);
-
-    if (isHighRes && !bestCnt) {
-      let hFb = new cv.Mat();
-      cv.threshold(gray, hFb, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-      let dKernel = cv.Mat.ones(5, 5, cv.CV_8U);
-      cv.morphologyEx(hFb, hFb, cv.MORPH_CLOSE, dKernel);
-      dKernel.delete();
-
-      let fbC = new cv.MatVector();
-      let fbH = new cv.Mat();
-      cv.findContours(hFb, fbC, fbH, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-      checkContoursList(fbC);
-      fbC.delete();
-      fbH.delete();
-      hFb.delete();
-    }
-
-    if (bestCnt) {
-      let sorted = sortAndOrderCorners(bestCnt.data32S);
-      bestCnt.delete();
-      return sorted.map((c) => ({
-        x: c.x / processWidth,
-        y: c.y / processHeight,
-      }));
-    }
-
-    return null;
-  } catch (err) {
-    console.error("OpenCV Erkennungsfehler:", err);
-    return null;
-  }
-}
-
-// Initialisiere ONNX Runtime Web
+// Initialisiere ONNX Runtime Web (KI-Kantenerkennung)
 async function initOnnx() {
   if (onnxLoading || onnxReady) return;
   onnxLoading = true;
-  updateEngineUI();
 
   try {
     if (typeof ort === "undefined") {
@@ -636,21 +416,17 @@ async function initOnnx() {
     onnxLoadFailed = false;
     console.log("ONNX KI Dokumenten-Erkennung erfolgreich initialisiert!");
 
-    updateEngineUI();
     onSystemReady();
   } catch (err) {
-    console.error("Fehler beim Laden von ONNX (wechsle automatisch zu OpenCV):", err);
+    console.error("Fehler beim Laden von ONNX:", err);
     onnxLoading = false;
     onnxReady = false;
     onnxLoadFailed = true;
-    currentEngine = "cv";
-    localStorage.setItem("scanner_detection_engine", "cv");
-    updateEngineUI();
     onSystemReady();
   }
 }
 
-// Global hook für OpenCV Initialisierung
+// Global hook für OpenCV Initialisierung (wird für Perspektivtransformation / Entzerrung beim Speichern genutzt)
 window.onOpenCvReady = function () {
   window.initOpenCvRuntime();
 };
@@ -659,18 +435,12 @@ window.initOpenCvRuntime = function () {
   if (openCvReady) return;
   if (typeof cv !== "undefined") {
     if (typeof cv.Mat !== "undefined") {
-      console.log("OpenCV erfolgreich initialisiert (cv.Mat bereit)");
+      console.log("OpenCV für Perspektivtransformation bereit (cv.Mat)");
       openCvReady = true;
-      initCvMats();
-      updateEngineUI();
-      onSystemReady();
     } else {
       cv["onRuntimeInitialized"] = () => {
-        console.log("OpenCV erfolgreich initialisiert (onRuntimeInitialized)");
+        console.log("OpenCV für Perspektivtransformation bereit (onRuntimeInitialized)");
         openCvReady = true;
-        initCvMats();
-        updateEngineUI();
-        onSystemReady();
       };
     }
   }
@@ -689,49 +459,217 @@ if (typeof cv !== "undefined") {
   }, 100);
 }
 
+// --- Autofokus & Tap-to-Focus mit automatischem Fokus-Lock ---
+let isFocusLocked = false;
+let isTapLocked = false;
+let lockedFocusCoords = null; // { x, y } in 0..1
+let focusLockTimestamp = 0;
+let focusLockDocCenter = null; // { x, y }
+let steadyDocFrames = 0;
+let lastDocCenterBeforeLock = null;
+const focusIndicator = document.getElementById("focusIndicator");
+
 let videoTrack = null;
 
 async function initAutofocus() {
   if (!videoTrack) return;
+  isFocusLocked = false;
+  isTapLocked = false;
+  steadyDocFrames = 0;
+  lastDocCenterBeforeLock = null;
   try {
-    const capabilities = videoTrack.getCapabilities();
-    // Continuous AF als Standard setzen
+    const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
     if (capabilities.focusMode && capabilities.focusMode.includes("continuous")) {
       await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-      console.log("Kontinuierlicher Autofokus initialisiert");
-    }
-
-    // Tap-to-Focus: Bei Touch/Klick aufs Overlay Fokuspunkt setzen
-    const overlay = document.getElementById("overlay");
-    if (overlay && capabilities.pointsOfInterest) {
-      const triggerFocus = async (e) => {
-        e.preventDefault();
-        const rect = overlay.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        const x = (clientX - rect.left) / rect.width;
-        const y = (clientY - rect.top) / rect.height;
-        try {
-          await videoTrack.applyConstraints({
-            advanced: [{ pointsOfInterest: [{ x, y }], focusMode: "single-shot" }],
-          });
-          // Nach kurzem Delay zurück zu continuous
-          setTimeout(async () => {
-            try {
-              await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
-            } catch (_) { }
-          }, 1500);
-        } catch (focusErr) {
-          console.warn("Tap-to-Focus nicht unterstützt:", focusErr);
-        }
-      };
-      overlay.addEventListener("click", triggerFocus);
-      overlay.addEventListener("touchstart", triggerFocus, { passive: false });
-      console.log("Tap-to-Focus aktiviert");
+      console.log("[Autofokus] Nativer kontinuierlicher Autofokus aktiv");
     }
   } catch (e) {
-    console.warn("Autofokus konnte nicht initialisiert werden:", e);
+    console.warn("[Autofokus] Kontinuierlicher Autofokus konnte nicht gesetzt werden:", e);
   }
+}
+
+// Fixiert den Fokus einmalig auf das ruhige Motiv bis zur nächsten Bewegung
+async function lockSteadyFocus(relX, relY) {
+  if (isFocusLocked || !videoTrack) return;
+  try {
+    await videoTrack.applyConstraints({
+      advanced: [{ pointsOfInterest: [{ x: relX, y: relY }], focusMode: "single-shot" }],
+    });
+  } catch (_) {
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ focusMode: "single-shot" }],
+      });
+    } catch (_) {
+      try {
+        await videoTrack.applyConstraints({
+          advanced: [{ focusMode: "manual" }],
+        });
+      } catch (_) {}
+    }
+  }
+  isFocusLocked = true;
+  isTapLocked = false;
+  focusLockTimestamp = Date.now();
+  focusLockDocCenter = { x: relX, y: relY };
+  console.log("[Fokus] Beleg ruhig im Bild -> Einmalig fokussiert & gesperrt bis zur nächsten Bewegung");
+}
+
+async function unlockFocus(reason = "Automatisch") {
+  if (!isFocusLocked) return;
+  isFocusLocked = false;
+  isTapLocked = false;
+  lockedFocusCoords = null;
+  focusLockDocCenter = null;
+  steadyDocFrames = 0;
+  lastDocCenterBeforeLock = null;
+
+  if (focusIndicator) {
+    focusIndicator.style.display = "none";
+  }
+
+  console.log(`[Fokus] Größere Bewegung/Motivwechsel (${reason}) -> Autofokus wieder kontinuierlich`);
+
+  if (videoTrack) {
+    try {
+      const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+      if (!caps.focusMode || caps.focusMode.includes("continuous")) {
+        await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+      }
+    } catch (e) {
+      console.warn("[Fokus] Zurücksetzen auf continuous fehlgeschlagen:", e);
+    }
+  }
+}
+
+function setupTapToFocus() {
+  if (!videoWrapper) return;
+
+  let lastTapTime = 0;
+
+  const handleTap = async (clientX, clientY) => {
+    const now = Date.now();
+    if (now - lastTapTime < 350) return; // Debounce
+    lastTapTime = now;
+
+    if (!videoTrack || activeSource !== "camera") return;
+
+    // Nur im aktiven Sucher tippen, nicht im geöffneten Review-Screen
+    const reviewSec = document.getElementById("manual-review-section");
+    if (reviewSec && (reviewSec.style.display === "flex" || reviewSec.style.display === "block")) return;
+
+    const rect = videoWrapper.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const tapX = clientX - rect.left;
+    const tapY = clientY - rect.top;
+
+    // Relative Koordinaten (0.0 bis 1.0)
+    const relX = Math.min(Math.max(tapX / rect.width, 0), 1);
+    const relY = Math.min(Math.max(tapY / rect.height, 0), 1);
+
+    // Visuellen Fokus-Lock Indikator anzeigen & animieren
+    if (focusIndicator) {
+      focusIndicator.style.left = `${tapX}px`;
+      focusIndicator.style.top = `${tapY}px`;
+      focusIndicator.style.display = "block";
+      const box = focusIndicator.querySelector(".focus-box");
+      if (box) {
+        box.style.animation = "none";
+        void box.offsetWidth;
+        box.style.animation = "";
+      }
+    }
+
+    // Haptisches Feedback (sanftes Vibrieren auf Mobilgeräten)
+    if (navigator.vibrate) {
+      try { navigator.vibrate(40); } catch (_) {}
+    }
+
+    console.log(`[Fokus] Angetippt bei (${(relX * 100).toFixed(0)}%, ${(relY * 100).toFixed(0)}%) -> Bereich fokussieren & halten`);
+
+    // Hardware-Kamerasteuerung (Best-effort je nach Smartphone-Treiber)
+    const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+    console.log("[Fokus] Track Capabilities:", JSON.stringify(caps));
+
+    let applied = false;
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ pointsOfInterest: [{ x: relX, y: relY }] }],
+      });
+      applied = true;
+    } catch (_) {}
+
+    if (caps.focusMode && caps.focusMode.includes("single-shot")) {
+      try {
+        await videoTrack.applyConstraints({ advanced: [{ focusMode: "single-shot" }] });
+        applied = true;
+      } catch (_) {}
+    } else if (caps.focusMode && caps.focusMode.includes("continuous")) {
+      try {
+        await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+      } catch (_) {}
+    }
+
+    isFocusLocked = true;
+    isTapLocked = true;
+    lockedFocusCoords = { x: relX, y: relY };
+    focusLockTimestamp = Date.now();
+
+    // Speichere das Dokumentzentrum für Motivwechsel-Prüfung
+    if (currentRelativeDocumentCorners && currentRelativeDocumentCorners.length === 4) {
+      const avgX = currentRelativeDocumentCorners.reduce((sum, p) => sum + p.x, 0) / 4;
+      const avgY = currentRelativeDocumentCorners.reduce((sum, p) => sum + p.y, 0) / 4;
+      focusLockDocCenter = { x: avgX, y: avgY };
+    } else {
+      // Noch kein Dokument im Bild -> erst beim ersten Erkennen festlegen, um Fehlauslösung zu vermeiden
+      focusLockDocCenter = null;
+    }
+  };
+
+  const onUserTap = (e) => {
+    let clientX, clientY;
+    if (e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else if (e.clientX !== undefined) {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    } else {
+      return;
+    }
+
+    const target = e.target;
+    if (target && (target.closest("button") || target.closest("select") || target.closest(".scanned-pages-strip") || target.closest(".scanner-header") || target.closest("#filterMenu"))) {
+      return;
+    }
+
+    handleTap(clientX, clientY);
+  };
+
+  // Sowohl PointerEvent als auch Touch-Fallback unterstützen
+  if (window.PointerEvent) {
+    videoWrapper.addEventListener("pointerdown", onUserTap);
+  } else {
+    videoWrapper.addEventListener("touchstart", onUserTap, { passive: true });
+    videoWrapper.addEventListener("click", onUserTap);
+  }
+
+  // Bewegungssensor: Entsperrt Fokus bei spürbarer Bewegung oder Schwenk des Smartphones
+  window.addEventListener("devicemotion", (e) => {
+    if (!isFocusLocked || Date.now() - focusLockTimestamp < 2000) return;
+
+    const acc = e.acceleration;
+    if (acc && (Math.abs(acc.x) > 6.0 || Math.abs(acc.y) > 6.0 || Math.abs(acc.z) > 6.0)) {
+      unlockFocus("Größere Gerätebewegung");
+      return;
+    }
+
+    const rot = e.rotationRate;
+    if (rot && (Math.abs(rot.alpha) > 120 || Math.abs(rot.beta) > 120 || Math.abs(rot.gamma) > 120)) {
+      unlockFocus("Kameraschwenk");
+    }
+  });
 }
 
 // --- Taschenlampen Support ---
@@ -849,8 +787,8 @@ function startAutoCountdown() {
   }, 1000);
 }
 
-// Kamera & Video Stream Management mit dynamischer 4K -> 1080p Anpassung
-let currentCameraResolution = "4k";
+// Kamera & Video Stream Management (Vorschau immer maximal 1080p oder weniger für flüssige 30-60 FPS)
+let currentCameraResolution = "1080p";
 
 async function startCamera(forceResolution = null) {
   if (sampleImage) sampleImage.style.display = "none";
@@ -870,44 +808,60 @@ async function startCamera(forceResolution = null) {
     video.srcObject = null;
   }
 
-  const targetRes = forceResolution || "4k";
+  // Für die Live-Vorschau immer maximal 1080p (oder 720p) anfordern
+  const targetRes = (forceResolution === "720p") ? "720p" : "1080p";
   currentCameraResolution = targetRes;
 
   const candidateConstraints = [
-    // 1. 4K Ultra HD Rückkamera (wird standardmäßig als Erstes versucht)
-    ...(targetRes === "4k"
+    // 1. 1080p Full HD Rückkamera (wird standardmäßig bevorzugt; max: 1920 verhindert 4K-Stream, max: 30 FPS für beste Performance)
+    ...(targetRes === "1080p"
       ? [
           {
             video: {
               facingMode: { ideal: "environment" },
-              width: { ideal: 3840 },
-              height: { ideal: 2160 },
-              frameRate: { ideal: 30, min: 15 },
+              width: { ideal: 1920, max: 1920 },
+              height: { ideal: 1080, max: 1080 },
+              frameRate: { ideal: 30, max: 30 },
             },
             audio: false,
           },
         ]
       : []),
-    // 2. 1080p Full HD Rückkamera
+    // 2. 720p HD Rückkamera (max 30 FPS)
     {
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30, min: 15 },
+        width: { ideal: 1280, max: 1280 },
+        height: { ideal: 720, max: 720 },
+        frameRate: { ideal: 30, max: 30 },
       },
       audio: false,
     },
-    // 3. 720p HD Rückkamera
+    // 3. Beliebige Rückkamera bis max 1080p (max 30 FPS)
     {
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 1920, max: 1920 },
+        height: { ideal: 1080, max: 1080 },
+        frameRate: { ideal: 30, max: 30 },
       },
       audio: false,
     },
-    // 4. Beliebige verfügbare Kamera (Webcam, Laptop, USB)
+    // 4. Beliebige verfügbare Kamera (Webcam, Laptop, USB) bis max 1080p (max 30 FPS)
+    {
+      video: {
+        width: { ideal: 1920, max: 1920 },
+        height: { ideal: 1080, max: 1080 },
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    },
+    {
+      video: {
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    },
     {
       video: true,
       audio: false,
@@ -941,14 +895,83 @@ async function startCamera(forceResolution = null) {
   }
 }
 
+let currentBadgeWidth = 0;
+let currentBadgeHeight = 0;
+let currentBadgeFps = null;
+
+function updateCameraResolutionBadge(width, height, fps = null) {
+  const badge = document.getElementById("cameraResIndicator");
+  const textEl = document.getElementById("cameraResText");
+  const dividerEl = document.getElementById("cameraFpsDivider");
+  const fpsEl = document.getElementById("cameraFpsText");
+  if (!badge || !textEl) return;
+
+  if (width && height) {
+    currentBadgeWidth = width;
+    currentBadgeHeight = height;
+  }
+  if (fps !== null) {
+    currentBadgeFps = Math.round(fps);
+  }
+
+  if (!currentBadgeWidth || !currentBadgeHeight) {
+    badge.style.display = "none";
+    return;
+  }
+
+  badge.style.display = "inline-flex";
+  const maxDim = Math.max(currentBadgeWidth, currentBadgeHeight);
+  const minDim = Math.min(currentBadgeWidth, currentBadgeHeight);
+
+  let label = `${minDim}p`;
+  if (maxDim >= 3000) {
+    label = "4K";
+  } else if (maxDim >= 1800) {
+    label = "1080p";
+  } else if (maxDim >= 1200) {
+    label = "720p";
+  }
+
+  textEl.textContent = label;
+
+  if (fpsEl && dividerEl) {
+    if (currentBadgeFps !== null && currentBadgeFps > 0) {
+      fpsEl.textContent = `${currentBadgeFps} FPS`;
+      fpsEl.style.display = "inline";
+      dividerEl.style.display = "inline";
+    } else {
+      fpsEl.style.display = "none";
+      dividerEl.style.display = "none";
+    }
+  }
+
+  const fpsStr = currentBadgeFps ? ` @ ${currentBadgeFps} FPS` : "";
+  badge.title = `Kamera: ${currentBadgeWidth} × ${currentBadgeHeight} px (${label})${fpsStr}`;
+}
+
 async function setVideoStream(stream) {
   video.srcObject = stream;
   videoTrack = stream.getVideoTracks()[0];
   try {
     await video.play();
   } catch (_) { }
+
+  // Hardware-Vorschau aktiv auf max. 30 FPS begrenzen (spart Akku & GPU-Last)
+  if (videoTrack && videoTrack.applyConstraints) {
+    try {
+      await videoTrack.applyConstraints({ frameRate: { ideal: 30, max: 30 } });
+    } catch (_) { }
+  }
+
   updateTorchState();
   await initAutofocus();
+
+  const trackSettings = (videoTrack && videoTrack.getSettings) ? videoTrack.getSettings() : {};
+  const currentW = trackSettings.width || video.videoWidth || 0;
+  const currentH = trackSettings.height || video.videoHeight || 0;
+  if (currentW > 0 && currentH > 0) {
+    updateCameraResolutionBadge(currentW, currentH);
+  }
 
   if (!streaming && video.videoWidth > 0 && activeSource === "camera") {
     const rect = videoWrapper.getBoundingClientRect();
@@ -961,16 +984,20 @@ async function setVideoStream(stream) {
     setTimeout(processVideo, 60);
   }
 
-  // Wenn wir mit 4K gestartet sind, überwache nach dem Start die reale FPS-Rate der Hardware
-  if (currentCameraResolution === "4k") {
-    monitorCameraFpsAndAdapt();
-  }
+  // Überwache kontinuierlich die reale FPS-Rate der Hardware und zeige sie oben an
+  monitorCameraFpsAndAdapt();
 }
 
 function pauseCameraAndInference() {
   streaming = false;
   isProcessingFrame = false;
   cancelAutoCountdown();
+  unlockFocus("Kamera pausiert");
+
+  if (fpsMonitorInterval) {
+    clearInterval(fpsMonitorInterval);
+    fpsMonitorInterval = null;
+  }
 
   // Video-Tracks stoppen & Kamera-Hardware freigeben (spart Akku & schützt vor Hitzeentwicklung)
   if (videoTrack) {
@@ -1001,55 +1028,117 @@ async function resumeCameraAndInference() {
 
 function handleCameraFailure(fallbackErr) {
   console.warn("Kamera konnte nicht gestartet werden:", fallbackErr);
-  alert("Kein Zugriff auf die Kamera möglich. Bitte erlaube den Kamerazugriff im Browser oder prüfe, ob die Kamera durch eine andere Anwendung belegt ist.");
-}
 
-function monitorCameraFpsAndAdapt() {
-  if (!videoTrack) return;
-
-  // 1. Prüfe direkt die vom Hardware-Treiber gemeldeten Settings
-  const settings = videoTrack.getSettings ? videoTrack.getSettings() : {};
-  const currentW = settings.width || 0;
-  const driverFps = settings.frameRate;
-
-  if (driverFps && driverFps < 15 && currentW > 1920) {
-    console.warn(`[Kamera] Hardware meldet bei ${currentW}px nur ${driverFps} FPS. Schalte automatisch auf 1080p um...`);
-    switchTo1080p();
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const originUrl = window.location.origin;
+    alert(
+      "⚠️ Kamerazugriff blockiert (Kein HTTPS):\n\n" +
+      "Mobile Browser (Chrome & Safari) sperren den Kamerazugriff im Netzwerk über unverschlüsseltes HTTP.\n\n" +
+      "Schnelle Lösung für Android (Chrome):\n" +
+      "1. Öffne auf dem Smartphone: chrome://flags/#unsafely-treat-insecure-origin-as-secure\n" +
+      "2. Trage ein: " + originUrl + "\n" +
+      "3. Auf 'Enabled' stellen und Chrome neu starten.\n\n" +
+      "Schnelle Lösung für iPhone / Universal:\n" +
+      "Starte am PC im Terminal: npx localtunnel --port 3000 und öffne die https-Adresse."
+    );
     return;
   }
 
-  // 2. Reale Framerate des Videostreams über Frames messen
-  let frameCount = 0;
-  let startTime = performance.now();
+  alert("Kein Zugriff auf die Kamera möglich. Bitte erlaube den Kamerazugriff im Browser oder prüfe, ob die Kamera durch eine andere Anwendung belegt ist.");
+}
 
-  const onFrame = () => {
-    frameCount++;
-    if (videoTrack && videoTrack.readyState === "live" && currentCameraResolution === "4k") {
-      if ("requestVideoFrameCallback" in video) {
-        video.requestVideoFrameCallback(onFrame);
+let fpsMonitorInterval = null;
+let isFpsMonitoringActive = false;
+let measuredCameraFps = null;
+let lastPresentedFrames = 0;
+let lastPresentedTime = 0;
+
+function getEffectiveCameraFps() {
+  if (measuredCameraFps && measuredCameraFps > 0) {
+    return measuredCameraFps;
+  }
+  const settings = (videoTrack && videoTrack.getSettings) ? videoTrack.getSettings() : {};
+  if (settings.frameRate && settings.frameRate > 0) {
+    return Math.round(settings.frameRate);
+  }
+  return 30;
+}
+
+function startHardwareFpsTracker() {
+  if (isFpsMonitoringActive) return;
+  isFpsMonitoringActive = true;
+  lastPresentedFrames = 0;
+  lastPresentedTime = 0;
+
+  const onVideoFrame = (now, metadata) => {
+    if (!isFpsMonitoringActive || !videoTrack || videoTrack.readyState !== "live") {
+      isFpsMonitoringActive = false;
+      return;
+    }
+
+    if (metadata && typeof metadata.presentedFrames === "number") {
+      if (lastPresentedFrames > 0 && lastPresentedTime > 0) {
+        const timeDiff = (now - lastPresentedTime) / 1000;
+        if (timeDiff >= 0.75) {
+          const framesDiff = metadata.presentedFrames - lastPresentedFrames;
+          if (framesDiff >= 0 && timeDiff > 0) {
+            const rawFps = framesDiff / timeDiff;
+            measuredCameraFps = Math.min(Math.round(rawFps), 120);
+          }
+          lastPresentedFrames = metadata.presentedFrames;
+          lastPresentedTime = now;
+        }
+      } else {
+        lastPresentedFrames = metadata.presentedFrames;
+        lastPresentedTime = now;
       }
+    }
+
+    if ("requestVideoFrameCallback" in video) {
+      video.requestVideoFrameCallback(onVideoFrame);
     }
   };
 
   if ("requestVideoFrameCallback" in video) {
-    video.requestVideoFrameCallback(onFrame);
+    video.requestVideoFrameCallback(onVideoFrame);
   }
+}
 
-  // Nach 2,5 Sekunden prüfen wir die tatsächliche Performance
-  setTimeout(async () => {
-    if (currentCameraResolution !== "4k" || !videoTrack || videoTrack.readyState !== "live") return;
+function monitorCameraFpsAndAdapt() {
+  if (fpsMonitorInterval) {
+    clearInterval(fpsMonitorInterval);
+    fpsMonitorInterval = null;
+  }
+  if (!videoTrack) return;
 
-    const elapsedSec = (performance.now() - startTime) / 1000;
-    let actualFps = frameCount > 0 ? frameCount / elapsedSec : ((videoTrack.getSettings && videoTrack.getSettings().frameRate) || 0);
+  startHardwareFpsTracker();
 
+  let consecutiveLowFpsSeconds = 0;
+  let elapsedIntervals = 0;
+
+  fpsMonitorInterval = setInterval(async () => {
+    if (!videoTrack || videoTrack.readyState !== "live" || activeSource !== "camera") {
+      clearInterval(fpsMonitorInterval);
+      fpsMonitorInterval = null;
+      isFpsMonitoringActive = false;
+      return;
+    }
+
+    elapsedIntervals++;
     const actualWidth = (videoTrack.getSettings && videoTrack.getSettings().width) || video.videoWidth || 0;
-    console.log(`[Kamera] Hardware-Stream Analyse: ${actualWidth}px @ ~${actualFps.toFixed(1)} FPS`);
+    const actualHeight = (videoTrack.getSettings && videoTrack.getSettings().height) || video.videoHeight || 0;
+    const effectiveFps = getEffectiveCameraFps();
 
-    if (actualWidth > 1920 && actualFps > 0 && actualFps < 15) {
-      console.warn(`[Kamera] 4K Framerate zu gering (${actualFps.toFixed(1)} FPS). Drossle automatisch auf 1080p für flüssige Video-Performance...`);
+    if (actualWidth > 0 && actualHeight > 0) {
+      updateCameraResolutionBadge(actualWidth, actualHeight, effectiveFps);
+    }
+
+    // Sicherstellen, dass die Live-Vorschau immer maximal 1080p (oder weniger) nutzt
+    if (actualWidth > 1920) {
+      console.warn(`[Kamera] Vorschau-Auflösung (${actualWidth}px) übersteigt 1080p. Drossle auf 1080p...`);
       await switchTo1080p();
     }
-  }, 2500);
+  }, 1000);
 }
 
 async function switchTo1080p() {
@@ -1059,10 +1148,11 @@ async function switchTo1080p() {
   try {
     // Versuch 1: In-Place Constraints (unterbrechungsfrei)
     await videoTrack.applyConstraints({
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30, min: 15 },
+      width: { ideal: 1920, max: 1920 },
+      height: { ideal: 1080, max: 1080 },
+      frameRate: { ideal: 30, max: 30 },
     });
+    updateCameraResolutionBadge(1920, 1080);
     console.log("[Kamera] Erfolgreich auf 1080p umgeschaltet (applyConstraints).");
   } catch (e) {
     console.warn("[Kamera] In-Place Wechsel auf 1080p nicht möglich, starte Stream neu:", e);
@@ -1088,16 +1178,15 @@ function loadSampleImage(filename) {
     sampleImage.src = "/samples-scanner/" + filename;
     sampleImage.onload = () => {
       console.log(`Test-Bild '${filename}' geladen (${sampleImage.naturalWidth}x${sampleImage.naturalHeight})`);
+      updateCameraResolutionBadge(sampleImage.naturalWidth, sampleImage.naturalHeight);
       const rect = videoWrapper.getBoundingClientRect();
       overlay.width = rect.width;
       overlay.height = rect.height;
       streaming = true;
       captureBtn.disabled = false;
       smoothedCornersRaw = null;
-      cornerHistoryBuffer = [];
       framesWithoutDetection = 0;
 
-      initCvMats();
       requestAnimationFrame(processVideo);
     };
   }
@@ -1107,7 +1196,6 @@ if (sourceSelect) {
   sourceSelect.addEventListener("change", (e) => {
     activeSource = e.target.value;
     smoothedCornersRaw = null;
-    cornerHistoryBuffer = [];
     currentRelativeDocumentCorners = null;
     ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
 
@@ -1120,7 +1208,7 @@ if (sourceSelect) {
 }
 
 function onSystemReady() {
-  if (!cameraStarted && (onnxReady || openCvReady || onnxLoadFailed)) {
+  if (!cameraStarted && (onnxReady || onnxLoadFailed)) {
     cameraStarted = true;
     loadingText.style.display = "none";
     videoWrapper.style.display = "flex";
@@ -1136,6 +1224,10 @@ function onSystemReady() {
 }
 
 video.addEventListener("canplay", function () {
+  if (video.videoWidth > 0 && video.videoHeight > 0 && activeSource === "camera") {
+    updateCameraResolutionBadge(video.videoWidth, video.videoHeight);
+  }
+
   if (!streaming && video.videoWidth > 0 && activeSource === "camera") {
     const rect = video.getBoundingClientRect();
     overlay.width = rect.width;
@@ -1151,7 +1243,6 @@ video.addEventListener("canplay", function () {
       }
     });
 
-    initCvMats();
     requestAnimationFrame(processVideo);
   }
 });
@@ -1190,17 +1281,8 @@ async function processVideo() {
     const sy = Math.max(0, (srcH - sHeight) / 2);
 
     let detectedCorners = null;
-
-    // Aktive Engine ausführen (strikt getrennt)
-    if (currentEngine === "onnx") {
-      if (onnxReady) {
-        detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
-      }
-    } else {
-      // Reiner OpenCV Modus (wird nur per Button aktiviert)
-      if (openCvReady) {
-        detectedCorners = detectCornersCv(currentSource, sx, sy, sWidth, sHeight, false);
-      }
+    if (onnxReady) {
+      detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
     }
 
     // --- ADAPTIVES SMOOTHING / ANTI-FLICKERING LOGIK ---
@@ -1230,6 +1312,8 @@ async function processVideo() {
         if (countdownInterval && !autoCaptureTriggered) cancelAutoCountdown();
       }
     } else {
+      steadyDocFrames = 0;
+      lastDocCenterBeforeLock = null;
       framesWithoutDetection++;
 
       if (autoCaptureTriggered && framesWithoutDetection > 7) {
@@ -1238,8 +1322,14 @@ async function processVideo() {
 
       if (framesWithoutDetection > MAX_FRAMES_LOSE_TRACK) {
         smoothedCornersRaw = null;
-        cornerHistoryBuffer = [];
         cancelAutoCountdown();
+
+        // Wenn das Dokument komplett verschwunden ist, Fokus wieder auf kontinuierlich freigeben.
+        // WICHTIG: Nur wenn Fokus automatisch eingerastet war (!isTapLocked).
+        // Wenn der Nutzer manuell getippt hat, bleibt der Fokus gehalten!
+        if (isFocusLocked && !isTapLocked && Date.now() - focusLockTimestamp > 1200) {
+          unlockFocus("Motiv entfernt");
+        }
       }
     }
 
@@ -1270,6 +1360,37 @@ async function processVideo() {
       ctxOverlay.fillStyle = "rgba(40, 167, 69, 0.2)";
       ctxOverlay.fill();
       ctxOverlay.stroke();
+
+      const curCenterX = currentRelativeDocumentCorners.reduce((sum, p) => sum + p.x, 0) / 4;
+      const curCenterY = currentRelativeDocumentCorners.reduce((sum, p) => sum + p.y, 0) / 4;
+
+      // Fall 1: Noch nicht gelockt -> Sobald Beleg ruhig gehalten wird, Fokus einmalig fixieren
+      if (!isFocusLocked && activeSource === "camera") {
+        if (lastDocCenterBeforeLock) {
+          const drift = Math.hypot(curCenterX - lastDocCenterBeforeLock.x, curCenterY - lastDocCenterBeforeLock.y);
+          if (drift < 0.035) {
+            steadyDocFrames++;
+            if (steadyDocFrames >= 10) { // ca. 350-400ms ruhig gehalten
+              lockSteadyFocus(curCenterX, curCenterY);
+            }
+          } else {
+            steadyDocFrames = 0;
+          }
+        }
+        lastDocCenterBeforeLock = { x: curCenterX, y: curCenterY };
+      }
+
+      // Fall 2: Fokus ist gelockt (steady oder per Tippen) -> Prüfe auf größere Bewegung / Motivwechsel
+      if (isFocusLocked && Date.now() - focusLockTimestamp > 1500) {
+        if (focusLockDocCenter) {
+          const shiftDist = Math.hypot(curCenterX - focusLockDocCenter.x, curCenterY - focusLockDocCenter.y);
+          if (shiftDist > 0.35) { // mehr als 35% Bildschirmsprung = eindeutig neues Motiv
+            unlockFocus("Größere Bildverschiebung / Neues Motiv");
+          }
+        } else {
+          focusLockDocCenter = { x: curCenterX, y: curCenterY };
+        }
+      }
     } else {
       currentRelativeDocumentCorners = null;
     }
@@ -1291,11 +1412,7 @@ async function performDetailedPostScan(canvasHighRes, initialRelativeCorners) {
     return initialRelativeCorners;
   }
 
-  if (currentEngine !== "onnx" || !onnxReady) {
-    if (openCvReady) {
-      const cvCorners = detectCornersCv(canvasHighRes, 0, 0, canvasHighRes.width, canvasHighRes.height, true);
-      if (cvCorners && cvCorners.length === 4) return sortAndOrderCorners(cvCorners);
-    }
+  if (!onnxReady) {
     return initialRelativeCorners;
   }
 
@@ -1380,7 +1497,7 @@ captureBtn.addEventListener("click", async () => {
       let flashWasTriggered = false;
       try {
         const imageCapture = new ImageCapture(videoTrack);
-        const capabilities = videoTrack.getCapabilities();
+        const capabilities = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
         const advancedConstraints = [];
 
         if (torchSupported && torchMode === "auto") {
@@ -1395,10 +1512,42 @@ captureBtn.addEventListener("click", async () => {
           }
         }
 
-        const imageBitmap = await imageCapture.grabFrame();
-        highResBitmap = imageBitmap;
-        originalWidth = imageBitmap.width;
-        originalHeight = imageBitmap.height;
+        // Prio 1: Echte 4K-Aufnahme über den Still-Photo Sensorpfad (takePhoto)
+        // Funktioniert auch, wenn der Live-Sucher für flüssige FPS auf 1080p gedrosselt wurde!
+        let stillImageBitmap = null;
+        if (typeof imageCapture.takePhoto === "function") {
+          try {
+            let photoOptions = {};
+            if (typeof imageCapture.getPhotoCapabilities === "function") {
+              const photoCaps = await imageCapture.getPhotoCapabilities();
+              if (photoCaps.imageWidth && photoCaps.imageWidth.max) {
+                const targetW = Math.min(photoCaps.imageWidth.max, 3840);
+                const targetH = Math.round((targetW * 9) / 16);
+                photoOptions.imageWidth = targetW;
+                if (photoCaps.imageHeight && photoCaps.imageHeight.max >= targetH) {
+                  photoOptions.imageHeight = targetH;
+                }
+              }
+            }
+            console.log("[Scanner] Erfasse 4K-Foto via ImageCapture.takePhoto()...", photoOptions);
+            const photoBlob = await imageCapture.takePhoto(photoOptions);
+            if (photoBlob) {
+              stillImageBitmap = await createImageBitmap(photoBlob);
+              console.log(`[Scanner] Foto in 4K/voller Sensorauflösung erfasst: ${stillImageBitmap.width} × ${stillImageBitmap.height} px ✓`);
+            }
+          } catch (takePhotoErr) {
+            console.warn("[Scanner] takePhoto fehlgeschlagen, falle zurück auf Stream-Frame:", takePhotoErr);
+          }
+        }
+
+        // Prio 2: Fallback auf aktuellen Stream-Frame (grabFrame)
+        if (!stillImageBitmap) {
+          stillImageBitmap = await imageCapture.grabFrame();
+        }
+
+        highResBitmap = stillImageBitmap;
+        originalWidth = stillImageBitmap.width;
+        originalHeight = stillImageBitmap.height;
         photoWasUsed = true;
       } catch (e) {
         console.warn("Fotofunktion nicht per API abrufbar, falle zurück auf Video Capture", e);
@@ -1522,34 +1671,36 @@ let reviewState = {
   activeCorner: -1,
 };
 
+const reviewCanvas = document.getElementById("reviewCanvas");
+const reviewOverlay = document.getElementById("reviewOverlay");
+const previewLoadingText = document.getElementById("previewLoadingText");
+const algorithmSelect = document.getElementById("algorithmSelect");
+const previewAlgorithmSelect = document.getElementById("previewAlgorithmSelect");
+const manualReviewSection = document.getElementById("manual-review-section");
+
 function syncFilterPresetButtons(alg) {
-  const currentAlg = alg || document.getElementById("algorithmSelect")?.value || "auto";
+  const currentAlg = alg || algorithmSelect?.value || "auto";
+  const presetMatchMap = {
+    color: ["photo", "original"],
+    color_enhanced: ["color_doc"],
+    white_paper: ["doc", "clean"],
+    auto: ["doc", "clean"],
+    bw_adaptive: ["bw"],
+    grayscale: ["bw"],
+  };
+  const activeTypes = presetMatchMap[currentAlg] || [];
   document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
     const fType = btn.getAttribute("data-filter");
-    let shouldBeActive = false;
-    if ((fType === "photo" || fType === "original") && currentAlg === "color") {
-      shouldBeActive = true;
-    } else if (fType === "color_doc" && currentAlg === "color_enhanced") {
-      shouldBeActive = true;
-    } else if ((fType === "doc" || fType === "clean") && (currentAlg === "white_paper" || currentAlg === "auto")) {
-      shouldBeActive = true;
-    } else if (fType === "bw" && (currentAlg === "bw_adaptive" || currentAlg === "grayscale")) {
-      shouldBeActive = true;
-    }
-    if (shouldBeActive) {
-      btn.classList.add("active");
-    } else {
-      btn.classList.remove("active");
-    }
+    btn.classList.toggle("active", activeTypes.includes(fType));
   });
 }
 
 function updatePreviewFilter() {
-  const filter = document.getElementById("algorithmSelect").value;
-  const rCv = document.getElementById("reviewCanvas");
+  const filter = algorithmSelect?.value || "auto";
+  const rCv = reviewCanvas;
+  if (!rCv || !reviewState.highResCanvas) return;
 
   // Zuerst immer das originale (ungefilterte), um 20% erweiterte Bild zurückholen
-  if (!reviewState.highResCanvas) return;
   rCv.width = reviewState.cropW;
   rCv.height = reviewState.cropH;
   rCv
@@ -1570,7 +1721,7 @@ function updatePreviewFilter() {
 
   // Original überspringt alles und behält einfach das ungefilterte High-Res Segment
   if (filter === "color") {
-    document.getElementById("previewLoadingText").style.display = "none";
+    if (previewLoadingText) previewLoadingText.style.display = "none";
     syncFilterPresetButtons("color");
     fitReviewCanvas();
     drawReviewOverlay();
@@ -1578,7 +1729,7 @@ function updatePreviewFilter() {
   }
 
   // Optisches Feedback, dass es lädt
-  document.getElementById("previewLoadingText").style.display = "block";
+  if (previewLoadingText) previewLoadingText.style.display = "block";
 
   // Neues echtes OpenCV-Preview generieren
   rCv.toBlob(
@@ -1606,12 +1757,11 @@ function updatePreviewFilter() {
 
         const detectedAlgorithm = response.headers.get("X-Detected-Algorithm");
         if (detectedAlgorithm) {
-          const selectEl = document.getElementById("previewAlgorithmSelect");
-          if (selectEl && selectEl.querySelector(`option[value="${detectedAlgorithm}"]`)) {
-            selectEl.value = detectedAlgorithm;
+          if (previewAlgorithmSelect && previewAlgorithmSelect.querySelector(`option[value="${detectedAlgorithm}"]`)) {
+            previewAlgorithmSelect.value = detectedAlgorithm;
           }
-          if (filter === "auto") {
-            document.getElementById("algorithmSelect").value = detectedAlgorithm;
+          if (filter === "auto" && algorithmSelect) {
+            algorithmSelect.value = detectedAlgorithm;
           }
           // Vorschlag der Automatik in den Filter-Buttons hervorheben
           syncFilterPresetButtons(detectedAlgorithm);
@@ -1623,7 +1773,7 @@ function updatePreviewFilter() {
         const img = new Image();
         img.onload = () => {
           rCv.getContext("2d").drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
-          document.getElementById("previewLoadingText").style.display = "none";
+          if (previewLoadingText) previewLoadingText.style.display = "none";
           URL.revokeObjectURL(url);
           fitReviewCanvas();
           drawReviewOverlay();
@@ -1631,7 +1781,7 @@ function updatePreviewFilter() {
         img.src = url;
       } catch (err) {
         console.error("Preview Fehler: ", err);
-        document.getElementById("previewLoadingText").style.display = "none";
+        if (previewLoadingText) previewLoadingText.style.display = "none";
       }
     },
     "image/jpeg",
@@ -1642,11 +1792,12 @@ function updatePreviewFilter() {
 function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true) {
   // Pausiere Kameraanzeige, Hardware-Tracks und Live-ONNX-Inferenz
   pauseCameraAndInference();
-  document.getElementById("video-wrapper").style.display = "none";
-  document.getElementById("captureBtn").style.display = "none";
-  document.getElementById("captureBtn").disabled = true;
-  document.getElementById("filterMenu").style.display = "none";
-  document.getElementById("manual-review-section").style.display = "flex";
+  videoWrapper.style.display = "none";
+  captureBtn.style.display = "none";
+  captureBtn.disabled = true;
+  const filterMenu = document.getElementById("filterMenu");
+  if (filterMenu) filterMenu.style.display = "none";
+  if (manualReviewSection) manualReviewSection.style.display = "flex";
   updateConfirmBtnText();
 
   reviewState.highResCanvas = highResCanvas;
@@ -1674,27 +1825,29 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   reviewState.cropH = Math.max(50, bottom - top);
 
   // Lade diesen Puffer-Zuschnitt in den ReviewCanvas
-  const rCv = document.getElementById("reviewCanvas");
-  rCv.width = reviewState.cropW;
-  rCv.height = reviewState.cropH;
-  rCv
-    .getContext("2d")
-    .drawImage(
-      highResCanvas,
-      reviewState.cropX,
-      reviewState.cropY,
-      reviewState.cropW,
-      reviewState.cropH,
-      0,
-      0,
-      reviewState.cropW,
-      reviewState.cropH
-    );
+  if (reviewCanvas) {
+    reviewCanvas.width = reviewState.cropW;
+    reviewCanvas.height = reviewState.cropH;
+    reviewCanvas
+      .getContext("2d")
+      .drawImage(
+        highResCanvas,
+        reviewState.cropX,
+        reviewState.cropY,
+        reviewState.cropW,
+        reviewState.cropH,
+        0,
+        0,
+        reviewState.cropW,
+        reviewState.cropH
+      );
+  }
 
   // Passe Overlay (Zeichenfläche) exakt auf das Canvas an
-  const oCv = document.getElementById("reviewOverlay");
-  oCv.width = reviewState.cropW;
-  oCv.height = reviewState.cropH;
+  if (reviewOverlay) {
+    reviewOverlay.width = reviewState.cropW;
+    reviewOverlay.height = reviewState.cropH;
+  }
 
   // Rechne die 4 Originalecken in das lokale (abgeschnittene) Review-Bild um
   reviewState.corners = relativeCorners.map((c) => ({
@@ -1703,8 +1856,7 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   }));
 
   // Initialisiere Filter auf Auto und synchronisiere Buttons
-  const algInput = document.getElementById("algorithmSelect");
-  if (algInput) algInput.value = "auto";
+  if (algorithmSelect) algorithmSelect.value = "auto";
   syncFilterPresetButtons("auto");
 
   fitReviewCanvas();
@@ -1718,19 +1870,20 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   // Vermeide den Preview-Lader, falls ohnehin keine klaren Kanten erkannt wurden
   if (hasRealCorners) {
     updatePreviewFilter();
-  } else {
-    document.getElementById("previewLoadingText").style.display = "none";
+  } else if (previewLoadingText) {
+    previewLoadingText.style.display = "none";
   }
 
   drawReviewOverlay();
 }
 
+const reviewCanvasWrapper = document.querySelector(".review-canvas-wrapper");
+
 function fitReviewCanvas() {
-  const reviewSec = document.getElementById("manual-review-section");
-  if (!reviewSec || reviewSec.style.display === "none") return;
-  const wrapper = document.querySelector(".review-canvas-wrapper");
-  const rCv = document.getElementById("reviewCanvas");
-  const oCv = document.getElementById("reviewOverlay");
+  if (!manualReviewSection || manualReviewSection.style.display === "none") return;
+  const wrapper = reviewCanvasWrapper || document.querySelector(".review-canvas-wrapper");
+  const rCv = reviewCanvas;
+  const oCv = reviewOverlay;
   if (!wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
 
   const availW = Math.max(50, wrapper.clientWidth - 16);
@@ -1800,8 +1953,6 @@ function drawReviewOverlay() {
 }
 
 // Touch & Mouse Handler für das Verschieben der Ecken
-const reviewOverlay = document.getElementById("reviewOverlay");
-
 function getInternalPos(e) {
   const rect = reviewOverlay.getBoundingClientRect();
   const scaleX = reviewOverlay.width / rect.width;
@@ -2298,11 +2449,10 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-// Initialisiere Engine & ONNX bei Start
-updateEngineUI();
+// Initialisiere ONNX KI-Kantenerkennung bei Start
+setupTapToFocus();
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    updateEngineUI();
     initOnnx();
   });
 } else {

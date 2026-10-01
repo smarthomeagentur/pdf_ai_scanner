@@ -4,8 +4,9 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { PDFDocument } = require("pdf-lib");
 const { upload } = require("../middleware/upload");
-const { DOWNLOADS_DIR, ROOT_DIR, getPythonPath, SCANNER_SCRIPT } = require("../config/paths");
+const { DOWNLOADS_DIR, getPythonPath, SCANNER_SCRIPT } = require("../config/paths");
 const { addJobs } = require("../services/jobQueueService");
+const { generateJobId } = require("../utils/textUtils");
 
 const router = express.Router();
 
@@ -68,7 +69,7 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
 
     let createdJob = null;
     if (autoQueue) {
-      const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+      const jobId = generateJobId();
       createdJob = {
         id: jobId,
         originalName: path.basename(outputPdfPath),
@@ -85,7 +86,7 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
     res.set("Access-Control-Expose-Headers", "X-File-Name, X-Auto-Job");
     if (createdJob) res.set("X-Auto-Job", JSON.stringify(createdJob));
 
-    res.download(outputPdfPath, "Scanned_Document.pdf", (err) => {
+    res.download(outputPdfPath, "Scanned_Document.pdf", () => {
       if (!autoQueue && fs.existsSync(outputPdfPath)) {
         fs.promises.unlink(outputPdfPath).catch(() => {});
         const jpgPath = outputPdfPath.replace(".pdf", ".jpg");

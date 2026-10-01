@@ -1,5 +1,3 @@
-const fs = require("fs");
-const path = require("path");
 const butlerApi = require("./butlerService");
 const { normalizeAlphaNum } = require("./duplicateService");
 
@@ -16,7 +14,7 @@ async function fetchLexofficeWithRetry(url, options, maxRetries = 3) {
   return fetch(url, options);
 }
 
-function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, cleanFileName, documentDate, cleanCompany }) {
+function matchLexofficeList(vouchers, { cleanInvNum, targetAmountEuro, _cleanFileName, documentDate, cleanCompany }) {
   const matches = [];
   const normSearchInv = cleanInvNum ? normalizeAlphaNum(cleanInvNum) : null;
 

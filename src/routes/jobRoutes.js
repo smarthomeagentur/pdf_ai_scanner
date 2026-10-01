@@ -7,22 +7,20 @@ const { upload } = require("../middleware/upload");
 const { uploadLimiter } = require("../middleware/rateLimiters");
 const { DOWNLOADS_DIR } = require("../config/paths");
 const {
-  uploadJobs,
   addJobs,
   getJobs,
   getJob,
   updateJob,
-  deleteJob,
   clearAllJobs,
   rescanAllDuplicates,
   hideJob,
   unhideJob,
   retryJob,
   saveJobs,
-  processQueue,
 } = require("../services/jobQueueService");
 const { getOrGenerateThumbnailPath, renderPdfToJpeg } = require("../services/fileRenderService");
 const { normalizeAlphaNum } = require("../services/duplicateService");
+const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
 const router = express.Router();
 
@@ -32,21 +30,11 @@ router.get("/api/status", (req, res) => {
   res.json({ success: true, statuses, isAdmin: !!isAdmin });
 });
 
-function fixUmlauts(str) {
-  if (!str || typeof str !== "string") return str || "";
-  try {
-    if (/[\u00C2-\u00C3][\u0080-\u00BF]/.test(str)) {
-      return Buffer.from(str, "latin1").toString("utf8");
-    }
-  } catch (e) {}
-  return str;
-}
-
 router.post("/api/upload", uploadLimiter, upload.array("files"), (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: "Keine Dateien hochgeladen." });
 
   const jobs = req.files.map((file) => {
-    const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+    const jobId = generateJobId();
     const targetThumb = path.join(DOWNLOADS_DIR, `thumb_${jobId}.jpg`);
     renderPdfToJpeg(file.path, targetThumb).catch(() => {});
 
@@ -75,7 +63,7 @@ router.post("/share-target", upload.array("share_files", 50), (req, res) => {
     if (req.files && req.files.length > 0) {
       const jobs = req.files.map((file) => {
         return {
-          id: Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9),
+          id: generateJobId(),
           originalName: fixUmlauts(file.originalname),
           status: "pending",
           source: "share_target",
