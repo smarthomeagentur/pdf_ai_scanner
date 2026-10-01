@@ -242,7 +242,43 @@ async function getOrGenerateThumbnailPath(identifier, getJobFn) {
   return promise;
 }
 
+/**
+ * Loads the raw PDF Buffer for a given job, either from local disk storage
+ * or fallback-fetches it directly from Google Drive.
+ * @param {object} job
+ * @returns {Promise<Buffer|null>}
+ */
+async function getJobPdfBuffer(job) {
+  if (!job) return null;
+  if (job.filePath && fs.existsSync(job.filePath)) {
+    return await fs.promises.readFile(job.filePath);
+  }
+
+  let driveFileId = job.rawDriveId || job.driveFileId;
+  if (!driveFileId && job.result && job.result.webViewLink) {
+    const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (match) driveFileId = match[1];
+  }
+  if (!driveFileId && job.webViewLink) {
+    const match = job.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (match) driveFileId = match[1];
+  }
+
+  if (!driveFileId) return null;
+
+  try {
+    const { driveApi } = require("./driveService");
+    const drive = await driveApi.getClient();
+    const driveRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
+    return Buffer.from(driveRes.data);
+  } catch (e) {
+    console.error(`[PDF BUFFER] Fehler beim Laden der Datei aus Google Drive (ID ${driveFileId}):`, e.message || e);
+    return null;
+  }
+}
+
 module.exports = {
   renderPdfToJpeg,
   getOrGenerateThumbnailPath,
+  getJobPdfBuffer,
 };

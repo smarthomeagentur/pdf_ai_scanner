@@ -8,7 +8,7 @@ const dotenv = require("dotenv");
 const { getPythonPath } = require("../config/paths");
 dotenv.config();
 
-let debug = false;
+let _debug = false;
 const LOCAL_AI_HOST = process.env.LOCAL_AI_HOST;
 const AI_TIMEOUT_MS = parseInt(process.env.AI_TIMEOUT_MS, 10) || 360000; // 6 Minuten Timeout
 
@@ -370,18 +370,9 @@ async function extractTextFromPdf(pdfPath) {
   }
 }
 
-function searchNameInText(text, searchTerms, returnCompanyName = "unbekannt") {
-  for (const term of searchTerms) {
-    if (text.toLowerCase().includes(term)) {
-      return returnCompanyName;
-    }
-  }
-  return false;
-}
-
 module.exports = {
   init: function (setDebug = false) {
-    debug = setDebug;
+    _debug = setDebug;
     return true;
   },
   getPdfName: async function (filePath, settings = {}) {

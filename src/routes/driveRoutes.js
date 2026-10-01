@@ -6,7 +6,6 @@ const { TOKEN_FILE } = require("../config/paths");
 const {
   driveApi,
   getPickerToken,
-  resolveFolder,
   createFolder,
   listFolders,
   getFolder,
@@ -17,7 +16,6 @@ const {
   getDriveSyncState,
   executeDriveSync,
   importDriveFile,
-  uploadJobs,
   hiddenDriveFiles,
   saveJobs,
 } = require("../services/jobQueueService");

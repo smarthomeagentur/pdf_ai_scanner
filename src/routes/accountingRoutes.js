@@ -4,10 +4,9 @@ const path = require("path");
 const { execFile } = require("child_process");
 const { requireAdmin } = require("../middleware/auth");
 const { appSettings } = require("../config/settings");
-const { DOWNLOADS_DIR, ROOT_DIR, getPythonPath, COMPRESS_SCRIPT } = require("../config/paths");
-const { getJob, saveJobs, uploadJobs } = require("../services/jobQueueService");
-const { driveApi } = require("../services/driveService");
-const { renderPdfToJpeg } = require("../services/fileRenderService");
+const { DOWNLOADS_DIR, getPythonPath, COMPRESS_SCRIPT } = require("../config/paths");
+const { getJob, saveJobs } = require("../services/jobQueueService");
+const { renderPdfToJpeg, getJobPdfBuffer } = require("../services/fileRenderService");
 const {
   fetchLexofficeWithRetry,
   searchLexofficeVouchers,
@@ -16,29 +15,6 @@ const {
 
 const router = express.Router();
 
-async function getJobPdfBuffer(job) {
-  if (job.filePath && fs.existsSync(job.filePath)) {
-    return await fs.promises.readFile(job.filePath);
-  }
-
-  let driveFileId = job.rawDriveId;
-  if (!driveFileId && job.result && job.result.webViewLink) {
-    const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    if (match) driveFileId = match[1];
-  }
-
-  if (!driveFileId) return null;
-
-  try {
-    const drive = await driveApi.getClient();
-    const driveRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
-    return Buffer.from(driveRes.data);
-  } catch (e) {
-    console.error(`[PDF BUFFER] Fehler beim Laden der Datei aus Google Drive (ID ${driveFileId}):`, e);
-    return null;
-  }
-}
-
 async function checkSingleModularAccount(job, account) {
   const accountId = account.id || account.companyKey || "unknown";
   const accountName = account.name || account.companyDisplayName || accountId;
@@ -46,7 +22,7 @@ async function checkSingleModularAccount(job, account) {
   const providerName = provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
   const credentials = account.credentials || {};
 
-  let apiValid = false;
+  let apiValid;
   let apiError = null;
   let organizationName = null;
   let liveSearch = { performed: false, found: false, matches: [] };

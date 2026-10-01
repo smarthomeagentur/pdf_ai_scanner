@@ -1,5 +1,3 @@
-const fs = require("fs");
-const path = require("path");
 const dotenv = require("dotenv");
 const { appSettings } = require("../config/settings");
 dotenv.config();
@@ -492,8 +490,8 @@ class ClickUpAPI {
     const dueDate = this.parseDocumentDateToMs(aiResult.documentDate);
     const customFieldsPayload = this.buildCustomFieldsPayload(aiResult, driveLink);
 
-    let task = null;
-    let isUpdated = false;
+    let task;
+    let isUpdated;
 
     if (existingTaskId) {
       const updatePayload = {

@@ -39,8 +39,8 @@ const {
   uploadJobs,
   addJobs,
   processedDriveFiles,
-  saveJobs,
 } = require("./src/services/jobQueueService");
+const { generateJobId } = require("./src/utils/textUtils");
 const { DOWNLOADS_DIR } = require("./src/config/paths");
 const path = require("path");
 const fs = require("fs");
@@ -94,7 +94,7 @@ async function checkDriveForNewFiles() {
       const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
       await pipeline(downloadRes.data, dest);
 
-      const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+      const jobId = generateJobId();
       const newJob = {
         id: jobId,
         originalName: file.name,

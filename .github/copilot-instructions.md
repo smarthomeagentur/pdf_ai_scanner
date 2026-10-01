@@ -16,11 +16,13 @@ Dieses Dokument dient als zentrale Wissensbasis für alle zukünftigen KI-Agente
 
 ## 2. Projektstruktur
 
-- `index.js`: Haupteinstiegspunkt. Enthält Express-Routing, Authentifizierungs-Middleware, Job-Queue-Logik zum asynchronen Hintergrund-Verarbeiten von Dateien und Interaktion mit Google Drive.
-- `app/aiAgent.js`: Verarbeitet Dokumente, extrahiert Text (OCR), holt Metadaten über lokales LLM (Ollama) und baut durchsuchbare PDFs.
-- `app/driveApi.js`: Kapselt die gesamte Google Drive API-Kommunikation (Uploads, Auth, Folder-Suche).
-- `public/`: Enthält das Frontend (HTML, JS, CSS). Die Logik des Frontends wurde sauber in dedizierte Dateien aufgeteilt.
-- `store/`: Arbeitsverzeichnis für persistente App-Daten (`settings.json`, `jobs.json`, `token.json`).
+- `index.js`: Haupteinstiegspunkt. Initialisiert den Server, startet die Job-Queue und überwacht Google Drive auf neue Dateien.
+- `src/server.js`: Express-Konfiguration, Helmet CSP, Cookies, Auth-Gate und Route-Registrierung.
+- `src/routes/`: Modulare Express-Router (`jobRoutes.js`, `accountingRoutes.js`, `clickupRoutes.js`, `driveRoutes.js`, `scannerRoutes.js`, etc.).
+- `src/services/`: Geschäftslogik (`aiService.js`, `driveService.js`, `jobQueueService.js`, `fileRenderService.js`, `butlerService.js`, `clickupService.js`, `duplicateService.js`).
+- `src/utils/`: Geteilte Hilfsfunktionen wie `textUtils.js` (`fixUmlauts`, `generateJobId`).
+- `public/`: Frontend (HTML, CSS und ES-Module in `public/js/` sowie `scanner.js`).
+- `store/`: Arbeitsverzeichnis für persistente App-Daten (`database.sqlite`, `settings.json`, `token.json`).
 
 ## 3. Bekannte und Behoberne Risiken (Bitte STRIKT einhalten!)
 

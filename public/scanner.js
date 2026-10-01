@@ -97,9 +97,6 @@ function sortAndOrderCorners(ptsData) {
   });
 }
 
-let cornerHistoryBuffer = [];
-const MAX_HISTORY_FRAMES = 4;
-
 // Plausibilitäts- & Geometrieprüfung für Dokumente:
 // Verhindert komplett verzerrte Trapeze, spitze Dreiecke, Strichformen und unplausible Vierecke
 function isPlausibleDocumentShape(pts) {
@@ -1188,7 +1185,6 @@ function loadSampleImage(filename) {
       streaming = true;
       captureBtn.disabled = false;
       smoothedCornersRaw = null;
-      cornerHistoryBuffer = [];
       framesWithoutDetection = 0;
 
       requestAnimationFrame(processVideo);
@@ -1200,7 +1196,6 @@ if (sourceSelect) {
   sourceSelect.addEventListener("change", (e) => {
     activeSource = e.target.value;
     smoothedCornersRaw = null;
-    cornerHistoryBuffer = [];
     currentRelativeDocumentCorners = null;
     ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
 
@@ -1327,7 +1322,6 @@ async function processVideo() {
 
       if (framesWithoutDetection > MAX_FRAMES_LOSE_TRACK) {
         smoothedCornersRaw = null;
-        cornerHistoryBuffer = [];
         cancelAutoCountdown();
 
         // Wenn das Dokument komplett verschwunden ist, Fokus wieder auf kontinuierlich freigeben.
@@ -1677,34 +1671,36 @@ let reviewState = {
   activeCorner: -1,
 };
 
+const reviewCanvas = document.getElementById("reviewCanvas");
+const reviewOverlay = document.getElementById("reviewOverlay");
+const previewLoadingText = document.getElementById("previewLoadingText");
+const algorithmSelect = document.getElementById("algorithmSelect");
+const previewAlgorithmSelect = document.getElementById("previewAlgorithmSelect");
+const manualReviewSection = document.getElementById("manual-review-section");
+
 function syncFilterPresetButtons(alg) {
-  const currentAlg = alg || document.getElementById("algorithmSelect")?.value || "auto";
+  const currentAlg = alg || algorithmSelect?.value || "auto";
+  const presetMatchMap = {
+    color: ["photo", "original"],
+    color_enhanced: ["color_doc"],
+    white_paper: ["doc", "clean"],
+    auto: ["doc", "clean"],
+    bw_adaptive: ["bw"],
+    grayscale: ["bw"],
+  };
+  const activeTypes = presetMatchMap[currentAlg] || [];
   document.querySelectorAll(".filter-preset-btn").forEach((btn) => {
     const fType = btn.getAttribute("data-filter");
-    let shouldBeActive = false;
-    if ((fType === "photo" || fType === "original") && currentAlg === "color") {
-      shouldBeActive = true;
-    } else if (fType === "color_doc" && currentAlg === "color_enhanced") {
-      shouldBeActive = true;
-    } else if ((fType === "doc" || fType === "clean") && (currentAlg === "white_paper" || currentAlg === "auto")) {
-      shouldBeActive = true;
-    } else if (fType === "bw" && (currentAlg === "bw_adaptive" || currentAlg === "grayscale")) {
-      shouldBeActive = true;
-    }
-    if (shouldBeActive) {
-      btn.classList.add("active");
-    } else {
-      btn.classList.remove("active");
-    }
+    btn.classList.toggle("active", activeTypes.includes(fType));
   });
 }
 
 function updatePreviewFilter() {
-  const filter = document.getElementById("algorithmSelect").value;
-  const rCv = document.getElementById("reviewCanvas");
+  const filter = algorithmSelect?.value || "auto";
+  const rCv = reviewCanvas;
+  if (!rCv || !reviewState.highResCanvas) return;
 
   // Zuerst immer das originale (ungefilterte), um 20% erweiterte Bild zurückholen
-  if (!reviewState.highResCanvas) return;
   rCv.width = reviewState.cropW;
   rCv.height = reviewState.cropH;
   rCv
@@ -1725,7 +1721,7 @@ function updatePreviewFilter() {
 
   // Original überspringt alles und behält einfach das ungefilterte High-Res Segment
   if (filter === "color") {
-    document.getElementById("previewLoadingText").style.display = "none";
+    if (previewLoadingText) previewLoadingText.style.display = "none";
     syncFilterPresetButtons("color");
     fitReviewCanvas();
     drawReviewOverlay();
@@ -1733,7 +1729,7 @@ function updatePreviewFilter() {
   }
 
   // Optisches Feedback, dass es lädt
-  document.getElementById("previewLoadingText").style.display = "block";
+  if (previewLoadingText) previewLoadingText.style.display = "block";
 
   // Neues echtes OpenCV-Preview generieren
   rCv.toBlob(
@@ -1761,12 +1757,11 @@ function updatePreviewFilter() {
 
         const detectedAlgorithm = response.headers.get("X-Detected-Algorithm");
         if (detectedAlgorithm) {
-          const selectEl = document.getElementById("previewAlgorithmSelect");
-          if (selectEl && selectEl.querySelector(`option[value="${detectedAlgorithm}"]`)) {
-            selectEl.value = detectedAlgorithm;
+          if (previewAlgorithmSelect && previewAlgorithmSelect.querySelector(`option[value="${detectedAlgorithm}"]`)) {
+            previewAlgorithmSelect.value = detectedAlgorithm;
           }
-          if (filter === "auto") {
-            document.getElementById("algorithmSelect").value = detectedAlgorithm;
+          if (filter === "auto" && algorithmSelect) {
+            algorithmSelect.value = detectedAlgorithm;
           }
           // Vorschlag der Automatik in den Filter-Buttons hervorheben
           syncFilterPresetButtons(detectedAlgorithm);
@@ -1778,7 +1773,7 @@ function updatePreviewFilter() {
         const img = new Image();
         img.onload = () => {
           rCv.getContext("2d").drawImage(img, 0, 0, reviewState.cropW, reviewState.cropH);
-          document.getElementById("previewLoadingText").style.display = "none";
+          if (previewLoadingText) previewLoadingText.style.display = "none";
           URL.revokeObjectURL(url);
           fitReviewCanvas();
           drawReviewOverlay();
@@ -1786,7 +1781,7 @@ function updatePreviewFilter() {
         img.src = url;
       } catch (err) {
         console.error("Preview Fehler: ", err);
-        document.getElementById("previewLoadingText").style.display = "none";
+        if (previewLoadingText) previewLoadingText.style.display = "none";
       }
     },
     "image/jpeg",
@@ -1797,11 +1792,12 @@ function updatePreviewFilter() {
 function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true) {
   // Pausiere Kameraanzeige, Hardware-Tracks und Live-ONNX-Inferenz
   pauseCameraAndInference();
-  document.getElementById("video-wrapper").style.display = "none";
-  document.getElementById("captureBtn").style.display = "none";
-  document.getElementById("captureBtn").disabled = true;
-  document.getElementById("filterMenu").style.display = "none";
-  document.getElementById("manual-review-section").style.display = "flex";
+  videoWrapper.style.display = "none";
+  captureBtn.style.display = "none";
+  captureBtn.disabled = true;
+  const filterMenu = document.getElementById("filterMenu");
+  if (filterMenu) filterMenu.style.display = "none";
+  if (manualReviewSection) manualReviewSection.style.display = "flex";
   updateConfirmBtnText();
 
   reviewState.highResCanvas = highResCanvas;
@@ -1829,27 +1825,29 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   reviewState.cropH = Math.max(50, bottom - top);
 
   // Lade diesen Puffer-Zuschnitt in den ReviewCanvas
-  const rCv = document.getElementById("reviewCanvas");
-  rCv.width = reviewState.cropW;
-  rCv.height = reviewState.cropH;
-  rCv
-    .getContext("2d")
-    .drawImage(
-      highResCanvas,
-      reviewState.cropX,
-      reviewState.cropY,
-      reviewState.cropW,
-      reviewState.cropH,
-      0,
-      0,
-      reviewState.cropW,
-      reviewState.cropH
-    );
+  if (reviewCanvas) {
+    reviewCanvas.width = reviewState.cropW;
+    reviewCanvas.height = reviewState.cropH;
+    reviewCanvas
+      .getContext("2d")
+      .drawImage(
+        highResCanvas,
+        reviewState.cropX,
+        reviewState.cropY,
+        reviewState.cropW,
+        reviewState.cropH,
+        0,
+        0,
+        reviewState.cropW,
+        reviewState.cropH
+      );
+  }
 
   // Passe Overlay (Zeichenfläche) exakt auf das Canvas an
-  const oCv = document.getElementById("reviewOverlay");
-  oCv.width = reviewState.cropW;
-  oCv.height = reviewState.cropH;
+  if (reviewOverlay) {
+    reviewOverlay.width = reviewState.cropW;
+    reviewOverlay.height = reviewState.cropH;
+  }
 
   // Rechne die 4 Originalecken in das lokale (abgeschnittene) Review-Bild um
   reviewState.corners = relativeCorners.map((c) => ({
@@ -1858,8 +1856,7 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   }));
 
   // Initialisiere Filter auf Auto und synchronisiere Buttons
-  const algInput = document.getElementById("algorithmSelect");
-  if (algInput) algInput.value = "auto";
+  if (algorithmSelect) algorithmSelect.value = "auto";
   syncFilterPresetButtons("auto");
 
   fitReviewCanvas();
@@ -1873,19 +1870,20 @@ function showManualReview(highResCanvas, relativeCorners, hasRealCorners = true)
   // Vermeide den Preview-Lader, falls ohnehin keine klaren Kanten erkannt wurden
   if (hasRealCorners) {
     updatePreviewFilter();
-  } else {
-    document.getElementById("previewLoadingText").style.display = "none";
+  } else if (previewLoadingText) {
+    previewLoadingText.style.display = "none";
   }
 
   drawReviewOverlay();
 }
 
+const reviewCanvasWrapper = document.querySelector(".review-canvas-wrapper");
+
 function fitReviewCanvas() {
-  const reviewSec = document.getElementById("manual-review-section");
-  if (!reviewSec || reviewSec.style.display === "none") return;
-  const wrapper = document.querySelector(".review-canvas-wrapper");
-  const rCv = document.getElementById("reviewCanvas");
-  const oCv = document.getElementById("reviewOverlay");
+  if (!manualReviewSection || manualReviewSection.style.display === "none") return;
+  const wrapper = reviewCanvasWrapper || document.querySelector(".review-canvas-wrapper");
+  const rCv = reviewCanvas;
+  const oCv = reviewOverlay;
   if (!wrapper || !rCv || !oCv || !reviewState.cropW || !reviewState.cropH) return;
 
   const availW = Math.max(50, wrapper.clientWidth - 16);
@@ -1955,8 +1953,6 @@ function drawReviewOverlay() {
 }
 
 // Touch & Mouse Handler für das Verschieben der Ecken
-const reviewOverlay = document.getElementById("reviewOverlay");
-
 function getInternalPos(e) {
   const rect = reviewOverlay.getBoundingClientRect();
   const scaleX = reviewOverlay.width / rect.width;

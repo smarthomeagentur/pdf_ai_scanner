@@ -1,5 +1,4 @@
 const fs = require("fs");
-const path = require("path");
 const { SETTINGS_FILE, JOBS_FILE, SKIPPED_EMAILS_FILE } = require("../config/paths");
 
 function createBackup() {

@@ -1,34 +1,11 @@
 const express = require("express");
-const fs = require("fs");
 const { requireAdmin } = require("../middleware/auth");
 const { appSettings } = require("../config/settings");
-const { getJob, saveJobs, uploadJobs, getJobs } = require("../services/jobQueueService");
-const { driveApi } = require("../services/driveService");
+const { getJob, saveJobs, getJobs } = require("../services/jobQueueService");
+const { getJobPdfBuffer } = require("../services/fileRenderService");
 const { getClickUpClient } = require("../services/clickupService");
 
 const router = express.Router();
-
-async function getJobPdfBuffer(job) {
-  if (job.filePath && fs.existsSync(job.filePath)) {
-    return await fs.promises.readFile(job.filePath);
-  }
-
-  let driveFileId = job.rawDriveId;
-  if (!driveFileId && job.result && job.result.webViewLink) {
-    const match = job.result.webViewLink.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    if (match) driveFileId = match[1];
-  }
-
-  if (!driveFileId) return null;
-
-  try {
-    const drive = await driveApi.getClient();
-    const driveRes = await drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" });
-    return Buffer.from(driveRes.data);
-  } catch (e) {
-    return null;
-  }
-}
 
 router.post("/api/clickup/verify", requireAdmin, async (req, res) => {
   try {

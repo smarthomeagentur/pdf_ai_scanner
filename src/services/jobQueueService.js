@@ -1,15 +1,14 @@
 const fs = require("fs");
 const path = require("path");
-const { execFile } = require("child_process");
 const { pipeline } = require("stream/promises");
 const aiAgent = require("./aiService");
-const { DOWNLOADS_DIR, getPythonPath } = require("../config/paths");
+const { DOWNLOADS_DIR } = require("../config/paths");
 const { appSettings } = require("../config/settings");
 const { driveApi } = require("./driveService");
 const { findDuplicatesForJob } = require("./duplicateService");
 const { renderPdfToJpeg } = require("./fileRenderService");
-const { ClickUpAPI } = require("./clickupService");
 const dbWrapper = require("../db/database");
+const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
 let uploadJobs = {};
 let uploadQueue = [];
@@ -44,16 +43,6 @@ function persistAppState() {
   } catch (err) {
     console.error("[SQLITE] Fehler beim Speichern des App-Status:", err);
   }
-}
-
-function fixUmlauts(str) {
-  if (!str || typeof str !== "string") return str || "";
-  try {
-    if (/[\u00C2-\u00C3][\u0080-\u00BF]/.test(str)) {
-      return Buffer.from(str, "latin1").toString("utf8");
-    }
-  } catch (e) {}
-  return str;
 }
 
 async function loadJobs() {
@@ -665,7 +654,7 @@ async function executeDriveSync(items) {
 
         let jobId = item.existingJobId;
         if (!jobId || !uploadJobs[jobId]) {
-          jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+          jobId = generateJobId();
           uploadJobs[jobId] = {
             id: jobId,
             originalName: item.name,
@@ -722,7 +711,7 @@ async function importDriveFile(driveFileId, name = null) {
   const downloadRes = await drive.files.get({ fileId: cleanId, alt: "media" }, { responseType: "stream" });
   await pipeline(downloadRes.data, dest);
 
-  const jobId = Date.now().toString() + "-" + Math.random().toString(36).substring(2, 9);
+  const jobId = generateJobId();
   const targetThumb = path.join(DOWNLOADS_DIR, `thumb_${jobId}.jpg`);
   renderPdfToJpeg(localPath, targetThumb).catch(() => {});
 
