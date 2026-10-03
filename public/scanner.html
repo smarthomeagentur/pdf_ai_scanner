@@ -89,6 +89,11 @@
         <label class="form-label mb-0 mt-2 small">Rahmen-Trägheit (Anti-Flicker):
           <span id="smoothingVal">40%</span></label>
         <input type="range" class="modern-slider" id="smoothingSlider" min="1" max="100" value="40" />
+
+        <div class="form-check form-switch mt-2">
+          <input class="form-check-input" type="checkbox" id="swapAfAxesToggle" checked />
+          <label class="form-check-label small" for="swapAfAxesToggle">AF-Fokusachsen anpassen (X ↔ Y Sensor-Korrektur)</label>
+        </div>
       </div>
     </details>
 
@@ -230,7 +235,7 @@
   <script src="/vendor/onnx/ort.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js'"></script>
 
   <!-- Scanner-Logik mit KI-Kantenerkennung -->
-  <script src="/scanner.js?v=20261001_preview_30fps"></script>
+  <script src="/scanner.js?v=20261001_af_swap_axes_v4"></script>
 
   <!-- OpenCV.js im Hintergrund (defer) für Perspektivtransformation / Entzerrung -->
   <script defer src="https://docs.opencv.org/4.8.0/opencv.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.2/dist/opencv.js';" onload="window.onOpenCvReady && window.onOpenCvReady()" type="text/javascript"></script>
