@@ -552,30 +552,105 @@ async function initAutofocus() {
   }
 }
 
-// Hilfsfunktion: Mappt Bildschirm- bzw. VideoWrapper-Koordinaten (0.0..1.0)
-// unter Berücksichtigung von CSS object-fit: cover exakt auf den ungeschnittenen Sensor-Videostream
-function mapScreenToVideoCoords(normScreenX, normScreenY) {
-  let targetX = normScreenX;
-  let targetY = normScreenY;
+// Berechnet die exakte Darstellungs-Geometrie des ungeschnittenen Videos / Bildes innerhalb des Video-Wrappers (object-fit: contain)
+function getVideoRenderBox() {
+  const currentSource = activeSource === "camera" ? video : sampleImage;
+  const srcW = activeSource === "camera"
+    ? (video ? video.videoWidth : 0)
+    : (sampleImage ? (sampleImage.naturalWidth || sampleImage.width || 0) : 0);
+  const srcH = activeSource === "camera"
+    ? (video ? video.videoHeight : 0)
+    : (sampleImage ? (sampleImage.naturalHeight || sampleImage.height || 0) : 0);
 
-  if (video && video.videoWidth && video.videoHeight && videoWrapper) {
-    const rect = videoWrapper.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      const srcW = video.videoWidth;
-      const srcH = video.videoHeight;
-      const wScale = srcW / rect.width;
-      const hScale = srcH / rect.height;
-      const scale = Math.min(wScale, hScale);
+  if (!videoWrapper) {
+    return {
+      wrapperWidth: 0,
+      wrapperHeight: 0,
+      renderedWidth: 0,
+      renderedHeight: 0,
+      offsetX: 0,
+      offsetY: 0,
+      scale: 1,
+      srcW: 0,
+      srcH: 0,
+    };
+  }
 
-      const sWidth = rect.width * scale;
-      const sHeight = rect.height * scale;
-      const sx = Math.max(0, (srcW - sWidth) / 2);
-      const sy = Math.max(0, (srcH - sHeight) / 2);
+  const rect = videoWrapper.getBoundingClientRect();
+  const wrapperW = rect.width;
+  const wrapperH = rect.height;
 
-      targetX = (sx + normScreenX * sWidth) / srcW;
-      targetY = (sy + normScreenY * sHeight) / srcH;
+  if (!srcW || !srcH || wrapperW <= 0 || wrapperH <= 0) {
+    return {
+      wrapperWidth: wrapperW,
+      wrapperHeight: wrapperH,
+      renderedWidth: wrapperW,
+      renderedHeight: wrapperH,
+      offsetX: 0,
+      offsetY: 0,
+      scale: 1,
+      srcW: srcW || wrapperW,
+      srcH: srcH || wrapperH,
+    };
+  }
+
+  // object-fit: contain (voller Sensor- bzw. Kamera-View wird ohne jegliche Rand-Beschneidung dargestellt)
+  const scale = Math.min(wrapperW / srcW, wrapperH / srcH);
+  const renderedW = srcW * scale;
+  const renderedH = srcH * scale;
+  const offsetX = (wrapperW - renderedW) / 2;
+  const offsetY = (wrapperH - renderedH) / 2;
+
+  return {
+    wrapperWidth: wrapperW,
+    wrapperHeight: wrapperH,
+    renderedWidth: renderedW,
+    renderedHeight: renderedH,
+    offsetX,
+    offsetY,
+    scale,
+    srcW,
+    srcH,
+  };
+}
+
+// Passt das Zeichen-Overlay (Canvas) pixelgenau an den sichtbaren Video-Ausschnitt an
+function updateOverlayGeometry() {
+  if (!overlay || !videoWrapper) return;
+  const box = getVideoRenderBox();
+  if (box.renderedWidth > 0 && box.renderedHeight > 0) {
+    const leftPx = `${Math.round(box.offsetX)}px`;
+    const topPx = `${Math.round(box.offsetY)}px`;
+    const widthPx = `${Math.round(box.renderedWidth)}px`;
+    const heightPx = `${Math.round(box.renderedHeight)}px`;
+
+    if (overlay.style.left !== leftPx) overlay.style.left = leftPx;
+    if (overlay.style.top !== topPx) overlay.style.top = topPx;
+    if (overlay.style.width !== widthPx) overlay.style.width = widthPx;
+    if (overlay.style.height !== heightPx) overlay.style.height = heightPx;
+
+    const roundedW = Math.round(box.renderedWidth);
+    const roundedH = Math.round(box.renderedHeight);
+    if (overlay.width !== roundedW || overlay.height !== roundedH) {
+      overlay.width = roundedW;
+      overlay.height = roundedH;
     }
   }
+}
+
+// Hilfsfunktion: Mappt Bildschirm- bzw. VideoWrapper-Koordinaten (0.0..1.0)
+// unter Berücksichtigung von CSS object-fit: contain exakt auf den ungeschnittenen Sensor-Videostream
+function mapScreenToVideoCoords(normScreenX, normScreenY) {
+  const box = getVideoRenderBox();
+  if (box.renderedWidth <= 0 || box.renderedHeight <= 0) {
+    return { x: 0.5, y: 0.5 };
+  }
+
+  const tapPixelX = normScreenX * box.wrapperWidth;
+  const tapPixelY = normScreenY * box.wrapperHeight;
+
+  let targetX = (tapPixelX - box.offsetX) / box.renderedWidth;
+  let targetY = (tapPixelY - box.offsetY) / box.renderedHeight;
 
   targetX = Math.min(Math.max(targetX, 0), 1);
   targetY = Math.min(Math.max(targetY, 0), 1);
@@ -596,13 +671,21 @@ function mapScreenToVideoCoords(normScreenX, normScreenY) {
   };
 }
 
-// Fixiert den Fokus einmalig auf das ruhige Motiv bis zur nächsten Bewegung
-async function lockSteadyFocus(relX, relY) {
+// Fixiert den Fokus einmalig auf das ruhige Motiv bis zur nächsten Bewegung (Sensor-Koordinaten 0..1)
+async function lockSteadyFocus(sensorX, sensorY) {
   if (isFocusLocked || !videoTrack) return;
-  const target = mapScreenToVideoCoords(relX, relY);
+  let targetX = Math.min(Math.max(sensorX, 0), 1);
+  let targetY = Math.min(Math.max(sensorY, 0), 1);
+
+  if (swapAfAxes) {
+    const temp = targetX;
+    targetX = targetY;
+    targetY = temp;
+  }
+
   try {
     await videoTrack.applyConstraints({
-      advanced: [{ pointsOfInterest: [{ x: target.x, y: target.y }], focusMode: "single-shot" }],
+      advanced: [{ pointsOfInterest: [{ x: targetX, y: targetY }], focusMode: "single-shot" }],
     });
   } catch (_) {
     try {
@@ -620,8 +703,8 @@ async function lockSteadyFocus(relX, relY) {
   isFocusLocked = true;
   isTapLocked = false;
   focusLockTimestamp = Date.now();
-  focusLockDocCenter = { x: relX, y: relY };
-  console.log(`[Fokus] Beleg ruhig im Bild -> Fokus fixiert auf Stream (${(target.x * 100).toFixed(0)}%, ${(target.y * 100).toFixed(0)}%)`);
+  focusLockDocCenter = { x: sensorX, y: sensorY };
+  console.log(`[Fokus] Beleg ruhig im Bild -> Fokus fixiert auf Sensor-Stream (${(targetX * 100).toFixed(0)}%, ${(targetY * 100).toFixed(0)}%)`);
 }
 
 async function unlockFocus(reason = "Automatisch") {
@@ -918,54 +1001,60 @@ async function startCamera(forceResolution = null) {
     video.srcObject = null;
   }
 
-  // Für die Live-Vorschau immer maximal 1080p (oder 720p) anfordern
-  const targetRes = (forceResolution === "720p") ? "720p" : "1080p";
-  currentCameraResolution = targetRes;
+  // Für die Live-Vorschau immer das native 4:3 Sensor-Format anfordern
+  // Auf Smartphones im Hochformat (Portrait) hat das Bild mehr Höhe als Breite (3:4 Format, z.B. 1080x1440 oder 720x960)
+  const isPortrait = window.innerHeight >= window.innerWidth;
 
   const candidateConstraints = [
-    // 1. 1080p Full HD Rückkamera (wird standardmäßig bevorzugt; max: 1920 verhindert 4K-Stream, max: 30 FPS für beste Performance)
-    ...(targetRes === "1080p"
-      ? [
-          {
-            video: {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 1920, max: 1920 },
-              height: { ideal: 1080, max: 1080 },
-              frameRate: { ideal: 30, max: 30 },
-            },
-            audio: false,
-          },
-        ]
-      : []),
-    // 2. 720p HD Rückkamera (max 30 FPS)
+    // 1. Primär: Echtes 4:3 Sensor-Format (im Hochformat 1080x1440, im Querformat 1440x1080)
     {
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1280, max: 1280 },
-        height: { ideal: 720, max: 720 },
+        width: { ideal: isPortrait ? 1080 : 1440 },
+        height: { ideal: isPortrait ? 1440 : 1080 },
         frameRate: { ideal: 30, max: 30 },
       },
       audio: false,
     },
-    // 3. Beliebige Rückkamera bis max 1080p (max 30 FPS)
+    // 2. 4:3 Sensor-Format Stufe 2 (im Hochformat 720x960, im Querformat 960x720)
     {
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920, max: 1920 },
-        height: { ideal: 1080, max: 1080 },
+        width: { ideal: isPortrait ? 720 : 960 },
+        height: { ideal: isPortrait ? 960 : 720 },
         frameRate: { ideal: 30, max: 30 },
       },
       audio: false,
     },
-    // 4. Beliebige verfügbare Kamera (Webcam, Laptop, USB) bis max 1080p (max 30 FPS)
+    // 3. Fallback: 1080p Standard (im Hochformat 1080x1920, im Querformat 1920x1080)
     {
       video: {
-        width: { ideal: 1920, max: 1920 },
-        height: { ideal: 1080, max: 1080 },
+        facingMode: { ideal: "environment" },
+        width: { ideal: isPortrait ? 1080 : 1920 },
+        height: { ideal: isPortrait ? 1920 : 1080 },
         frameRate: { ideal: 30, max: 30 },
       },
       audio: false,
     },
+    // 4. Fallback: 720p Standard (im Hochformat 720x1280, im Querformat 1280x720)
+    {
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: isPortrait ? 720 : 1280 },
+        height: { ideal: isPortrait ? 1280 : 720 },
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    },
+    // 5. Beliebige Rückkamera
+    {
+      video: {
+        facingMode: { ideal: "environment" },
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    },
+    // 6. Universeller Fallback
     {
       video: {
         frameRate: { ideal: 30, max: 30 },
@@ -1033,16 +1122,27 @@ function updateCameraResolutionBadge(width, height, fps = null) {
   const maxDim = Math.max(currentBadgeWidth, currentBadgeHeight);
   const minDim = Math.min(currentBadgeWidth, currentBadgeHeight);
 
+  // Bestimme Format & Seitenverhältnis
+  const aspect = maxDim / (minDim || 1);
+  let ratioStr = "";
+  if (Math.abs(aspect - 4 / 3) < 0.12) {
+    ratioStr = "4:3";
+  } else if (Math.abs(aspect - 16 / 9) < 0.12) {
+    ratioStr = "16:9";
+  } else if (Math.abs(aspect - 1.0) < 0.12) {
+    ratioStr = "1:1";
+  }
+
   let label = `${minDim}p`;
   if (maxDim >= 3000) {
     label = "4K";
-  } else if (maxDim >= 1800) {
+  } else if (minDim >= 1000 || maxDim >= 1400) {
     label = "1080p";
-  } else if (maxDim >= 1200) {
+  } else if (minDim >= 700 || maxDim >= 900) {
     label = "720p";
   }
 
-  textEl.textContent = label;
+  textEl.textContent = ratioStr ? `${label} (${ratioStr})` : label;
 
   if (fpsEl && dividerEl) {
     if (currentBadgeFps !== null && currentBadgeFps > 0) {
@@ -1056,7 +1156,7 @@ function updateCameraResolutionBadge(width, height, fps = null) {
   }
 
   const fpsStr = currentBadgeFps ? ` @ ${currentBadgeFps} FPS` : "";
-  badge.title = `Kamera: ${currentBadgeWidth} × ${currentBadgeHeight} px (${label})${fpsStr}`;
+  badge.title = `Kamera: ${currentBadgeWidth} × ${currentBadgeHeight} px (${label} ${ratioStr})${fpsStr}`;
 }
 
 async function setVideoStream(stream) {
@@ -1066,7 +1166,7 @@ async function setVideoStream(stream) {
     await video.play();
   } catch (_) { }
 
-  // Hardware-Vorschau aktiv auf max. 30 FPS begrenzen (spart Akku & GPU-Last)
+  // Hardware-Vorschau auf max. 30 FPS begrenzen, ohne das Seitenverhältnis zu beschneiden
   if (videoTrack && videoTrack.applyConstraints) {
     try {
       await videoTrack.applyConstraints({ frameRate: { ideal: 30, max: 30 } });
@@ -1076,19 +1176,14 @@ async function setVideoStream(stream) {
   updateTorchState();
   await initAutofocus();
 
-  const trackSettings = (videoTrack && videoTrack.getSettings) ? videoTrack.getSettings() : {};
-  const currentW = trackSettings.width || video.videoWidth || 0;
-  const currentH = trackSettings.height || video.videoHeight || 0;
+  const currentW = video.videoWidth || ((videoTrack && videoTrack.getSettings) ? videoTrack.getSettings().width : 0);
+  const currentH = video.videoHeight || ((videoTrack && videoTrack.getSettings) ? videoTrack.getSettings().height : 0);
   if (currentW > 0 && currentH > 0) {
     updateCameraResolutionBadge(currentW, currentH);
   }
 
   if (!streaming && video.videoWidth > 0 && activeSource === "camera") {
-    const rect = videoWrapper.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      overlay.width = rect.width;
-      overlay.height = rect.height;
-    }
+    updateOverlayGeometry();
     streaming = true;
     captureBtn.disabled = false;
     setTimeout(processVideo, 60);
@@ -1235,17 +1330,17 @@ function monitorCameraFpsAndAdapt() {
     }
 
     elapsedIntervals++;
-    const actualWidth = (videoTrack.getSettings && videoTrack.getSettings().width) || video.videoWidth || 0;
-    const actualHeight = (videoTrack.getSettings && videoTrack.getSettings().height) || video.videoHeight || 0;
+    const actualWidth = video.videoWidth || ((videoTrack.getSettings && videoTrack.getSettings().width) || 0);
+    const actualHeight = video.videoHeight || ((videoTrack.getSettings && videoTrack.getSettings().height) || 0);
     const effectiveFps = getEffectiveCameraFps();
 
     if (actualWidth > 0 && actualHeight > 0) {
       updateCameraResolutionBadge(actualWidth, actualHeight, effectiveFps);
     }
 
-    // Sicherstellen, dass die Live-Vorschau immer maximal 1080p (oder weniger) nutzt
-    if (actualWidth > 1920) {
-      console.warn(`[Kamera] Vorschau-Auflösung (${actualWidth}px) übersteigt 1080p. Drossle auf 1080p...`);
+    // Sicherstellen, dass die Live-Vorschau immer maximal 1080p/1440p (oder weniger) nutzt
+    if (Math.max(actualWidth, actualHeight) > 1920) {
+      console.warn(`[Kamera] Vorschau-Auflösung (${actualWidth}x${actualHeight}px) übersteigt 1080p. Drossle auf 1080p...`);
       await switchTo1080p();
     }
   }, 1000);
@@ -1255,15 +1350,20 @@ async function switchTo1080p() {
   currentCameraResolution = "1080p";
   if (!videoTrack) return;
 
+  const isPortrait = window.innerHeight >= window.innerWidth;
+
   try {
-    // Versuch 1: In-Place Constraints (unterbrechungsfrei)
+    // Versuch 1: In-Place Constraints (unterbrechungsfrei) im nativen Sensorformat
     await videoTrack.applyConstraints({
-      width: { ideal: 1920, max: 1920 },
-      height: { ideal: 1080, max: 1080 },
+      width: { ideal: isPortrait ? 1080 : 1440 },
+      height: { ideal: isPortrait ? 1440 : 1080 },
       frameRate: { ideal: 30, max: 30 },
     });
-    updateCameraResolutionBadge(1920, 1080);
-    console.log("[Kamera] Erfolgreich auf 1080p umgeschaltet (applyConstraints).");
+    updateOverlayGeometry();
+    const w = video.videoWidth || (videoTrack.getSettings && videoTrack.getSettings().width) || (isPortrait ? 1080 : 1440);
+    const h = video.videoHeight || (videoTrack.getSettings && videoTrack.getSettings().height) || (isPortrait ? 1440 : 1080);
+    updateCameraResolutionBadge(w, h);
+    console.log("[Kamera] Erfolgreich auf Sensor-Auflösung umgeschaltet (applyConstraints).");
   } catch (e) {
     console.warn("[Kamera] In-Place Wechsel auf 1080p nicht möglich, starte Stream neu:", e);
     if (videoTrack) {
@@ -1289,9 +1389,7 @@ function loadSampleImage(filename) {
     sampleImage.onload = () => {
       console.log(`Test-Bild '${filename}' geladen (${sampleImage.naturalWidth}x${sampleImage.naturalHeight})`);
       updateCameraResolutionBadge(sampleImage.naturalWidth, sampleImage.naturalHeight);
-      const rect = videoWrapper.getBoundingClientRect();
-      overlay.width = rect.width;
-      overlay.height = rect.height;
+      updateOverlayGeometry();
       streaming = true;
       captureBtn.disabled = false;
       smoothedCornersRaw = null;
@@ -1336,25 +1434,31 @@ function onSystemReady() {
 video.addEventListener("canplay", function () {
   if (video.videoWidth > 0 && video.videoHeight > 0 && activeSource === "camera") {
     updateCameraResolutionBadge(video.videoWidth, video.videoHeight);
+    updateOverlayGeometry();
   }
 
   if (!streaming && video.videoWidth > 0 && activeSource === "camera") {
-    const rect = video.getBoundingClientRect();
-    overlay.width = rect.width;
-    overlay.height = rect.height;
+    updateOverlayGeometry();
     streaming = true;
     captureBtn.disabled = false;
-
-    window.addEventListener("resize", () => {
-      if (streaming && (video || sampleImage)) {
-        const newRect = videoWrapper.getBoundingClientRect();
-        overlay.width = newRect.width;
-        overlay.height = newRect.height;
-      }
-    });
-
     requestAnimationFrame(processVideo);
   }
+});
+
+// Fenstergrößen- und Orientierungs-Änderungen überwachen
+window.addEventListener("resize", () => {
+  if (streaming && (video || sampleImage)) {
+    updateOverlayGeometry();
+  }
+});
+window.addEventListener("orientationchange", () => {
+  setTimeout(async () => {
+    if (streaming && activeSource === "camera") {
+      await startCamera();
+    } else {
+      updateOverlayGeometry();
+    }
+  }, 200);
 });
 
 let isProcessingFrame = false;
@@ -1377,22 +1481,15 @@ async function processVideo() {
       return;
     }
 
-    const rect = videoWrapper.getBoundingClientRect();
+    updateOverlayGeometry();
+
     const srcW = activeSource === "camera" ? video.videoWidth : (sampleImage.naturalWidth || 800);
     const srcH = activeSource === "camera" ? video.videoHeight : (sampleImage.naturalHeight || 600);
 
-    const wScale = srcW / rect.width;
-    const hScale = srcH / rect.height;
-    const scale = Math.min(wScale, hScale);
-
-    const sWidth = rect.width * scale;
-    const sHeight = rect.height * scale;
-    const sx = Math.max(0, (srcW - sWidth) / 2);
-    const sy = Math.max(0, (srcH - sHeight) / 2);
-
     let detectedCorners = null;
     if (onnxReady) {
-      detectedCorners = await detectCornersOnnx(currentSource, sx, sy, sWidth, sHeight);
+      // Immer den gesamten Sensor / unbeschnittenen Frame für die Verarbeitung nutzen!
+      detectedCorners = await detectCornersOnnx(currentSource, 0, 0, srcW, srcH);
     }
 
     // --- ADAPTIVES SMOOTHING / ANTI-FLICKERING LOGIK ---
@@ -1622,28 +1719,33 @@ captureBtn.addEventListener("click", async () => {
           }
         }
 
-        // Prio 1: Echte 4K-Aufnahme über den Still-Photo Sensorpfad (takePhoto)
-        // Funktioniert auch, wenn der Live-Sucher für flüssige FPS auf 1080p gedrosselt wurde!
+        // Prio 1: Echte Aufnahme über den Still-Photo Sensorpfad (takePhoto)
+        // Volle Sensorauflösung unter Beibehaltung des nativen Sensor-Seitenverhältnisses (z. B. 4:3)
         let stillImageBitmap = null;
         if (typeof imageCapture.takePhoto === "function") {
           try {
             let photoOptions = {};
             if (typeof imageCapture.getPhotoCapabilities === "function") {
               const photoCaps = await imageCapture.getPhotoCapabilities();
-              if (photoCaps.imageWidth && photoCaps.imageWidth.max) {
-                const targetW = Math.min(photoCaps.imageWidth.max, 3840);
-                const targetH = Math.round((targetW * 9) / 16);
-                photoOptions.imageWidth = targetW;
-                if (photoCaps.imageHeight && photoCaps.imageHeight.max >= targetH) {
-                  photoOptions.imageHeight = targetH;
+              if (photoCaps.imageWidth && photoCaps.imageWidth.max && photoCaps.imageHeight && photoCaps.imageHeight.max) {
+                const maxW = photoCaps.imageWidth.max;
+                const maxH = photoCaps.imageHeight.max;
+                // Nativ-Seitenverhältnis des Sensors beibehalten (kein erzwungenes 16:9)
+                if (maxW > 4096) {
+                  const ratio = maxH / maxW;
+                  photoOptions.imageWidth = 4096;
+                  photoOptions.imageHeight = Math.round(4096 * ratio);
+                } else {
+                  photoOptions.imageWidth = maxW;
+                  photoOptions.imageHeight = maxH;
                 }
               }
             }
-            console.log("[Scanner] Erfasse 4K-Foto via ImageCapture.takePhoto()...", photoOptions);
+            console.log("[Scanner] Erfasse hochauflösendes Sensor-Foto via ImageCapture.takePhoto()...", photoOptions);
             const photoBlob = await imageCapture.takePhoto(photoOptions);
             if (photoBlob) {
               stillImageBitmap = await createImageBitmap(photoBlob);
-              console.log(`[Scanner] Foto in 4K/voller Sensorauflösung erfasst: ${stillImageBitmap.width} × ${stillImageBitmap.height} px ✓`);
+              console.log(`[Scanner] Foto in voller Sensorauflösung erfasst: ${stillImageBitmap.width} × ${stillImageBitmap.height} px ✓`);
             }
           } catch (takePhotoErr) {
             console.warn("[Scanner] takePhoto fehlgeschlagen, falle zurück auf Stream-Frame:", takePhotoErr);
@@ -1688,55 +1790,41 @@ captureBtn.addEventListener("click", async () => {
     }
 
     if (frozenCorners && streaming) {
-      const rect = videoWrapper.getBoundingClientRect();
       const vidW = activeSource === "camera" ? video.videoWidth : sampleImage.naturalWidth;
       const vidH = activeSource === "camera" ? video.videoHeight : sampleImage.naturalHeight;
 
-      const wScaleDOM = vidW / rect.width;
-      const hScaleDOM = vidH / rect.height;
-      const scaleDOM = Math.min(wScaleDOM, hScaleDOM);
+      if (vidW > 0 && vidH > 0) {
+        const previewAspect = vidW / vidH;
+        const photoAspect = originalWidth / originalHeight;
 
-      const visibleVidW = rect.width * scaleDOM;
-      const visibleVidH = rect.height * scaleDOM;
-      const domOffsetX = (vidW - visibleVidW) / 2;
-      const domOffsetY = (vidH - visibleVidH) / 2;
-
-      const scaleVidToPhoto = Math.min(originalWidth / vidW, originalHeight / vidH);
-      const mappedVidW = vidW * scaleVidToPhoto;
-      const mappedVidH = vidH * scaleVidToPhoto;
-
-      const photoOffsetX = (originalWidth - mappedVidW) / 2;
-      const photoOffsetY = (originalHeight - mappedVidH) / 2;
-
-      frozenCorners = frozenCorners.map((fc) => {
-        let absVideoX = domOffsetX + fc.x * visibleVidW;
-        let absVideoY = domOffsetY + fc.y * visibleVidH;
-        let absPhotoX = photoOffsetX + absVideoX * scaleVidToPhoto;
-        let absPhotoY = photoOffsetY + absVideoY * scaleVidToPhoto;
-        return {
-          x: absPhotoX / originalWidth,
-          y: absPhotoY / originalHeight,
-        };
-      });
+        // Wenn Foto und Video-Vorschau das gleiche Seitenverhältnis haben, mappen die Ecken 1:1.
+        // Bei abweichendem Seitenverhältnis (z. B. Video-Vorschau zentriert aus 4:3 Sensor):
+        if (Math.abs(previewAspect - photoAspect) > 0.02) {
+          if (previewAspect > photoAspect) {
+            // Preview ist breiter als Sensor-Foto -> Preview war vertikal zentriert gecroppt
+            const visiblePhotoH = originalWidth / previewAspect;
+            const offsetY = (originalHeight - visiblePhotoH) / 2;
+            frozenCorners = frozenCorners.map((fc) => ({
+              x: fc.x,
+              y: (offsetY + fc.y * visiblePhotoH) / originalHeight,
+            }));
+          } else {
+            // Preview ist schmaler als Sensor-Foto -> Preview war horizontal zentriert gecroppt
+            const visiblePhotoW = originalHeight * previewAspect;
+            const offsetX = (originalWidth - visiblePhotoW) / 2;
+            frozenCorners = frozenCorners.map((fc) => ({
+              x: (offsetX + fc.x * visiblePhotoW) / originalWidth,
+              y: fc.y,
+            }));
+          }
+        }
+      }
     }
   } else {
-    let cropWidth = originalWidth;
-    let cropHeight = originalHeight;
-    let sourceX = 0;
-    let sourceY = 0;
-
-    if (streaming && video) {
-      const rect = video.getBoundingClientRect();
-      const vScale = Math.min(originalWidth / rect.width, originalHeight / rect.height);
-      cropWidth = rect.width * vScale;
-      cropHeight = rect.height * vScale;
-      sourceX = (originalWidth - cropWidth) / 2;
-      sourceY = (originalHeight - cropHeight) / 2;
-    }
-
-    canvasHighRes.width = cropWidth;
-    canvasHighRes.height = cropHeight;
-    ctxHighRes.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    // Reiner Video-Fallback: Vollständiges Kamerabild ohne Beschneidung durch Bildschirm-Format erfassen
+    canvasHighRes.width = originalWidth;
+    canvasHighRes.height = originalHeight;
+    ctxHighRes.drawImage(video, 0, 0, originalWidth, originalHeight);
   }
 
   // Pausiere Kamera und Live-ONNX-Inferenz sofort nach dem Foto-Schnappschuss
