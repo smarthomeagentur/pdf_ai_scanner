@@ -56,10 +56,16 @@ router.get("/api/documents/deep-search", async (req, res) => {
     if (isAdmin) {
       try {
         const drive = await driveApi.getClient();
-        const folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+        // Only search the "verarbeitet" (sorted) folder; raw scans would just duplicate processed documents
+        const rawFld = appSettings.FOLDER_ID_SORTED || "";
+        const parenMatch = rawFld.match(/\(([a-zA-Z0-9_-]{10,})\)$/);
+        let folderId = parenMatch ? parenMatch[1] : rawFld.trim();
+        if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+          folderId = await driveApi.findFolderId(folderId);
+        }
         if (folderId) {
           const driveRes = await drive.files.list({
-            q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
+            q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
             fields: "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description, md5Checksum)",
             pageSize: 40,
           });
