@@ -1,5 +1,6 @@
 const express = require("express");
 const fs = require("fs");
+const crypto = require("crypto");
 const { checkIsAdmin } = require("../middleware/auth");
 const { appSettings } = require("../config/settings");
 const { driveApi } = require("../services/driveService");
@@ -13,6 +14,13 @@ const {
 } = require("../services/deepSearchService");
 
 const router = express.Router();
+
+// Identical PDF text => same document (scan without text layer yields no fingerprint)
+function getTextFingerprint(text) {
+  const normalized = (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (normalized.length < 80) return null;
+  return `txt:${crypto.createHash("sha1").update(normalized).digest("hex")}`;
+}
 
 router.get("/api/documents/deep-search", async (req, res) => {
   try {
@@ -48,50 +56,57 @@ router.get("/api/documents/deep-search", async (req, res) => {
     if (isAdmin) {
       try {
         const drive = await driveApi.getClient();
-        const folderId = appSettings.FOLDER_ID_SORTED || appSettings.FOLDER_ID;
+        // Only search the "verarbeitet" (sorted) folder; raw scans would just duplicate processed documents
+        const rawFld = appSettings.FOLDER_ID_SORTED || "";
+        const parenMatch = rawFld.match(/\(([a-zA-Z0-9_-]{10,})\)$/);
+        let folderId = parenMatch ? parenMatch[1] : rawFld.trim();
+        if (folderId && !driveApi.isValidGoogleDriveId(folderId)) {
+          folderId = await driveApi.findFolderId(folderId);
+        }
         if (folderId) {
           const driveRes = await drive.files.list({
-            q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
+            q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
             fields: "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description, md5Checksum)",
             pageSize: 40,
           });
 
-          const files = driveRes.data.files || [];
-          const driveSnippetPromises = files.slice(0, 15).map(async (file) => {
-            try {
-              // 1. Try to download and parse text directly from Google Drive PDF
-              const driveText = await Promise.race([
+          const files = (driveRes.data.files || []).filter((file) => !hiddenDriveIds.has(file.id));
+          const driveTexts = await Promise.all(
+            files.map((file) =>
+              Promise.race([
                 getDrivePdfText(drive, file.id, file.modifiedTime),
                 new Promise((resolve) => setTimeout(() => resolve(""), 3500)),
-              ]);
-              let snip = extractExactSnippet(driveText, q, 80);
-              if (snip) return snip;
+              ]).catch(() => "")
+            )
+          );
+          const textKeys = driveTexts.map(getTextFingerprint);
 
-              // 2. If drive description contains the search term, extract context snippet
-              if (file.description) {
-                snip = extractExactSnippet(file.description, q, 80);
-                if (snip) return snip;
-              }
-
-              return "";
-            } catch (e) {
-              return "";
-            }
+          // Re-processing a job used to leave older sorted copies (different AI name, different md5)
+          // on Drive. Their PDF text is identical, so files sharing a text fingerprint with a
+          // job-linked file belong to that job as well.
+          const directJobs = files.map(
+            (file) =>
+              jobByDriveId.get(file.id) ||
+              (file.appProperties?.jobId && localJobs.find((j) => j.id === file.appProperties.jobId)) ||
+              jobByNameKey.get(normalizeDocKey(file.name)) ||
+              null
+          );
+          const jobByTextKey = new Map();
+          directJobs.forEach((job, index) => {
+            if (job && textKeys[index] && !jobByTextKey.has(textKeys[index])) jobByTextKey.set(textKeys[index], job);
           });
 
-          const snippets = await Promise.all(driveSnippetPromises);
-
           files.forEach((file, index) => {
-            let snippet = snippets[index];
+            let snippet = extractExactSnippet(driveTexts[index], q, 80);
             if (!snippet && file.description) {
               snippet = extractExactSnippet(file.description, q, 80) || file.description;
             }
             if (!snippet) {
               snippet = "Gefunden in Dokument-Volltext (Google Drive)";
             }
-            if (hiddenDriveIds.has(file.id)) return;
 
-            const job = jobByDriveId.get(file.id) || jobByNameKey.get(normalizeDocKey(file.name));
+            const textKey = textKeys[index];
+            const job = directJobs[index] || (textKey && jobByTextKey.get(textKey));
             if (job) {
               if (seenJobIds.has(job.id)) return;
               seenJobIds.add(job.id);
@@ -113,9 +128,9 @@ router.get("/api/documents/deep-search", async (req, res) => {
 
             const nameKey = normalizeDocKey(file.name);
             const contentKey = file.md5Checksum ? `md5:${file.md5Checksum}` : null;
-            if ((nameKey && seenDriveKeys.has(nameKey)) || (contentKey && seenDriveKeys.has(contentKey))) return;
-            if (nameKey) seenDriveKeys.add(nameKey);
-            if (contentKey) seenDriveKeys.add(contentKey);
+            const dedupeKeys = [nameKey, contentKey, textKey].filter(Boolean);
+            if (dedupeKeys.some((key) => seenDriveKeys.has(key))) return;
+            dedupeKeys.forEach((key) => seenDriveKeys.add(key));
 
             results.push({
               id: `gdrive_${file.id}`,

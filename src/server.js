@@ -120,7 +120,14 @@ app.use((req, res, next) => {
 });
 
 // Static hosting
-app.use(express.static(path.join(ROOT_DIR, "public")));
+// ES modules under /js are imported without a version query, so code/markup must always be revalidated (ETag)
+app.use(
+  express.static(path.join(ROOT_DIR, "public"), {
+    setHeaders: (res, filePath) => {
+      if (/\.(js|mjs|css|html)$/i.test(filePath)) res.setHeader("Cache-Control", "no-cache");
+    },
+  })
+);
 app.use("/thumbs", express.static(THUMBS_DIR));
 
 // Register API Routes

@@ -122,6 +122,30 @@ class DriveAPI {
     }
   }
 
+  // Replaces content and metadata of an existing file (keeps ID and links). Returns null if it fails, e.g. file deleted.
+  async replaceFile(fileId, filePath, fileOptions = {}) {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      const drive = await this.getClient();
+      const resource = {};
+      if (fileOptions.name) resource.name = fileOptions.name;
+      if (fileOptions.description !== undefined) resource.description = fileOptions.description;
+      if (fileOptions.appProperties) resource.appProperties = fileOptions.appProperties;
+
+      const file = await drive.files.update({
+        fileId,
+        resource,
+        media: { mimeType: null, body: fs.createReadStream(filePath) },
+        fields: "id, webViewLink, thumbnailLink, webContentLink, trashed",
+      });
+      if (file.data.trashed) return null;
+      return file.data;
+    } catch (error) {
+      console.error(`Error replacing file ${fileId}:`, error.message || error);
+      return null;
+    }
+  }
+
   async updateFileProperties(fileId, appProperties) {
     try {
       const drive = await this.getClient();

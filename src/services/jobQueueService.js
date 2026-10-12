@@ -334,7 +334,9 @@ async function processSingleJob(jobId) {
 
     let defaultDriveFile = null;
     if (!job.rawDriveId) {
-      let uploadOptions = job.isPrivate ? { appProperties: { isPrivate: "true" } } : undefined;
+      const uploadOptions = {
+        appProperties: job.isPrivate ? { jobId: job.id, isPrivate: "true" } : { jobId: job.id },
+      };
       defaultDriveFile = await driveApi.uploadFile(job.filePath, folderId, uploadOptions);
       if (defaultDriveFile) {
         processedDriveFiles.push(defaultDriveFile.id);
@@ -417,17 +419,20 @@ async function processSingleJob(jobId) {
       .filter(Boolean)
       .join(" | ");
 
-    let driveFile = appSettings.FOLDER_ID_SORTED
-      ? await driveApi.uploadFile(
-          job.filePath,
-          appSettings.FOLDER_ID_SORTED,
-          {
-            name: sortedName.full,
-            description: searchDescription,
-            appProperties: job.isPrivate ? { isPrivate: "true" } : undefined,
-          }
-        )
-      : null;
+    const sortedUploadOptions = {
+      name: sortedName.full,
+      description: searchDescription,
+      appProperties: job.isPrivate ? { jobId: job.id, isPrivate: "true" } : { jobId: job.id },
+    };
+
+    // When re-processing, overwrite the existing sorted copy instead of leaving an orphaned duplicate on Drive
+    let driveFile = null;
+    if (appSettings.FOLDER_ID_SORTED && job.driveFileId && job.driveFileId !== job.rawDriveId) {
+      driveFile = await driveApi.replaceFile(job.driveFileId, job.filePath, sortedUploadOptions);
+    }
+    if (!driveFile && appSettings.FOLDER_ID_SORTED) {
+      driveFile = await driveApi.uploadFile(job.filePath, appSettings.FOLDER_ID_SORTED, sortedUploadOptions);
+    }
 
     driveFile = driveFile || defaultDriveFile;
 
