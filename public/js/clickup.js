@@ -10,6 +10,9 @@ let pendingClickupTransferJobId = null;
 let pendingClickupTransferBtn = null;
 let currentSyncPreviewData = null;
 let currentSyncFilter = "all";
+let selectedSyncJobIds = new Set();
+
+const SYNC_RANGE_STORAGE_KEY = "clickup_sync_range";
 
 export function initClickUpEvents() {
   const testClickUpBtn = document.getElementById("clickup-test-connection-btn");
@@ -143,6 +146,60 @@ export function initClickUpEvents() {
     }
   });
 
+  // Time range controls
+  const rangeSelect = document.getElementById("clickup-sync-range");
+  const dateFromInput = document.getElementById("clickup-sync-date-from");
+  const dateToInput = document.getElementById("clickup-sync-date-to");
+  const reloadBtn = document.getElementById("clickup-sync-reload-btn");
+
+  if (rangeSelect) {
+    rangeSelect.addEventListener("change", () => {
+      try {
+        localStorage.setItem(SYNC_RANGE_STORAGE_KEY, rangeSelect.value);
+      } catch (e) {}
+      if (rangeSelect.value !== "custom") {
+        applySyncRangePreset(rangeSelect.value);
+        loadSyncPreview();
+      }
+    });
+  }
+  [dateFromInput, dateToInput].forEach((input) => {
+    if (!input) return;
+    input.addEventListener("change", () => {
+      if (rangeSelect) rangeSelect.value = "custom";
+    });
+  });
+  if (reloadBtn) reloadBtn.addEventListener("click", loadSyncPreview);
+
+  // Item selection (checkboxes)
+  const syncItemsList = document.getElementById("clickup-sync-items-list");
+  if (syncItemsList) {
+    syncItemsList.addEventListener("change", (e) => {
+      const cb = e.target.closest(".clickup-sync-item-cb");
+      if (!cb) return;
+      const jobId = cb.getAttribute("data-job-id");
+      if (cb.checked) selectedSyncJobIds.add(jobId);
+      else selectedSyncJobIds.delete(jobId);
+      const row = cb.closest(".clickup-sync-row");
+      if (row) {
+        row.style.borderColor = cb.checked ? "#b9b0f5" : "#e0e0e0";
+        row.style.opacity = cb.checked ? "1" : "0.55";
+      }
+      updateSyncSelectionUi();
+    });
+  }
+
+  const selectAllCb = document.getElementById("clickup-sync-select-all");
+  if (selectAllCb) {
+    selectAllCb.addEventListener("change", () => {
+      getVisibleSelectableItems().forEach((item) => {
+        if (selectAllCb.checked) selectedSyncJobIds.add(item.jobId);
+        else selectedSyncJobIds.delete(item.jobId);
+      });
+      renderSyncPreviewItems();
+    });
+  }
+
   // Start Batch Sync Button
   if (confirmSyncModalBtn) {
     confirmSyncModalBtn.addEventListener("click", async () => {
@@ -151,7 +208,7 @@ export function initClickUpEvents() {
       const allTasksToProcess = [
         ...toCreate.map((t) => ({ ...t, isUpdate: false })),
         ...toUpdate.map((t) => ({ ...t, isUpdate: true })),
-      ];
+      ].filter((t) => selectedSyncJobIds.has(t.jobId));
 
       if (allTasksToProcess.length === 0) return;
 
@@ -211,21 +268,77 @@ export async function openClickUpSyncModal() {
     return;
   }
   const clickupSyncModal = document.getElementById("clickup-sync-modal");
-  const syncItemsList = document.getElementById("clickup-sync-items-list");
-  const confirmSyncModalBtn = document.getElementById("confirm-clickup-sync-btn");
-  const syncProgressContainer = document.getElementById("clickup-sync-progress-container");
+  if (!clickupSyncModal) return;
 
-  if (!clickupSyncModal || !syncItemsList) return;
+  const rangeSelect = document.getElementById("clickup-sync-range");
+  if (rangeSelect) {
+    let savedRange = null;
+    try {
+      savedRange = localStorage.getItem(SYNC_RANGE_STORAGE_KEY);
+    } catch (e) {}
+    if (savedRange && savedRange !== "custom" && rangeSelect.querySelector(`option[value="${savedRange}"]`)) {
+      rangeSelect.value = savedRange;
+    }
+    if (rangeSelect.value !== "custom") applySyncRangePreset(rangeSelect.value);
+  }
 
   clickupSyncModal.style.display = "flex";
+  await loadSyncPreview();
+}
+
+function toIsoDateLocal(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function applySyncRangePreset(preset) {
+  const fromInput = document.getElementById("clickup-sync-date-from");
+  const toInput = document.getElementById("clickup-sync-date-to");
+  if (!fromInput || !toInput) return;
+
+  const today = new Date();
+  if (preset === "all") {
+    fromInput.value = "";
+    toInput.value = "";
+    return;
+  }
+  let from;
+  if (preset === "year") {
+    from = new Date(today.getFullYear(), 0, 1);
+  } else {
+    const days = parseInt(preset, 10) || 30;
+    from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+  }
+  fromInput.value = toIsoDateLocal(from);
+  toInput.value = toIsoDateLocal(today);
+}
+
+async function loadSyncPreview() {
+  const syncItemsList = document.getElementById("clickup-sync-items-list");
+  const syncProgressContainer = document.getElementById("clickup-sync-progress-container");
+  const reloadBtn = document.getElementById("clickup-sync-reload-btn");
+  if (!syncItemsList) return;
+
+  currentSyncPreviewData = null;
+  selectedSyncJobIds = new Set();
+  updateSyncSelectionUi();
   syncItemsList.innerHTML = '<div style="text-align: center; color: #888; padding: 30px;"><div class="spinner-border spinner-border-sm text-primary mb-2" role="status"></div><br>Lade Sync-Vorschau aus ClickUp...</div>';
-  if (confirmSyncModalBtn) confirmSyncModalBtn.disabled = true;
   if (syncProgressContainer) syncProgressContainer.style.display = "none";
+  if (reloadBtn) reloadBtn.disabled = true;
+  const cancelSyncModalBtn = document.getElementById("cancel-clickup-sync-btn");
+  if (cancelSyncModalBtn) cancelSyncModalBtn.disabled = false;
 
   try {
     const creds = getAllClientCredentials();
     if (!creds.clickupApiKey) {
       syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Kein ClickUp API-Key hinterlegt. Bitte hinterlege deinen API-Key in den Einstellungen.</div>`;
+      return;
+    }
+
+    const dateFrom = document.getElementById("clickup-sync-date-from")?.value || "";
+    const dateTo = document.getElementById("clickup-sync-date-to")?.value || "";
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Das Startdatum liegt nach dem Enddatum.</div>`;
       return;
     }
 
@@ -236,22 +349,68 @@ export async function openClickUpSyncModal() {
         apiKey: creds.clickupApiKey,
         listId: creds.clickupListId,
         filterPrivate,
+        dateFrom,
+        dateTo,
       }),
     });
 
     if (data.success) {
       currentSyncPreviewData = data;
       currentSyncFilter = "all";
+      ["all", "create", "update", "uptodate", "skip"].forEach((k) => {
+        document.getElementById(`clickup-tab-${k}`)?.classList.toggle("active", k === "all");
+      });
+      selectedSyncJobIds = new Set([...data.toCreate, ...data.toUpdate].map((item) => item.jobId));
       renderSyncPreviewItems();
-      if (confirmSyncModalBtn) {
-        confirmSyncModalBtn.disabled = (data.toCreate.length === 0 && data.toUpdate.length === 0);
-      }
     } else {
       syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Fehler beim Laden der Vorschau: ${escapeHtml(data.error || "Unbekannt")}</div>`;
     }
   } catch (e) {
     syncItemsList.innerHTML = `<div style="color: #dc3545; padding: 20px; text-align: center;">Netzwerkfehler: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    if (reloadBtn) reloadBtn.disabled = false;
   }
+}
+
+function getVisibleSelectableItems() {
+  if (!currentSyncPreviewData) return [];
+  const { toCreate = [], toUpdate = [] } = currentSyncPreviewData;
+  const items = [];
+  if (currentSyncFilter === "all" || currentSyncFilter === "create") items.push(...toCreate);
+  if (currentSyncFilter === "all" || currentSyncFilter === "update") items.push(...toUpdate);
+  return items;
+}
+
+function updateSyncSelectionUi() {
+  const countEl = document.getElementById("clickup-sync-selection-count");
+  const selectAllCb = document.getElementById("clickup-sync-select-all");
+  const confirmBtn = document.getElementById("confirm-clickup-sync-btn");
+  const confirmLabel = document.getElementById("confirm-clickup-sync-label");
+
+  const selectable = currentSyncPreviewData
+    ? [...(currentSyncPreviewData.toCreate || []), ...(currentSyncPreviewData.toUpdate || [])]
+    : [];
+  const selectedCount = selectable.filter((item) => selectedSyncJobIds.has(item.jobId)).length;
+
+  if (countEl) countEl.innerText = `${selectedCount} von ${selectable.length} ausgewählt`;
+  if (confirmBtn) confirmBtn.disabled = selectedCount === 0;
+  if (confirmLabel) {
+    confirmLabel.innerText = selectedCount > 0 ? `${selectedCount} Beleg(e) synchronisieren` : "Synchronisation starten";
+  }
+
+  if (selectAllCb) {
+    const visible = getVisibleSelectableItems();
+    const visibleSelected = visible.filter((item) => selectedSyncJobIds.has(item.jobId)).length;
+    selectAllCb.disabled = visible.length === 0;
+    selectAllCb.checked = visible.length > 0 && visibleSelected === visible.length;
+    selectAllCb.indeterminate = visibleSelected > 0 && visibleSelected < visible.length;
+  }
+}
+
+function formatSyncItemDate(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  return isNaN(d.getTime()) ? "" : d.toLocaleDateString("de-DE");
 }
 
 function renderSyncPreviewItems() {
@@ -283,8 +442,10 @@ function renderSyncPreviewItems() {
     toSkip.forEach((item) => itemsToRender.push({ ...item, type: "skip" }));
   }
 
+  updateSyncSelectionUi();
+
   if (itemsToRender.length === 0) {
-    syncItemsList.innerHTML = '<div style="text-align: center; color: #888; padding: 30px;">Keine Dokumente für diesen Filter gefunden.</div>';
+    syncItemsList.innerHTML = '<div style="text-align: center; color: #888; padding: 30px;">Keine Dokumente für diesen Filter bzw. Zeitraum gefunden.</div>';
     return;
   }
 
@@ -303,6 +464,10 @@ function renderSyncPreviewItems() {
     const safeExistingTaskUrl = item.existingTaskUrl ? encodeURI(item.existingTaskUrl) : "#";
     const safeStatus = escapeHtml(item.existingTaskStatus || "offen");
     const safeReason = escapeHtml(item.reason || "Privat");
+    const safeJobId = escapeHtml(item.jobId || "");
+    const uploadDateStr = escapeHtml(formatSyncItemDate(item.uploadDate));
+    const isSelectable = item.type === "create" || item.type === "update";
+    const isSelected = isSelectable && selectedSyncJobIds.has(item.jobId);
 
     if (item.type === "create") {
       badgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">+ Neu anlegen</span>`;
@@ -318,14 +483,21 @@ function renderSyncPreviewItems() {
       actionInfoHtml = `<span style="color: #e65100; font-size: 12px;">${safeReason}</span>`;
     }
 
+    const checkboxHtml = isSelectable
+      ? `<input type="checkbox" class="form-check-input clickup-sync-item-cb" data-job-id="${safeJobId}" ${isSelected ? "checked" : ""} style="margin: 0; flex-shrink: 0; width: 18px; height: 18px; cursor: pointer;" />`
+      : `<span style="width: 18px; flex-shrink: 0;"></span>`;
+    const rowTag = isSelectable ? "label" : "div";
+
     html += `
-      <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+      <${rowTag} class="clickup-sync-row" style="background: #fff; border: 1px solid ${isSelected ? "#b9b0f5" : "#e0e0e0"}; border-radius: 6px; padding: 10px 12px; margin: 0 0 6px 0; display: flex; align-items: center; gap: 12px; ${isSelectable ? "cursor: pointer;" : ""} opacity: ${isSelectable && !isSelected ? "0.55" : isSelectable ? "1" : "0.75"};">
+        ${checkboxHtml}
         <div style="flex: 1; min-width: 0;">
           <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
             ${badgeHtml}
             <span style="font-weight: 600; font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${safeFileName}">${safeFileName}</span>
           </div>
           <div style="display: flex; gap: 12px; font-size: 12px; color: #777; flex-wrap: wrap; margin-top: 2px;">
+            ${uploadDateStr ? `<span>📅 ${uploadDateStr}</span>` : ""}
             <span>🏢 ${safeCompany}</span>
             <span>📁 ${safeCategory}</span>
             ${safeAmount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${safeAmount}</span>` : ""}
@@ -334,7 +506,7 @@ function renderSyncPreviewItems() {
             ${actionInfoHtml}
           </div>
         </div>
-      </div>
+      </${rowTag}>
     `;
   });
 

@@ -83,8 +83,18 @@ const handleSyncPreview = async (req, res) => {
     }
 
     const client = getClickUpClient(apiKey, listId);
+    // Optional time range (upload date, inclusive, YYYY-MM-DD)
+    const fromMs = body.dateFrom ? new Date(`${body.dateFrom}T00:00:00`).getTime() : null;
+    const toMs = body.dateTo ? new Date(`${body.dateTo}T23:59:59.999`).getTime() : null;
+    const isInRange = (job) => {
+      if (fromMs === null && toMs === null) return true;
+      const t = new Date(job.uploadDate).getTime();
+      if (isNaN(t)) return false;
+      return (fromMs === null || isNaN(fromMs) || t >= fromMs) && (toMs === null || isNaN(toMs) || t <= toMs);
+    };
+
     const clickupTasks = await client.fetchListTasks(listId);
-    const jobsList = getJobs("all", true).filter((j) => j.status === "completed" && j.result);
+    const jobsList = getJobs("all", true).filter((j) => j.status === "completed" && j.result && isInRange(j));
 
     const toCreate = [];
     const toUpdate = [];
@@ -101,6 +111,8 @@ const handleSyncPreview = async (req, res) => {
         toSkip.push({
           jobId: job.id,
           fileName: job.result.full || job.originalName,
+          uploadDate: job.uploadDate,
+          documentDate: job.result.documentDate || "",
           company: job.result.company || "Unbekannt",
           category: job.result.category || "-",
           reason: "Privates Dokument (Filter aktiv)",
@@ -114,6 +126,8 @@ const handleSyncPreview = async (req, res) => {
         const itemInfo = {
           jobId: job.id,
           fileName: job.result.full || job.originalName,
+          uploadDate: job.uploadDate,
+          documentDate: job.result.documentDate || "",
           company: job.result.company || "Unbekannt",
           category: job.result.category || "-",
           isInvoice: !!job.result.isInvoice,
@@ -130,6 +144,8 @@ const handleSyncPreview = async (req, res) => {
         toCreate.push({
           jobId: job.id,
           fileName: job.result.full || job.originalName,
+          uploadDate: job.uploadDate,
+          documentDate: job.result.documentDate || "",
           company: job.result.company || "Unbekannt",
           category: job.result.category || "-",
           isInvoice: !!job.result.isInvoice,

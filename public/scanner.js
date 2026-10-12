@@ -2569,8 +2569,16 @@ async function finishScanProcess(sendToAI) {
 
   // Der asynchrone Upload-Prozess im Hintergrund
   try {
+    const scanHeaders = {};
+    try {
+      const clickupApiKey = localStorage.getItem("scanner_clickup_api_key");
+      const clickupListId = localStorage.getItem("scanner_clickup_list_id");
+      if (sendToAI && clickupApiKey) scanHeaders["X-Clickup-Api-Key"] = clickupApiKey;
+      if (sendToAI && clickupListId) scanHeaders["X-Clickup-List-Id"] = clickupListId;
+    } catch (e) {}
     const response = await fetch("/api/scan", {
       method: "POST",
+      headers: scanHeaders,
       body: formData,
     });
 

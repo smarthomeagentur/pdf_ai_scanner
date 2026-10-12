@@ -2,7 +2,7 @@
  * Main Frontend Coordinator & Bootstrapping
  */
 import { apiRequest } from "./api.js";
-import { state } from "./state.js";
+import { state, getAllClientCredentials } from "./state.js";
 import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js";
 import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js";
 import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js";
@@ -173,8 +173,13 @@ async function uploadFiles(files) {
 
   showToast(`${files.length} Datei(en) werden hochgeladen...`, "info");
   try {
+    const creds = getAllClientCredentials();
+    const headers = {};
+    if (creds.clickupApiKey) headers["X-Clickup-Api-Key"] = creds.clickupApiKey;
+    if (creds.clickupListId) headers["X-Clickup-List-Id"] = creds.clickupListId;
     const res = await fetch("/api/upload", {
       method: "POST",
+      headers,
       body: formData,
     });
     const data = await res.json();
