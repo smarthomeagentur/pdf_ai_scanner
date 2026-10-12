@@ -137,7 +137,7 @@ export function initClickUpEvents() {
       tabBtn.addEventListener("click", () => {
         ["all", "create", "update", "uptodate", "skip"].forEach((k) => {
           const b = document.getElementById(`clickup-tab-${k}`);
-          if (b) b.classList.remove("active", "btn-primary", "btn-success", "btn-info", "btn-secondary", "btn-warning");
+          if (b) b.classList.remove("active");
         });
         tabBtn.classList.add("active");
         currentSyncFilter = tabKey;
@@ -182,8 +182,7 @@ export function initClickUpEvents() {
       else selectedSyncJobIds.delete(jobId);
       const row = cb.closest(".clickup-sync-row");
       if (row) {
-        row.style.borderColor = cb.checked ? "#b9b0f5" : "#e0e0e0";
-        row.style.opacity = cb.checked ? "1" : "0.55";
+        row.classList.toggle("is-off", !cb.checked);
       }
       updateSyncSelectionUi();
     });
@@ -445,69 +444,51 @@ function renderSyncPreviewItems() {
   updateSyncSelectionUi();
 
   if (itemsToRender.length === 0) {
-    syncItemsList.innerHTML = '<div style="text-align: center; color: #888; padding: 30px;">Keine Dokumente für diesen Filter bzw. Zeitraum gefunden.</div>';
+    syncItemsList.innerHTML = '<div class="cus-empty">Keine Dokumente für diesen Filter bzw. Zeitraum gefunden.</div>';
     return;
   }
 
+  const badges = {
+    create: ["cus-badge-create", "Neu"],
+    update: ["cus-badge-update", "Update"],
+    uptodate: ["cus-badge-uptodate", "Aktuell"],
+    skip: ["cus-badge-skip", "Privat"],
+  };
+
   let html = "";
   itemsToRender.forEach((item) => {
-    let badgeHtml = "";
-    let actionInfoHtml = "";
-
     const safeFileName = escapeHtml(item.fileName || "-");
     const safeCompany = escapeHtml(item.company || "Unbekannt");
-    const safeCategory = escapeHtml(item.category || "-");
     const safeAmount = item.amount ? escapeHtml(item.amount) : "";
-    const safeTaskName = escapeHtml(item.suggestedTaskName || item.fileName || "-");
-    const safeExistingTaskId = escapeHtml(item.existingTaskId || "");
-    const safeExistingTaskName = escapeHtml(item.existingTaskName || "");
-    const safeExistingTaskUrl = item.existingTaskUrl ? encodeURI(item.existingTaskUrl) : "#";
-    const safeStatus = escapeHtml(item.existingTaskStatus || "offen");
-    const safeReason = escapeHtml(item.reason || "Privat");
     const safeJobId = escapeHtml(item.jobId || "");
     const uploadDateStr = escapeHtml(formatSyncItemDate(item.uploadDate));
     const isSelectable = item.type === "create" || item.type === "update";
     const isSelected = isSelectable && selectedSyncJobIds.has(item.jobId);
+    const [badgeClass, badgeLabel] = badges[item.type];
 
-    if (item.type === "create") {
-      badgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">+ Neu anlegen</span>`;
-      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Vorgeschlagener Task: <strong>${safeTaskName}</strong></span>`;
-    } else if (item.type === "update") {
-      badgeHtml = `<span style="background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">↻ Aktualisieren</span>`;
-      actionInfoHtml = `<span style="color: #666; font-size: 12px;">Aktualisiert Task: <a href="${safeExistingTaskUrl}" target="_blank" style="color: #1976d2; font-weight: 500;">#${safeExistingTaskId} (${safeExistingTaskName})</a></span>`;
-    } else if (item.type === "uptodate") {
-      badgeHtml = `<span style="background: #f3e5f5; color: #7b1fa2; border: 1px solid #e1bee7; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">✓ Bereits aktuell</span>`;
-      actionInfoHtml = `<span style="color: #7b1fa2; font-size: 12px;">Task ist synchron: <a href="${safeExistingTaskUrl}" target="_blank" style="color: #7b1fa2; font-weight: 500;">#${safeExistingTaskId} (${safeExistingTaskName})</a> <span style="color: #888;">[Status: ${safeStatus}]</span></span>`;
-    } else if (item.type === "skip") {
-      badgeHtml = `<span style="background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⊘ Überspringen</span>`;
-      actionInfoHtml = `<span style="color: #e65100; font-size: 12px;">${safeReason}</span>`;
-    }
+    let tooltip = safeFileName;
+    if (item.type === "create") tooltip += ` → Neuer Task: ${escapeHtml(item.suggestedTaskName || item.fileName || "-")}`;
+    else if (item.type === "skip") tooltip += ` → ${escapeHtml(item.reason || "Privat")}`;
+    else if (item.existingTaskId) tooltip += ` → Task #${escapeHtml(item.existingTaskId)} (${escapeHtml(item.existingTaskName || "")}) [${escapeHtml(item.existingTaskStatus || "offen")}]`;
 
+    const taskHtml = item.existingTaskId
+      ? `<a href="${item.existingTaskUrl ? encodeURI(item.existingTaskUrl) : "#"}" target="_blank" rel="noopener" onclick="event.stopPropagation()">#${escapeHtml(item.existingTaskId)}</a>`
+      : "";
     const checkboxHtml = isSelectable
-      ? `<input type="checkbox" class="form-check-input clickup-sync-item-cb" data-job-id="${safeJobId}" ${isSelected ? "checked" : ""} style="margin: 0; flex-shrink: 0; width: 18px; height: 18px; cursor: pointer;" />`
-      : `<span style="width: 18px; flex-shrink: 0;"></span>`;
+      ? `<input type="checkbox" class="clickup-sync-item-cb" data-job-id="${safeJobId}" ${isSelected ? "checked" : ""} />`
+      : `<span class="cus-cb-placeholder"></span>`;
     const rowTag = isSelectable ? "label" : "div";
+    const rowClass = `clickup-sync-row cus-row${isSelectable && !isSelected ? " is-off" : ""}${isSelectable ? "" : " is-readonly"}`;
 
-    html += `
-      <${rowTag} class="clickup-sync-row" style="background: #fff; border: 1px solid ${isSelected ? "#b9b0f5" : "#e0e0e0"}; border-radius: 6px; padding: 10px 12px; margin: 0 0 6px 0; display: flex; align-items: center; gap: 12px; ${isSelectable ? "cursor: pointer;" : ""} opacity: ${isSelectable && !isSelected ? "0.55" : isSelectable ? "1" : "0.75"};">
+    html += `<${rowTag} class="${rowClass}" title="${tooltip}">
         ${checkboxHtml}
-        <div style="flex: 1; min-width: 0;">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px; flex-wrap: wrap;">
-            ${badgeHtml}
-            <span style="font-weight: 600; font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${safeFileName}">${safeFileName}</span>
-          </div>
-          <div style="display: flex; gap: 12px; font-size: 12px; color: #777; flex-wrap: wrap; margin-top: 2px;">
-            ${uploadDateStr ? `<span>📅 ${uploadDateStr}</span>` : ""}
-            <span>🏢 ${safeCompany}</span>
-            <span>📁 ${safeCategory}</span>
-            ${safeAmount ? `<span style="color: #2e7d32; font-weight: 500;">💰 ${safeAmount}</span>` : ""}
-          </div>
-          <div style="margin-top: 4px;">
-            ${actionInfoHtml}
-          </div>
-        </div>
-      </${rowTag}>
-    `;
+        <span class="cus-badge ${badgeClass}">${badgeLabel}</span>
+        <span class="cus-name">${safeFileName}</span>
+        <span class="cus-meta cus-date">${uploadDateStr}</span>
+        <span class="cus-meta cus-company">${safeCompany}</span>
+        <span class="cus-meta cus-amount">${safeAmount}</span>
+        <span class="cus-meta cus-task">${taskHtml}</span>
+      </${rowTag}>`;
   });
 
   syncItemsList.innerHTML = html;
