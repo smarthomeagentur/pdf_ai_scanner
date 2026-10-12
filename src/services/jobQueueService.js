@@ -7,6 +7,8 @@ const { appSettings } = require("../config/settings");
 const { driveApi } = require("./driveService");
 const { findDuplicatesForJob } = require("./duplicateService");
 const { renderPdfToJpeg } = require("./fileRenderService");
+const { getClickUpClient } = require("./clickupService");
+const clickupCredentials = require("./clickupCredentialStore");
 const dbWrapper = require("../db/database");
 const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
@@ -447,6 +449,10 @@ async function processSingleJob(jobId) {
       } catch (thumbErr) {}
     }
 
+    const clickupPdfBuffer = clickupCredentials.hasCredentials(jobId)
+      ? await fs.promises.readFile(job.filePath).catch(() => null)
+      : null;
+
     await fs.promises.unlink(job.filePath).catch(() => {});
 
     // Duplicate detection
@@ -463,14 +469,57 @@ async function processSingleJob(jobId) {
     job.status = "completed";
     job.error = null;
     job.inAiPipeline = false;
+
+    await autoTransferToClickUp(job, clickupPdfBuffer, driveFile);
   } catch (err) {
     console.error(`[WEB] Error processing job ${jobId}:`, err);
     job.status = "failed";
     job.error = err.message || "Unbekannter Fehler bei der Verarbeitung";
     job.inAiPipeline = false;
   } finally {
+    clickupCredentials.discardCredentials(jobId);
     persistJob(job);
     persistAppState();
+  }
+}
+
+async function autoTransferToClickUp(job, pdfBuffer, driveFile) {
+  const credentials = clickupCredentials.takeCredentials(job.id);
+  if (!credentials) return;
+  if (appSettings.CLICKUP_AUTO_TASK === false) return;
+  if (job.clickup?.taskId) return;
+
+  const res = job.result || {};
+  const isPrivateDoc =
+    job.isPrivate ||
+    (res.company || "").toLowerCase().includes("daniel") ||
+    (res.category || "").toLowerCase() === "privat";
+  if (appSettings.CLICKUP_FILTER_PRIVATE !== false && isPrivateDoc) {
+    console.log(`[CLICKUP] Job ${job.id} als privat eingestuft. Automatische Übertragung wird übersprungen.`);
+    return;
+  }
+
+  try {
+    const fileName = res.full ? (res.full.endsWith(".pdf") ? res.full : `${res.full}.pdf`) : job.originalName || "Dokument.pdf";
+    const client = getClickUpClient(credentials.apiKey, credentials.listId);
+    const clickupRes = await client.createOrUpdateDocumentTask({
+      fileBuffer: pdfBuffer,
+      fileName,
+      aiResult: res,
+      driveFile,
+      listId: credentials.listId || undefined,
+      uploadAttachment: !!pdfBuffer,
+    });
+    job.clickup = {
+      taskId: clickupRes.taskId,
+      taskUrl: clickupRes.taskUrl,
+      taskName: clickupRes.taskName,
+      status: clickupRes.status,
+      transferredAt: new Date().toISOString(),
+    };
+    console.log(`[CLICKUP] Job ${job.id} automatisch übertragen: Task #${clickupRes.taskId}`);
+  } catch (err) {
+    console.error(`[CLICKUP] Automatische Übertragung für Job ${job.id} fehlgeschlagen:`, err.message || "Unbekannter Fehler");
   }
 }
 
@@ -488,7 +537,11 @@ async function processQueue() {
   isProcessingQueue = false;
 }
 
-function addJobs(newJobs) {
+function addJobs(newJobs, clickupAutoTransferCredentials = null) {
+  clickupCredentials.storeCredentials(
+    newJobs.map((job) => job.id),
+    clickupAutoTransferCredentials
+  );
   for (const job of newJobs) {
     uploadJobs[job.id] = job;
     uploadQueue.push(job.id);

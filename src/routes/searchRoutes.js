@@ -3,12 +3,13 @@ const fs = require("fs");
 const { checkIsAdmin } = require("../middleware/auth");
 const { appSettings } = require("../config/settings");
 const { driveApi } = require("../services/driveService");
-const { getJobs } = require("../services/jobQueueService");
+const jobQueue = require("../services/jobQueueService");
+const { getJobs } = jobQueue;
 const {
   extractExactSnippet,
   getLocalPdfText,
   getDrivePdfText,
-  normalizeDocName,
+  normalizeDocKey,
 } = require("../services/deepSearchService");
 
 const router = express.Router();
@@ -23,8 +24,25 @@ router.get("/api/documents/deep-search", async (req, res) => {
     const qLower = q.toLowerCase();
     const results = [];
     const seenJobIds = new Set();
-    const seenNames = new Set();
+    const seenDriveKeys = new Set();
     const isAdmin = checkIsAdmin(req);
+    const localJobs = getJobs("all", isAdmin);
+
+    // Every processed scan exists twice on Drive (raw file in the scan folder via rawDriveId,
+    // renamed copy in the sorted folder via driveFileId) plus the local job. Map all of them to the job.
+    const jobByDriveId = new Map();
+    const jobByNameKey = new Map();
+    for (const job of localJobs) {
+      const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+      for (const id of [job.rawDriveId, job.driveFileId, sortedId]) {
+        if (id) jobByDriveId.set(String(id).replace(/^gdrive_/, ""), job);
+      }
+      for (const name of [job.result?.full, job.originalName]) {
+        const key = normalizeDocKey(name);
+        if (key && !jobByNameKey.has(key)) jobByNameKey.set(key, job);
+      }
+    }
+    const hiddenDriveIds = new Set(jobQueue.hiddenDriveFiles || []);
 
     // 1. Google Drive search (if drive is connected and user is admin)
     if (isAdmin) {
@@ -34,7 +52,7 @@ router.get("/api/documents/deep-search", async (req, res) => {
         if (folderId) {
           const driveRes = await drive.files.list({
             q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
-            fields: "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description)",
+            fields: "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description, md5Checksum)",
             pageSize: 40,
           });
 
@@ -71,7 +89,33 @@ router.get("/api/documents/deep-search", async (req, res) => {
             if (!snippet) {
               snippet = "Gefunden in Dokument-Volltext (Google Drive)";
             }
-            seenNames.add(normalizeDocName(file.name));
+            if (hiddenDriveIds.has(file.id)) return;
+
+            const job = jobByDriveId.get(file.id) || jobByNameKey.get(normalizeDocKey(file.name));
+            if (job) {
+              if (seenJobIds.has(job.id)) return;
+              seenJobIds.add(job.id);
+              results.push({
+                id: job.id,
+                jobId: job.id,
+                name: job.result?.full || job.originalName || file.name,
+                source: "Google Drive",
+                type: "local",
+                isLocal: true,
+                isLinked: true,
+                date: job.uploadDate,
+                webViewLink: job.result?.webViewLink || file.webViewLink,
+                thumbnailLink: `/api/thumbnail/${job.id}`,
+                snippet,
+              });
+              return;
+            }
+
+            const nameKey = normalizeDocKey(file.name);
+            const contentKey = file.md5Checksum ? `md5:${file.md5Checksum}` : null;
+            if ((nameKey && seenDriveKeys.has(nameKey)) || (contentKey && seenDriveKeys.has(contentKey))) return;
+            if (nameKey) seenDriveKeys.add(nameKey);
+            if (contentKey) seenDriveKeys.add(contentKey);
 
             results.push({
               id: `gdrive_${file.id}`,
@@ -98,11 +142,8 @@ router.get("/api/documents/deep-search", async (req, res) => {
     }
 
     // 2. Search local jobs
-    const localJobs = getJobs("all", isAdmin);
     for (const job of localJobs) {
       if (seenJobIds.has(job.id)) continue;
-      const normJobName = normalizeDocName(job.result?.full || job.originalName);
-      if (normJobName && seenNames.has(normJobName)) continue;
 
       if (!job.filePath || !fs.existsSync(job.filePath)) continue;
 
@@ -126,7 +167,6 @@ router.get("/api/documents/deep-search", async (req, res) => {
         }
 
         seenJobIds.add(job.id);
-        if (normJobName) seenNames.add(normJobName);
 
         results.push({
           id: job.id,

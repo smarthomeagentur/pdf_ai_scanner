@@ -1116,7 +1116,7 @@
 
       <!-- ClickUp Sync All Review Modal -->
       <div id="clickup-sync-modal" class="modal-overlay" style="z-index: 3000;">
-        <div class="modal-content" style="max-width: 650px; width: 95%; max-height: 85vh; display: flex; flex-direction: column; text-align: left; padding: 24px;">
+        <div class="modal-content" style="max-width: 1100px; width: 95%; height: 90vh; max-height: 90vh; display: flex; flex-direction: column; text-align: left; padding: 24px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <h3 style="margin: 0; color: #333; display: flex; align-items: center; gap: 8px;">
               <span class="material-symbols-outlined" style="color: #7b68ee;">cloud_sync</span> ClickUp Gesamtsynchronisation
@@ -1125,8 +1125,34 @@
           </div>
 
           <p style="color: #666; font-size: 13px; margin-bottom: 16px;">
-            Prüfe die Dokumente vor der Synchronisation. Bereits existierende Tickets werden mit den KI-Metadaten aktualisiert. Neue Dokumente werden angelegt.
+            Prüfe die Dokumente vor der Synchronisation. Bereits existierende Tickets werden mit den KI-Metadaten aktualisiert. Neue Dokumente werden angelegt. Abgewählte Dokumente werden nicht übertragen.
           </p>
+
+          <!-- Time Range -->
+          <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; padding: 12px; background: #f7f6fe; border: 1px solid #e3e0fb; border-radius: 8px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label for="clickup-sync-range" style="font-size: 12px; color: #555; font-weight: 600;">Zeitraum (Upload-Datum)</label>
+              <select id="clickup-sync-range" class="form-select form-select-sm" style="min-width: 190px;">
+                <option value="7">Letzte 7 Tage</option>
+                <option value="30" selected>Letzte 30 Tage</option>
+                <option value="90">Letzte 90 Tage</option>
+                <option value="year">Dieses Jahr</option>
+                <option value="all">Alle Dokumente</option>
+                <option value="custom">Benutzerdefiniert</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label for="clickup-sync-date-from" style="font-size: 12px; color: #555; font-weight: 600;">Von</label>
+              <input type="date" id="clickup-sync-date-from" class="form-control form-control-sm" />
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <label for="clickup-sync-date-to" style="font-size: 12px; color: #555; font-weight: 600;">Bis</label>
+              <input type="date" id="clickup-sync-date-to" class="form-control form-control-sm" />
+            </div>
+            <button id="clickup-sync-reload-btn" class="btn btn-sm" style="background: #7b68ee; color: white; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px;">
+              <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span> Vorschau laden
+            </button>
+          </div>
 
           <!-- Summary Pills -->
           <div style="display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
@@ -1157,8 +1183,16 @@
             <button id="clickup-tab-skip" class="btn btn-sm btn-outline-warning" style="border-radius: 16px;">Nur Private</button>
           </div>
 
+          <!-- Selection Toolbar -->
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px;">
+            <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin: 0; color: #333; font-weight: 500;">
+              <input type="checkbox" id="clickup-sync-select-all" class="form-check-input" style="margin: 0;" /> Alle sichtbaren auswählen
+            </label>
+            <span id="clickup-sync-selection-count" style="color: #666;">0 ausgewählt</span>
+          </div>
+
           <!-- Items List Container -->
-          <div id="clickup-sync-items-list" style="flex: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fafafa; min-height: 200px; max-height: 380px;">
+          <div id="clickup-sync-items-list" style="flex: 1; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fafafa; min-height: 200px;">
             <div style="text-align: center; color: #888; padding: 30px;">Lade Vorschau...</div>
           </div>
 
@@ -1176,7 +1210,7 @@
           <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; border-top: 1px solid #eee; padding-top: 14px;">
             <button id="cancel-clickup-sync-btn" class="action-button" style="background: #e0e0e0; color: #333; margin: 0; padding: 10px 18px;">Abbrechen</button>
             <button id="confirm-clickup-sync-btn" class="action-button" style="background: #7b68ee; color: white; margin: 0; padding: 10px 22px; font-weight: 600;">
-              <span class="material-symbols-outlined" style="font-size: 18px; vertical-align: middle; margin-right: 4px;">play_arrow</span> Synchronisation starten
+              <span class="material-symbols-outlined" style="font-size: 18px; vertical-align: middle; margin-right: 4px;">play_arrow</span> <span id="confirm-clickup-sync-label">Synchronisation starten</span>
             </button>
           </div>
         </div>
