@@ -37,6 +37,37 @@ function extractExactSnippet(fullText, query, maxContext = 65) {
   return snippet;
 }
 
+// "umsatzsteuer polyxo" => ["umsatzsteuer", "polyxo"]; "quoted phrases" stay together
+function parseSearchTerms(query) {
+  const terms = [];
+  const regex = /"([^"]+)"|(\S+)/g;
+  let match;
+  while ((match = regex.exec(query || "")) !== null) {
+    const term = (match[1] || match[2] || "").trim().toLowerCase();
+    if (term && !terms.includes(term)) terms.push(term);
+  }
+  return terms;
+}
+
+function matchesAllTerms(text, terms) {
+  const lower = (text || "").toLowerCase();
+  return terms.length > 0 && terms.every((term) => lower.includes(term));
+}
+
+// Prefer the whole query as phrase; otherwise show one snippet per term found in the text
+function extractSearchSnippet(fullText, query, terms, maxContext = 65) {
+  const phraseSnippet = extractExactSnippet(fullText, query, maxContext);
+  if (phraseSnippet || terms.length <= 1) return phraseSnippet;
+  const snippets = [];
+  for (const term of terms) {
+    if (snippets.some((s) => s.toLowerCase().includes(term))) continue;
+    const snippet = extractExactSnippet(fullText, term, Math.round(maxContext / 2));
+    if (snippet) snippets.push(snippet);
+    if (snippets.length >= 3) break;
+  }
+  return snippets.join(" ");
+}
+
 async function getLocalPdfText(filePath) {
   try {
     if (!fs.existsSync(filePath)) return "";
@@ -86,6 +117,9 @@ function normalizeDocKey(str) {
 
 module.exports = {
   extractExactSnippet,
+  extractSearchSnippet,
+  parseSearchTerms,
+  matchesAllTerms,
   getLocalPdfText,
   getDrivePdfText,
   normalizeDocName,
