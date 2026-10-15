@@ -16,10 +16,13 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-superadmin}
       - JWT_SECRET=${JWT_SECRET:-super_secret_jwt_key_123}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - AUTO_BACKUP_KEEP=${AUTO_BACKUP_KEEP:-14} # Anzahl täglicher Datenbank-Sicherungen in /app/store/backups
+      # - AUTO_BACKUP_DIR=/app/backups # Sicherungen in ein eigenes Volume legen (siehe unten)
     volumes:
       - scanner-store:/app/store # Hier werden dynamische Dateistorage-Daten, Logins, Jobs und Settings persistent abgelegt
       - scanner-downloads:/app/downloads # Verzeichnisse für temporäre Uploads/Downloads t
       - ./gdrive_secret.json:/app/gdrive_secret.json # Geheimnis für den Google Drive Zugriff
+      # - scanner-backups:/app/backups # optional: eigenes Volume für AUTO_BACKUP_DIR
 volumes:
   scanner-downloads:
   scanner-store:

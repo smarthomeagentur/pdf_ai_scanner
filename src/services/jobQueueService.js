@@ -10,7 +10,8 @@ const { renderPdfToJpeg } = require("./fileRenderService");
 const { getClickUpClient } = require("./clickupService");
 const clickupCredentials = require("./clickupCredentialStore");
 const dbWrapper = require("../db/database");
-const { scanForBackups } = require("./backupScanService");
+const { scanForBackups, readBackupJobs } = require("./backupScanService");
+const { startAutoBackup } = require("./autoBackupService");
 const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
 let uploadJobs = {};
@@ -156,6 +157,8 @@ async function loadJobs() {
 
     // Report possible backups in the log (read-only, nothing is imported)
     scanForBackups(new Set(Object.keys(uploadJobs)));
+    startAutoBackup(() => Object.keys(uploadJobs).length);
+    jobsLoaded = true;
 
     if (uploadQueue.length > 0) {
       console.log(`[SQLITE] Starte automatische Verarbeitung von ${uploadQueue.length} Beleg(en) in der Warteschlange...`);
@@ -807,7 +810,211 @@ function retryJob(jobId) {
   return job;
 }
 
+const CANCELLED_MESSAGE = "Vom Admin abgebrochen.";
+
+function getQueueStatus() {
+  const jobs = Object.values(uploadJobs);
+  return {
+    pending: jobs.filter((j) => j.status === "pending").length,
+    processing: jobs.filter((j) => j.status === "processing").length,
+  };
+}
+
+/**
+ * Cancels all waiting jobs: they leave the queue and are marked failed (retry stays possible, a restart
+ * does not re-queue them). The job currently being analysed cannot be interrupted and finishes normally.
+ */
+function cancelOpenJobs() {
+  let cancelled = 0;
+  for (const job of Object.values(uploadJobs)) {
+    if (job.status !== "pending") continue;
+    job.status = "failed";
+    job.error = CANCELLED_MESSAGE;
+    job.inAiPipeline = false;
+    clickupCredentials.discardCredentials(job.id);
+    dbWrapper.insertOrReplaceJob(job, { save: false });
+    cancelled++;
+  }
+  uploadQueue.length = 0;
+  if (cancelled > 0) dbWrapper.saveToDisk();
+  persistAppState();
+
+  const { processing } = getQueueStatus();
+  console.log(`[QUEUE] ${cancelled} offene Jobs vom Admin abgebrochen (${processing} laufende Analyse wird noch beendet).`);
+  return { cancelled, processing };
+}
+
+let isPollingDrive = false;
+let jobsLoaded = false;
+
+/**
+ * Drive monitor: imports new files from the source folder into the AI pipeline.
+ * Only files created after the monitor's start point are imported, so an old backlog (e.g. raw scans
+ * of deleted or restored jobs) is never re-processed; older files can be imported via Drive sync.
+ */
+async function pollDriveSourceFolder() {
+  // Without the loaded processed list every file in the folder would look new
+  if (!jobsLoaded || !appSettings.MONITOR_DRIVE || !appSettings.FOLDER_ID) return;
+  // A poll downloads files and can take longer than the interval; overlapping polls caused duplicate imports
+  if (isPollingDrive) return;
+  isPollingDrive = true;
+
+  try {
+    let since = dbWrapper.getAppState("drive_monitor_since");
+    if (!since) {
+      since = new Date().toISOString();
+      dbWrapper.setAppState("drive_monitor_since", since);
+      console.log(`[DRIVE MONITOR] Startpunkt gesetzt: Nur Dateien ab ${since} werden automatisch importiert.`);
+    }
+
+    const folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
+      ? appSettings.FOLDER_ID
+      : await driveApi.findFolderId(appSettings.FOLDER_ID);
+    if (!folderId) return;
+
+    const drive = await driveApi.getClient();
+    const res = await drive.files.list({
+      q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and '${folderId}' in parents and createdTime > '${since}'`,
+      fields: "files(id, name, mimeType, size, createdTime, appProperties)",
+      orderBy: "createdTime",
+      pageSize: 50,
+    });
+
+    for (const file of res.data.files || []) {
+      if (processedDriveFiles.includes(file.id)) continue;
+
+      // Mark first and persist, so a crash or restart mid-download never imports the file twice
+      processedDriveFiles.push(file.id);
+      persistAppState();
+
+      const isKnown = Object.values(uploadJobs).some((j) => getJobDriveIds(j).includes(file.id));
+      if (isKnown) continue;
+
+      console.log(`[DRIVE MONITOR] Neue Datei in Quell-Ordner entdeckt: ${file.name} (ID: ${file.id})`);
+      const safeName = file.name.toLowerCase().endsWith(".pdf") ? file.name : `${file.name}.pdf`;
+      const localPath = path.join(DOWNLOADS_DIR, `${Date.now()}-${safeName}`);
+      const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
+      await pipeline(downloadRes.data, fs.createWriteStream(localPath));
+
+      addJobs([
+        {
+          id: generateJobId(),
+          originalName: file.name,
+          status: "pending",
+          source: "google_drive",
+          rawDriveId: file.id,
+          driveFileId: file.id,
+          isPrivate: file.appProperties?.isPrivate === "true",
+          inAiPipeline: true,
+          filePath: localPath,
+          uploadDate: new Date().toISOString(),
+        },
+      ]);
+    }
+  } catch (err) {
+    console.warn("[DRIVE MONITOR] Fehler beim Polling:", err.message);
+  } finally {
+    isPollingDrive = false;
+  }
+}
+
+function getJobDriveIds(job) {
+  const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+  return [job.rawDriveId, job.driveFileId, sortedId].filter(Boolean).map((id) => String(id).replace(/^gdrive_/, ""));
+}
+
+/**
+ * Adds jobs from a backup file that are missing in the current DB. Existing jobs are never
+ * overwritten, and restored jobs are never sent to the AI pipeline again.
+ */
+async function restoreJobsFromBackup(filePath, { dryRun = true } = {}) {
+  const backupJobs = await readBackupJobs(filePath);
+  return restoreJobs(backupJobs, { dryRun, source: filePath });
+}
+
+function restoreJobs(backupJobs, { dryRun = true, source = "Backup" } = {}) {
+  const currentDriveIds = new Set();
+  for (const job of Object.values(uploadJobs)) getJobDriveIds(job).forEach((id) => currentDriveIds.add(id));
+
+  const stats = { total: backupJobs.length, restored: 0, existing: 0, duplicates: 0, missingFiles: 0, unfinished: 0 };
+  const restoredAt = new Date().toISOString();
+
+  for (const backupJob of backupJobs) {
+    if (uploadJobs[backupJob.id]) {
+      stats.existing++;
+      continue;
+    }
+    const driveIds = getJobDriveIds(backupJob);
+    // Same Drive file already belongs to a current job (e.g. re-imported after the cleanup)
+    if (driveIds.some((id) => currentDriveIds.has(id))) {
+      stats.duplicates++;
+      continue;
+    }
+
+    const job = JSON.parse(JSON.stringify(backupJob));
+    if (!job.filePath || !fs.existsSync(job.filePath)) stats.missingFiles++;
+
+    // loadJobs() would re-queue these on the next start, so they must not keep their old state
+    const wasUnfinished =
+      job.status === "pending" ||
+      job.status === "processing" ||
+      job.inAiPipeline ||
+      job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
+    if (wasUnfinished) {
+      stats.unfinished++;
+      job.status = job.result ? "completed" : "failed";
+      job.error = job.result ? null : "Aus Backup wiederhergestellt – Verarbeitung war nicht abgeschlossen.";
+    }
+    job.inAiPipeline = false;
+    job.restoredFromBackup = { file: path.basename(source), at: restoredAt };
+
+    stats.restored++;
+    driveIds.forEach((id) => currentDriveIds.add(id));
+    if (dryRun) continue;
+
+    uploadJobs[job.id] = job;
+    dbWrapper.insertOrReplaceJob(job, { save: false });
+    // Keep the Drive monitor from importing these files again, keep hidden files hidden
+    if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) processedDriveFiles.push(job.rawDriveId);
+    if (job.isHidden) driveIds.forEach((id) => !hiddenDriveFiles.includes(id) && hiddenDriveFiles.push(id));
+  }
+
+  if (!dryRun && stats.restored > 0) {
+    dbWrapper.saveToDisk();
+    persistAppState();
+  }
+  console.log(
+    `[BACKUP-RESTORE] ${dryRun ? "Probelauf" : "Wiederherstellung"} aus ${source}: ${stats.restored} wiederhergestellt, ` +
+      `${stats.existing} bereits vorhanden, ${stats.duplicates} Duplikate übersprungen, ${stats.missingFiles} ohne lokale PDF, ` +
+      `${stats.unfinished} unvollständig verarbeitet (von ${stats.total})`
+  );
+  return { dryRun, file: source, ...stats };
+}
+
+/** Adds Drive IDs from a backup to the processed/hidden lists (union, nothing is removed). */
+function mergeDriveState({ processedDriveFiles: processed = [], hiddenDriveFiles: hidden = [] } = {}, { dryRun = true } = {}) {
+  const newProcessed = processed.filter((id) => id && !processedDriveFiles.includes(id));
+  const newHidden = hidden.filter((id) => id && !hiddenDriveFiles.includes(id));
+  if (!dryRun && (newProcessed.length || newHidden.length)) {
+    processedDriveFiles.push(...newProcessed);
+    hiddenDriveFiles.push(...newHidden);
+    persistAppState();
+  }
+  return { processedDriveFiles: newProcessed.length, hiddenDriveFiles: newHidden.length };
+}
+
+function listBackups() {
+  return scanForBackups(new Set(Object.keys(uploadJobs)), { silent: true });
+}
+
 module.exports = {
+  getQueueStatus,
+  cancelOpenJobs,
+  pollDriveSourceFolder,
+  restoreJobsFromBackup,
+  restoreJobs,
+  mergeDriveState,
+  listBackups,
   loadJobs,
   saveJobs,
   addJobs,
@@ -833,5 +1040,8 @@ module.exports = {
   },
   get hiddenDriveFiles() {
     return hiddenDriveFiles;
+  },
+  get processedDriveFiles() {
+    return processedDriveFiles;
   },
 };

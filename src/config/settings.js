@@ -18,20 +18,30 @@ const appSettings = {
   CLICKUP_STATUS_DEFAULT: process.env.CLICKUP_STATUS_DEFAULT || "offen",
 };
 
+// Third-party secrets live only in the browser and must never be stored on the server or in backups
+const CLIENT_ONLY_KEYS = [
+  "LEXOFFICE_KEY_WIREWIRE",
+  "LEXOFFICE_KEY_THEWIRE",
+  "LEXOFFICE_KEY_POLYXO",
+  "BUTTLER_KEY_THEWIRE_CLIENT",
+  "BUTTLER_KEY_THEWIRE_SECRET",
+  "BUTTLER_KEY_THEWIRE_KEY",
+  "CLICKUP_API_KEY",
+  "CLICKUP_LIST_ID",
+];
+
+function withoutClientSecrets(settings) {
+  const copy = { ...(settings || {}) };
+  CLIENT_ONLY_KEYS.forEach((key) => delete copy[key]);
+  return copy;
+}
+
 function loadSettings() {
   if (fs.existsSync(SETTINGS_FILE)) {
     try {
       const loaded = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
       // Strip third-party keys if present
-      delete loaded.LEXOFFICE_KEY_WIREWIRE;
-      delete loaded.LEXOFFICE_KEY_THEWIRE;
-      delete loaded.LEXOFFICE_KEY_POLYXO;
-      delete loaded.BUTTLER_KEY_THEWIRE_CLIENT;
-      delete loaded.BUTTLER_KEY_THEWIRE_SECRET;
-      delete loaded.BUTTLER_KEY_THEWIRE_KEY;
-      delete loaded.CLICKUP_API_KEY;
-      delete loaded.CLICKUP_LIST_ID;
-      Object.assign(appSettings, loaded);
+      Object.assign(appSettings, withoutClientSecrets(loaded));
     } catch (e) {
       console.error("[SETTINGS] Fehler beim Laden von settings.json:", e);
     }
@@ -39,18 +49,11 @@ function loadSettings() {
 }
 
 function saveSettings() {
+  // Tests must never touch the real store/settings.json (same rule as the SQLite file)
+  if (process.env.NODE_ENV === "test") return;
   try {
-    const toSave = { ...appSettings };
     // Never persist client-only secrets to server disk
-    delete toSave.LEXOFFICE_KEY_WIREWIRE;
-    delete toSave.LEXOFFICE_KEY_THEWIRE;
-    delete toSave.LEXOFFICE_KEY_POLYXO;
-    delete toSave.BUTTLER_KEY_THEWIRE_CLIENT;
-    delete toSave.BUTTLER_KEY_THEWIRE_SECRET;
-    delete toSave.BUTTLER_KEY_THEWIRE_KEY;
-    delete toSave.CLICKUP_API_KEY;
-    delete toSave.CLICKUP_LIST_ID;
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(toSave, null, 2), "utf8");
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(withoutClientSecrets(appSettings), null, 2), "utf8");
   } catch (e) {
     console.error("[SETTINGS] Fehler beim Speichern von settings.json:", e);
   }
@@ -63,4 +66,5 @@ module.exports = {
   appSettings,
   loadSettings,
   saveSettings,
+  withoutClientSecrets,
 };

@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const initSqlJs = require("sql.js");
-const { ROOT_DIR, STORE_DIR, DOWNLOADS_DIR, DB_FILE } = require("../config/paths");
+const { ROOT_DIR, STORE_DIR, DOWNLOADS_DIR, DB_FILE, AUTO_BACKUP_DIR } = require("../config/paths");
 
 // Read-only scan: reports possible job backups on startup, never imports or modifies anything
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
@@ -13,7 +13,7 @@ function getScanDirs() {
     .split(/[;,]/)
     .map((d) => d.trim())
     .filter(Boolean);
-  return [...new Set([STORE_DIR, DOWNLOADS_DIR, ROOT_DIR, path.join(ROOT_DIR, "backups"), path.join(STORE_DIR, "backups"), ...extra])];
+  return [...new Set([STORE_DIR, DOWNLOADS_DIR, ROOT_DIR, path.join(ROOT_DIR, "backups"), path.join(STORE_DIR, "backups"), AUTO_BACKUP_DIR, ...extra])];
 }
 
 function formatDate(ms) {
@@ -34,20 +34,35 @@ function summarize(jobs, currentJobIds) {
 function readSqliteJobs(SQL, filePath) {
   const db = new SQL.Database(fs.readFileSync(filePath));
   try {
-    const res = db.exec("SELECT id, upload_date, created_at FROM jobs");
+    const res = db.exec("SELECT data_json FROM jobs");
     if (!res[0]) return [];
-    return res[0].values.map(([id, uploadDate, createdAt]) => ({ id, uploadDate, created_at: createdAt }));
+    return res[0].values
+      .map(([json]) => {
+        try {
+          return JSON.parse(json);
+        } catch (e) {
+          return null;
+        }
+      })
+      .filter((j) => j && j.id);
   } finally {
     db.close();
   }
 }
 
-function readJsonJobs(filePath) {
-  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  // Legacy jobs.json ({ uploadJobs }) or admin backup export ({ jobs: { uploadJobs } })
+/**
+ * Jobs from any known backup format: export v2 ({ jobs: [...] }), legacy jobs.json ({ uploadJobs })
+ * or old admin export v1 ({ jobs: { uploadJobs } }). Returns null if the data contains no jobs.
+ */
+function extractJobsFromBackupData(parsed) {
+  if (Array.isArray(parsed?.jobs)) return parsed.jobs.filter((j) => j && j.id);
   const jobsObj = parsed?.uploadJobs || parsed?.jobs?.uploadJobs || null;
   if (!jobsObj || typeof jobsObj !== "object") return null;
   return Object.values(jobsObj).filter((j) => j && j.id);
+}
+
+function readJsonJobs(filePath) {
+  return extractJobsFromBackupData(JSON.parse(fs.readFileSync(filePath, "utf8")));
 }
 
 function findCandidates() {
@@ -75,14 +90,27 @@ function findCandidates() {
   return candidates;
 }
 
-async function scanForBackups(currentJobIds = new Set()) {
-  if (process.env.NODE_ENV === "test") return [];
+/** Full job objects of a backup file; only files found by the scan are accepted (no arbitrary paths). */
+async function readBackupJobs(filePath) {
+  const resolved = path.resolve(String(filePath || ""));
+  const candidate = findCandidates().find((c) => c.fullPath === resolved && c.type !== "wal");
+  if (!candidate) throw new Error("Backup-Datei nicht gefunden oder nicht zulässig.");
+  if (fs.statSync(resolved).size > MAX_FILE_SIZE) throw new Error("Backup-Datei ist zu groß.");
+  if (candidate.type === "sqlite") return readSqliteJobs(await initSqlJs(), resolved);
+  const jobs = readJsonJobs(resolved);
+  if (!jobs) throw new Error("Datei enthält keine Jobs.");
+  return jobs;
+}
+
+async function scanForBackups(currentJobIds = new Set(), { silent = false } = {}) {
+  const log = silent ? () => {} : console.log;
+  if (process.env.NODE_ENV === "test" && !silent) return [];
   const found = [];
   try {
     const candidates = findCandidates();
-    console.log(`[BACKUP-SCAN] Suche nach Backups in: ${getScanDirs().join(", ")}`);
+    log(`[BACKUP-SCAN] Suche nach Backups in: ${getScanDirs().join(", ")}`);
     if (candidates.length === 0) {
-      console.log("[BACKUP-SCAN] Keine Backup-Dateien gefunden.");
+      log("[BACKUP-SCAN] Keine Backup-Dateien gefunden.");
       return found;
     }
 
@@ -97,7 +125,7 @@ async function scanForBackups(currentJobIds = new Set()) {
       const meta = `${(stat.size / 1024).toFixed(0)} KB, geändert ${formatDate(stat.mtimeMs)}`;
 
       if (c.type === "wal") {
-        console.log(`[BACKUP-SCAN] ⚠ ${c.fullPath} (${meta}): SQLite-WAL/Journal, kann ältere Datenbankseiten enthalten (nicht automatisch lesbar).`);
+        log(`[BACKUP-SCAN] ⚠ ${c.fullPath} (${meta}): SQLite-WAL/Journal, kann ältere Datenbankseiten enthalten (nicht automatisch lesbar).`);
         found.push({ ...c, size: stat.size });
         continue;
       }
@@ -108,18 +136,21 @@ async function scanForBackups(currentJobIds = new Set()) {
         if (!jobs) continue;
         const s = summarize(jobs, currentJobIds);
         const marker = s.missing > 0 ? "✅" : "•";
-        console.log(
+        // Daily auto backups without missing jobs are only counted in the summary
+        const isRoutineBackup = s.missing === 0 && path.dirname(c.fullPath) === path.resolve(AUTO_BACKUP_DIR);
+        found.push({ ...c, size: stat.size, ...s });
+        if (isRoutineBackup) continue;
+        log(
           `[BACKUP-SCAN] ${marker} ${c.fullPath} (${meta}): ${s.count} Jobs, Zeitraum ${formatDate(s.from)} – ${formatDate(s.to)}, ${s.missing} davon NICHT in aktueller DB`
         );
-        found.push({ ...c, size: stat.size, ...s });
       } catch (e) {
-        console.log(`[BACKUP-SCAN] ✖ ${c.fullPath} (${meta}): nicht lesbar (${e.message})`);
+        log(`[BACKUP-SCAN] ✖ ${c.fullPath} (${meta}): nicht lesbar (${e.message})`);
       }
     }
 
     const withMissing = found.filter((f) => f.missing > 0);
     const maxMissing = withMissing.reduce((max, f) => Math.max(max, f.missing), 0);
-    console.log(
+    log(
       `[BACKUP-SCAN] ${found.length} Backup-Datei(en) gefunden, ${withMissing.length} mit Jobs, die in der aktuellen DB fehlen` +
         (maxMissing > 0 ? ` (max. ${maxMissing} fehlende Jobs in einer Datei).` : ".")
     );
@@ -129,4 +160,4 @@ async function scanForBackups(currentJobIds = new Set()) {
   return found;
 }
 
-module.exports = { scanForBackups };
+module.exports = { scanForBackups, readBackupJobs, extractJobsFromBackupData };
