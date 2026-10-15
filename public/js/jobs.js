@@ -1,7 +1,7 @@
 /**
  * Document Pipeline - Jobs List Rendering, Search & Action Management
  */
-import { escapeHtml, formatFileSize, formatDateDisplay, formatCurrency, highlightQueryText, showToast, debugLog } from "./utils.js";
+import { escapeHtml, formatFileSize, formatDateDisplay, formatCurrency, highlightQueryText, parseSearchTerms, showToast, debugLog } from "./utils.js";
 import { apiRequest } from "./api.js";
 import { state } from "./state.js";
 import { openAccountingModal } from "./accounting.js";
@@ -545,7 +545,7 @@ function filterAndSortJobs(jobs) {
 
   // 2. Search Query (Metadata Match OR OCR Deep Search Match)
   if (state.searchQuery) {
-    const q = state.searchQuery.toLowerCase();
+    const terms = parseSearchTerms(state.searchQuery);
     list = list.filter((job) => {
       const res = job.result || {};
       const title = (res.full || job.originalName || "").toLowerCase();
@@ -557,15 +557,9 @@ function filterAndSortJobs(jobs) {
       const notes = (job.notes || "").toLowerCase();
       const amtStr = res.invoiceAmmount ? (res.invoiceAmmount / 100).toFixed(2).replace(".", ",") : "";
 
-      const matchesMetadata =
-        title.includes(q) ||
-        comp.includes(q) ||
-        targetComp.includes(q) ||
-        invNum.includes(q) ||
-        cat.includes(q) ||
-        tags.includes(q) ||
-        notes.includes(q) ||
-        amtStr.includes(q);
+      // Every term must appear in at least one field (AND across terms)
+      const fields = [title, comp, targetComp, invNum, cat, tags, notes, amtStr];
+      const matchesMetadata = terms.length > 0 && terms.every((term) => fields.some((field) => field.includes(term)));
 
       const matchesOcr = state.deepSearchSnippets && state.deepSearchSnippets.has(job.id);
 

@@ -86,18 +86,38 @@ export function formatCurrency(amount) {
  * Highlights matching search query substrings safely.
  */
 export function highlightQueryText(text, query) {
-  if (!text || !query || !String(query).trim()) return escapeHtml(text || "");
+  const terms = parseSearchTerms(query);
+  if (!text || terms.length === 0) return escapeHtml(text || "");
   const safeText = String(text);
-  const q = String(query).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(`(${q})`, "gi");
+  // Longest terms first so "umsatzsteuer" wins over a shorter overlapping term
+  const pattern = [...terms]
+    .sort((a, b) => b.length - a.length)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const regex = new RegExp(`(${pattern})`, "gi");
   const parts = safeText.split(regex);
   return parts
     .map((part) =>
-      part.toLowerCase() === String(query).trim().toLowerCase()
+      terms.includes(part.toLowerCase())
         ? `<mark class="bg-warning text-dark px-1 rounded">${escapeHtml(part)}</mark>`
         : escapeHtml(part)
     )
     .join("");
+}
+
+/**
+ * Splits a search query into lowercase terms; "quoted phrases" stay together.
+ * Mirrors parseSearchTerms in src/services/deepSearchService.js.
+ */
+export function parseSearchTerms(query) {
+  const terms = [];
+  const regex = /"([^"]+)"|(\S+)/g;
+  let match;
+  while ((match = regex.exec(String(query || ""))) !== null) {
+    const term = (match[1] || match[2] || "").trim().toLowerCase();
+    if (term && !terms.includes(term)) terms.push(term);
+  }
+  return terms;
 }
 
 /**

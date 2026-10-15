@@ -7,7 +7,9 @@ const { driveApi } = require("../services/driveService");
 const jobQueue = require("../services/jobQueueService");
 const { getJobs } = jobQueue;
 const {
-  extractExactSnippet,
+  extractSearchSnippet,
+  parseSearchTerms,
+  matchesAllTerms,
   getLocalPdfText,
   getDrivePdfText,
   normalizeDocKey,
@@ -25,11 +27,11 @@ function getTextFingerprint(text) {
 router.get("/api/documents/deep-search", async (req, res) => {
   try {
     const q = (req.query.q || "").trim();
-    if (!q || q.length < 2) {
+    const terms = parseSearchTerms(q);
+    if (!q || q.length < 2 || terms.length === 0) {
       return res.json({ success: true, query: q, results: [], total: 0 });
     }
 
-    const qLower = q.toLowerCase();
     const results = [];
     const seenJobIds = new Set();
     const seenDriveKeys = new Set();
@@ -64,8 +66,12 @@ router.get("/api/documents/deep-search", async (req, res) => {
           folderId = await driveApi.findFolderId(folderId);
         }
         if (folderId) {
+          // Every search term must occur in the document (AND)
+          const fullTextClauses = terms
+            .map((term) => `fullText contains '${term.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`)
+            .join(" and ");
           const driveRes = await drive.files.list({
-            q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false and fullText contains '${q.replace(/'/g, "\\'")}'`,
+            q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false and ${fullTextClauses}`,
             fields: "files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, thumbnailLink, appProperties, description, md5Checksum)",
             pageSize: 40,
           });
@@ -97,9 +103,9 @@ router.get("/api/documents/deep-search", async (req, res) => {
           });
 
           files.forEach((file, index) => {
-            let snippet = extractExactSnippet(driveTexts[index], q, 80);
+            let snippet = extractSearchSnippet(driveTexts[index], q, terms, 80);
             if (!snippet && file.description) {
-              snippet = extractExactSnippet(file.description, q, 80) || file.description;
+              snippet = extractSearchSnippet(file.description, q, terms, 80) || file.description;
             }
             if (!snippet) {
               snippet = "Gefunden in Dokument-Volltext (Google Drive)";
@@ -166,18 +172,16 @@ router.get("/api/documents/deep-search", async (req, res) => {
       const resData = job.result || {};
       const metaText = `${job.originalName || ""} ${resData.full || ""} ${resData.company || ""} ${resData.invoiceNumber || ""} ${resData.category || ""} ${(resData.tags || []).join(" ")} ${job.notes || ""}`;
 
-      const lowerFull = fullText.toLowerCase();
-      const lowerMeta = metaText.toLowerCase();
+      // Each term may match either the PDF text or the metadata, but all terms must be present
+      if (matchesAllTerms(`${fullText} ${metaText}`, terms)) {
+        const fieldMatches = (value) => value && terms.some((term) => value.toLowerCase().includes(term));
+        const matchingFields = [];
+        if (fieldMatches(resData.company)) matchingFields.push(`Firma: ${resData.company}`);
+        if (fieldMatches(resData.invoiceNumber)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
+        if (fieldMatches(resData.category)) matchingFields.push(`Kategorie: ${resData.category}`);
 
-      if (lowerFull.includes(qLower) || lowerMeta.includes(qLower)) {
-        let snippet = "";
-        if (lowerFull.includes(qLower)) {
-          snippet = extractExactSnippet(fullText, q);
-        } else {
-          const matchingFields = [];
-          if (resData.company && resData.company.toLowerCase().includes(qLower)) matchingFields.push(`Firma: ${resData.company}`);
-          if (resData.invoiceNumber && resData.invoiceNumber.toLowerCase().includes(qLower)) matchingFields.push(`Rechnungs-Nr: ${resData.invoiceNumber}`);
-          if (resData.category && resData.category.toLowerCase().includes(qLower)) matchingFields.push(`Kategorie: ${resData.category}`);
+        let snippet = extractSearchSnippet(fullText, q, terms);
+        if (!snippet) {
           snippet = matchingFields.length > 0 ? matchingFields.join(" | ") : `Gefunden in Metadaten: ${resData.company || ""}`.trim();
         }
 
