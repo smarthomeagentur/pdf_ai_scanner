@@ -319,12 +319,6 @@ const dbWrapper = {
     db.run("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)", [key, String(value)]);
     saveDatabaseToDisk();
   },
-
-  cleanupOldJobs(maxAgeTimestamp) {
-    if (!db || !maxAgeTimestamp) return;
-    db.run("DELETE FROM jobs WHERE created_at < ?", [maxAgeTimestamp]);
-    saveDatabaseToDisk();
-  },
 };
 
 module.exports = dbWrapper;

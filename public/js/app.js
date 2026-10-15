@@ -12,6 +12,7 @@ import { openAccountingModal, loadRechnungenView, initRechnungenEvents, initAcco
 import { transferJobToClickUp, initClickUpEvents, openClickUpSyncModal } from "./clickup.js";
 import { openDriveSyncModal, initDriveSyncEvents } from "./driveSync.js";
 import { renderJobsList, initJobEventDelegation, openDocPreview, closeDocPreview, ensureAdminAuth } from "./jobs.js";
+import { saveImportFiles, isImageFile } from "./scanImportStore.js";
 
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
@@ -117,7 +118,8 @@ function initUploadHandlers() {
   if (fileInput) {
     fileInput.addEventListener("change", async (e) => {
       const files = Array.from(e.target.files || []);
-      if (files.length > 0) uploadFiles(files);
+      fileInput.value = "";
+      if (files.length > 0) handleSelectedFiles(files);
     });
   }
 
@@ -159,9 +161,27 @@ function initUploadHandlers() {
           dropArea.classList.remove("drop-absorbed");
         }, 900);
 
-        uploadFiles(files);
+        handleSelectedFiles(files);
       }
     });
+  }
+}
+
+// Images go through scanner.html (edge detection + confirmation), everything else is uploaded directly
+async function handleSelectedFiles(files) {
+  const images = files.filter(isImageFile);
+  const others = files.filter((f) => !isImageFile(f));
+
+  if (others.length > 0) await uploadFiles(others);
+  if (images.length === 0) return;
+
+  const isPrivate = document.getElementById("private-upload-checkbox")?.checked || false;
+  try {
+    await saveImportFiles(images, { isPrivate });
+    window.location.href = "/scanner.html?import=1";
+  } catch (err) {
+    console.warn("Bild-Übergabe an Scanner fehlgeschlagen, lade direkt hoch:", err);
+    uploadFiles(images);
   }
 }
 

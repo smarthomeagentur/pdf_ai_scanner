@@ -10,6 +10,7 @@ const { renderPdfToJpeg } = require("./fileRenderService");
 const { getClickUpClient } = require("./clickupService");
 const clickupCredentials = require("./clickupCredentialStore");
 const dbWrapper = require("../db/database");
+const { scanForBackups } = require("./backupScanService");
 const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
 let uploadJobs = {};
@@ -153,6 +154,9 @@ async function loadJobs() {
       `[SQLITE] Verbunden mit store/database.sqlite (${Object.keys(uploadJobs).length} Belege geladen)`
     );
 
+    // Report possible backups in the log (read-only, nothing is imported)
+    scanForBackups(new Set(Object.keys(uploadJobs)));
+
     if (uploadQueue.length > 0) {
       console.log(`[SQLITE] Starte automatische Verarbeitung von ${uploadQueue.length} Beleg(en) in der Warteschlange...`);
       processQueue();
@@ -164,20 +168,9 @@ async function loadJobs() {
 
 function saveJobs() {
   try {
-    const now = Date.now();
-    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
-
-    // 30 Tage Cleanup
-    dbWrapper.cleanupOldJobs(now - thirtyDaysMs);
-
+    // Jobs are kept permanently (no age-based cleanup)
     for (const jobId in uploadJobs) {
-      const jobTime = new Date(uploadJobs[jobId].uploadDate).getTime();
-      if (now - jobTime > thirtyDaysMs) {
-        delete uploadJobs[jobId];
-        dbWrapper.deleteJobById(jobId);
-      } else {
-        persistJob(uploadJobs[jobId]);
-      }
+      persistJob(uploadJobs[jobId]);
     }
 
     persistAppState();

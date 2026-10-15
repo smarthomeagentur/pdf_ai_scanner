@@ -18,6 +18,9 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
   const coordsList = req.body.coords || [];
   const algorithm = req.body.algorithm || "color_enhanced";
   const autoQueue = req.body.autoQueue === "true";
+  const isPrivate = req.body.isPrivate === "true";
+  // Imported images keep their original file name as document name
+  const importedName = path.basename(String(req.body.originalName || "")).replace(/\.[^.]+$/, "").trim();
 
   console.log(`[SCANNER] Starte Verarbeitung für ${req.files.length} Seite(n) mit Modus ${algorithm}`);
 
@@ -73,8 +76,9 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
       const jobId = generateJobId();
       createdJob = {
         id: jobId,
-        originalName: path.basename(outputPdfPath),
+        originalName: importedName ? `${importedName}.pdf` : path.basename(outputPdfPath),
         status: "pending",
+        isPrivate,
         result: null,
         error: null,
         filePath: outputPdfPath,

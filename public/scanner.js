@@ -27,6 +27,15 @@ if (isDebugMode && sourceSelect) {
   console.log("[Scanner] Debug-Modus aktiv: Testbild-Auswahl sichtbar");
 }
 
+// Import-Modus: Bilder aus dem Upload der Hauptseite (scanner.html?import=1) statt Live-Kamera
+let importModeActive = new URLSearchParams(window.location.search).has("import");
+let importStarted = false;
+let importQueue = []; // [{ blob, name, type }]
+let importTotal = 0;
+let importOptions = {};
+let docImportName = null; // Dateiname des ersten Bildes im aktuellen Dokument
+let activeImportUploads = 0;
+
 // UI-Slider Handler
 let onnxSensitivity = 0.85;
 
@@ -1416,6 +1425,10 @@ if (sourceSelect) {
 }
 
 function onSystemReady() {
+  if (importModeActive && (onnxReady || onnxLoadFailed)) {
+    startImportFlow();
+    return;
+  }
   if (!cameraStarted && (onnxReady || onnxLoadFailed)) {
     cameraStarted = true;
     loadingText.style.display = "none";
@@ -2304,6 +2317,14 @@ window.removeScannedPage = function (index) {
 const closeReviewPanel = async () => {
   const reviewSec = document.getElementById("manual-review-section");
   if (reviewSec) reviewSec.style.display = "none";
+
+  // Import-Modus: verworfenes Bild überspringen und mit dem nächsten weitermachen
+  if (importModeActive && (importQueue.length > 0 || scanPagesArray.length === 0)) {
+    reviewState.highResCanvas = null;
+    if (importQueue.length > 0) await loadNextImport();
+    else maybeLeaveImportMode();
+    return;
+  }
   const filterMenu = document.getElementById("filterMenu");
   if (filterMenu) filterMenu.style.display = "block";
   const vidWrap = document.getElementById("video-wrapper");
@@ -2489,6 +2510,13 @@ const handleAddPageAction = async () => {
   scanPagesArray.push({ blob, previewUrl });
   reviewState.highResCanvas = null;
 
+  // Import-Modus: nächstes hochgeladenes Bild als weitere Seite prüfen (sonst weiter mit Kamera)
+  if (importModeActive && importQueue.length > 0) {
+    updateScannedPagesUI();
+    await loadNextImport();
+    return;
+  }
+
   setTimeout(async () => {
     if (loader) loader.style.display = "none";
     const filterMenu = document.getElementById("filterMenu");
@@ -2538,6 +2566,11 @@ async function finishScanProcess(sendToAI) {
   });
 
   formData.append("algorithm", document.getElementById("algorithmSelect").value);
+  if (importModeActive) {
+    formData.append("isPrivate", importOptions.isPrivate ? "true" : "false");
+    if (docImportName) formData.append("originalName", docImportName);
+  }
+  docImportName = null;
   // KI Pipeline Flag basiert jetzt direkt auf dem aufgerufenen Button
   formData.append("autoQueue", sendToAI ? "true" : "false");
 
@@ -2551,13 +2584,6 @@ async function finishScanProcess(sendToAI) {
         `;
   document.body.insertAdjacentHTML("beforeend", toastHtml);
 
-  // Direkt UI freigeben, ohne auf fetch warten!
-  loader.style.display = "none";
-  document.getElementById("filterMenu").style.display = "block";
-  document.getElementById("video-wrapper").style.display = "flex";
-  document.getElementById("captureBtn").style.display = "block";
-  document.getElementById("captureBtn").disabled = false;
-
   // Array leeren und Thumbnails revoken
   scanPagesArray.forEach((item) => {
     if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
@@ -2565,7 +2591,25 @@ async function finishScanProcess(sendToAI) {
   scanPagesArray = [];
   reviewState.highResCanvas = null;
   updateScannedPagesUI();
-  await resumeCameraAndInference();
+
+  if (importModeActive) {
+    // Nächstes Bild prüfen, während dieses Dokument im Hintergrund hochlädt
+    activeImportUploads++;
+    if (importQueue.length > 0) {
+      loadNextImport();
+    } else {
+      loaderStatus.innerText = "Dokument wird hochgeladen...";
+      loader.style.display = "block";
+    }
+  } else {
+    // Direkt UI freigeben, ohne auf fetch warten!
+    loader.style.display = "none";
+    document.getElementById("filterMenu").style.display = "block";
+    document.getElementById("video-wrapper").style.display = "flex";
+    document.getElementById("captureBtn").style.display = "block";
+    document.getElementById("captureBtn").disabled = false;
+    await resumeCameraAndInference();
+  }
 
   // Der asynchrone Upload-Prozess im Hintergrund
   try {
@@ -2616,7 +2660,7 @@ async function finishScanProcess(sendToAI) {
 
       toastEl.style.background = "#C4EED0";
       toastEl.style.color = "#003914";
-      loadSavedScans();
+      if (typeof loadSavedScans === "function") loadSavedScans();
 
       setTimeout(() => {
         toastEl.style.opacity = "0";
@@ -2644,7 +2688,119 @@ async function finishScanProcess(sendToAI) {
         setTimeout(() => toastEl.remove(), 300);
       }, 3000);
     }
+  } finally {
+    if (importModeActive) {
+      activeImportUploads = Math.max(0, activeImportUploads - 1);
+      maybeLeaveImportMode();
+    }
   }
+}
+
+// --- Import-Modus: hochgeladene Bilder mit Kantenerkennung prüfen ---
+async function startImportFlow() {
+  if (importStarted) return;
+  importStarted = true;
+  loadingText.style.display = "none";
+
+  try {
+    const { takeImportFiles } = await import("/js/scanImportStore.js");
+    const data = await takeImportFiles();
+    importQueue = (data.entries || []).filter((e) => e && e.blob);
+    importOptions = data.options || {};
+  } catch (e) {
+    console.warn("[Scanner] Import-Bilder konnten nicht geladen werden:", e);
+  }
+  // Reload soll nicht erneut in den (dann leeren) Import-Modus führen
+  history.replaceState(null, "", "/scanner.html");
+
+  if (importQueue.length === 0) {
+    importModeActive = false;
+    onSystemReady();
+    return;
+  }
+
+  importTotal = importQueue.length;
+  videoWrapper.style.display = "none";
+  captureBtn.style.display = "none";
+  await loadNextImport();
+}
+
+async function loadImageToCanvas(blob) {
+  // EXIF-Rotation von Handyfotos berücksichtigen, sehr große Bilder auf 4096px begrenzen
+  const bitmap = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  const scale = Math.min(1, 4096 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  if (bitmap.close) bitmap.close();
+  return canvas;
+}
+
+async function loadNextImport() {
+  while (importQueue.length > 0) {
+    const entry = importQueue.shift();
+    const position = importTotal - importQueue.length;
+    loaderStatus.innerText = `Erkenne Dokumentkanten (Bild ${position} von ${importTotal})...`;
+    loader.style.display = "block";
+
+    try {
+      const canvas = await loadImageToCanvas(entry.blob);
+      let corners = await performDetailedPostScan(canvas, null);
+      const hasRealCorners = !!(corners && corners.length === 4);
+      if (!hasRealCorners) {
+        // Keine Kanten erkannt: ganzes Bild vorschlagen (z. B. bereits zugeschnittene Scans)
+        corners = [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ];
+      }
+      if (scanPagesArray.length === 0) docImportName = entry.name || null;
+      loader.style.display = "none";
+      showManualReview(canvas, corners, hasRealCorners);
+      updateImportAddPageButton();
+      return true;
+    } catch (e) {
+      // z. B. HEIC, das der Browser nicht dekodieren kann -> unverändert hochladen
+      console.warn(`[Scanner] Bild ${entry.name} nicht lesbar, lade direkt hoch:`, e);
+      await uploadImportFileDirectly(entry);
+    }
+  }
+  loader.style.display = "none";
+  maybeLeaveImportMode();
+  return false;
+}
+
+// "+ Seite" haengt im Import-Modus das naechste hochgeladene Bild an dasselbe Dokument an
+function updateImportAddPageButton() {
+  const btn = document.getElementById("addPageBtn");
+  const label = btn && btn.querySelector("span:last-child");
+  if (!label) return;
+  const nextIsImport = importModeActive && importQueue.length > 0;
+  label.textContent = nextIsImport ? "+ Nächstes Bild" : "+ Seite";
+  btn.title = nextIsImport ? "Nächstes hochgeladenes Bild als weitere Seite dieses Dokuments hinzufügen" : "Weitere Seite scannen";
+}
+
+async function uploadImportFileDirectly(entry) {
+  const formData = new FormData();
+  formData.append("files", entry.blob, entry.name || "bild.jpg");
+  formData.append("isPrivate", importOptions.isPrivate ? "true" : "false");
+  try {
+    await fetch("/api/upload", { method: "POST", body: formData });
+  } catch (e) {
+    console.warn("[Scanner] Direkter Upload fehlgeschlagen:", e);
+  }
+}
+
+// Zurück zur Übersicht, sobald alle Bilder geprüft und alle Uploads abgeschlossen sind
+function maybeLeaveImportMode() {
+  if (!importModeActive) return;
+  if (importQueue.length > 0 || reviewState.highResCanvas || scanPagesArray.length > 0 || activeImportUploads > 0) return;
+  setTimeout(() => {
+    window.location.href = "/";
+  }, 600);
 }
 
 // Service Worker registrieren (PWA Support)
