@@ -168,3 +168,24 @@ test("cancel open jobs", async () => {
   assert.match(jobQueue.uploadJobs["cancel-a"].error, /abgebrochen/);
   assert.equal(jobQueue.uploadJobs["cancel-done"].status, "completed");
 });
+
+test("restore relinks PDFs from another machine's path by file name", () => {
+  const { DOWNLOADS_DIR } = require("../../src/config/paths");
+  const fileName = `restore-relink-test-${Date.now()}.pdf`;
+  const localFile = path.join(DOWNLOADS_DIR, fileName);
+  fs.writeFileSync(localFile, "%PDF-1.4");
+  try {
+    const result = jobQueue.restoreJobs(
+      [
+        { id: "relink-found", status: "completed", filePath: `C:\\old\\downloads\\${fileName}` },
+        { id: "relink-missing", status: "completed", filePath: "C:\\old\\downloads\\does-not-exist.pdf" },
+      ],
+      { dryRun: false },
+    );
+    assert.equal(result.relinkedFiles, 1);
+    assert.equal(result.missingFiles, 1);
+    assert.equal(jobQueue.uploadJobs["relink-found"].filePath, localFile);
+  } finally {
+    fs.rmSync(localFile, { force: true });
+  }
+});

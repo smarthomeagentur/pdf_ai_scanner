@@ -936,7 +936,15 @@ function restoreJobs(backupJobs, { dryRun = true, source = "Backup" } = {}) {
   const currentDriveIds = new Set();
   for (const job of Object.values(uploadJobs)) getJobDriveIds(job).forEach((id) => currentDriveIds.add(id));
 
-  const stats = { total: backupJobs.length, restored: 0, existing: 0, duplicates: 0, missingFiles: 0, unfinished: 0 };
+  const stats = {
+    total: backupJobs.length,
+    restored: 0,
+    existing: 0,
+    duplicates: 0,
+    missingFiles: 0,
+    relinkedFiles: 0,
+    unfinished: 0,
+  };
   const restoredAt = new Date().toISOString();
 
   for (const backupJob of backupJobs) {
@@ -952,7 +960,17 @@ function restoreJobs(backupJobs, { dryRun = true, source = "Backup" } = {}) {
     }
 
     const job = JSON.parse(JSON.stringify(backupJob));
-    if (!job.filePath || !fs.existsSync(job.filePath)) stats.missingFiles++;
+    if (!job.filePath || !fs.existsSync(job.filePath)) {
+      // Old jobs may carry paths from another machine (e.g. a Windows downloads folder); look for the same file here
+      const fileName = String(job.filePath || "").split(/[\\/]/).pop();
+      const localCandidate = fileName ? path.join(DOWNLOADS_DIR, fileName) : null;
+      if (localCandidate && fs.existsSync(localCandidate)) {
+        job.filePath = localCandidate;
+        stats.relinkedFiles++;
+      } else {
+        stats.missingFiles++;
+      }
+    }
 
     // loadJobs() would re-queue these on the next start, so they must not keep their old state
     const wasUnfinished =
@@ -985,7 +1003,7 @@ function restoreJobs(backupJobs, { dryRun = true, source = "Backup" } = {}) {
   }
   console.log(
     `[BACKUP-RESTORE] ${dryRun ? "Probelauf" : "Wiederherstellung"} aus ${source}: ${stats.restored} wiederhergestellt, ` +
-      `${stats.existing} bereits vorhanden, ${stats.duplicates} Duplikate übersprungen, ${stats.missingFiles} ohne lokale PDF, ` +
+      `${stats.existing} bereits vorhanden, ${stats.duplicates} Duplikate übersprungen, ${stats.missingFiles} ohne lokale PDF, ${stats.relinkedFiles} PDFs neu verknüpft, ` +
       `${stats.unfinished} unvollständig verarbeitet (von ${stats.total})`
   );
   return { dryRun, file: source, ...stats };
