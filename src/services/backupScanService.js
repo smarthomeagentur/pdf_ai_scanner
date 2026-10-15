@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const initSqlJs = require("sql.js");
-const { ROOT_DIR, STORE_DIR, DOWNLOADS_DIR, DB_FILE } = require("../config/paths");
+const { ROOT_DIR, STORE_DIR, DOWNLOADS_DIR, DB_FILE, AUTO_BACKUP_DIR } = require("../config/paths");
 
 // Read-only scan: reports possible job backups on startup, never imports or modifies anything
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
@@ -13,7 +13,7 @@ function getScanDirs() {
     .split(/[;,]/)
     .map((d) => d.trim())
     .filter(Boolean);
-  return [...new Set([STORE_DIR, DOWNLOADS_DIR, ROOT_DIR, path.join(ROOT_DIR, "backups"), path.join(STORE_DIR, "backups"), ...extra])];
+  return [...new Set([STORE_DIR, DOWNLOADS_DIR, ROOT_DIR, path.join(ROOT_DIR, "backups"), path.join(STORE_DIR, "backups"), AUTO_BACKUP_DIR, ...extra])];
 }
 
 function formatDate(ms) {
@@ -136,10 +136,13 @@ async function scanForBackups(currentJobIds = new Set(), { silent = false } = {}
         if (!jobs) continue;
         const s = summarize(jobs, currentJobIds);
         const marker = s.missing > 0 ? "✅" : "•";
+        // Daily auto backups without missing jobs are only counted in the summary
+        const isRoutineBackup = s.missing === 0 && path.dirname(c.fullPath) === path.resolve(AUTO_BACKUP_DIR);
+        found.push({ ...c, size: stat.size, ...s });
+        if (isRoutineBackup) continue;
         log(
           `[BACKUP-SCAN] ${marker} ${c.fullPath} (${meta}): ${s.count} Jobs, Zeitraum ${formatDate(s.from)} – ${formatDate(s.to)}, ${s.missing} davon NICHT in aktueller DB`
         );
-        found.push({ ...c, size: stat.size, ...s });
       } catch (e) {
         log(`[BACKUP-SCAN] ✖ ${c.fullPath} (${meta}): nicht lesbar (${e.message})`);
       }

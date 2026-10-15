@@ -8,6 +8,9 @@ if (!fs.existsSync(STORE_DIR)) fs.mkdirSync(STORE_DIR, { recursive: true });
 const DOWNLOADS_DIR = path.join(ROOT_DIR, "downloads");
 if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
+// Daily database backups; set AUTO_BACKUP_DIR to a separate volume to survive loss of the store volume
+const AUTO_BACKUP_DIR = process.env.AUTO_BACKUP_DIR ? path.resolve(process.env.AUTO_BACKUP_DIR) : path.join(STORE_DIR, "backups");
+
 const THUMBS_DIR = path.join(STORE_DIR, "thumbs");
 if (!fs.existsSync(THUMBS_DIR)) fs.mkdirSync(THUMBS_DIR, { recursive: true });
 
@@ -44,6 +47,7 @@ module.exports = {
   STORE_DIR,
   DOWNLOADS_DIR,
   THUMBS_DIR,
+  AUTO_BACKUP_DIR,
   SETTINGS_FILE,
   TOKEN_FILE,
   JOBS_FILE,

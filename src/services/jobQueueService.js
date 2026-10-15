@@ -11,6 +11,7 @@ const { getClickUpClient } = require("./clickupService");
 const clickupCredentials = require("./clickupCredentialStore");
 const dbWrapper = require("../db/database");
 const { scanForBackups, readBackupJobs } = require("./backupScanService");
+const { startAutoBackup } = require("./autoBackupService");
 const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
 let uploadJobs = {};
@@ -156,6 +157,8 @@ async function loadJobs() {
 
     // Report possible backups in the log (read-only, nothing is imported)
     scanForBackups(new Set(Object.keys(uploadJobs)));
+    startAutoBackup(() => Object.keys(uploadJobs).length);
+    jobsLoaded = true;
 
     if (uploadQueue.length > 0) {
       console.log(`[SQLITE] Starte automatische Verarbeitung von ${uploadQueue.length} Beleg(en) in der Warteschlange...`);
@@ -807,6 +810,80 @@ function retryJob(jobId) {
   return job;
 }
 
+let isPollingDrive = false;
+let jobsLoaded = false;
+
+/**
+ * Drive monitor: imports new files from the source folder into the AI pipeline.
+ * Only files created after the monitor's start point are imported, so an old backlog (e.g. raw scans
+ * of deleted or restored jobs) is never re-processed; older files can be imported via Drive sync.
+ */
+async function pollDriveSourceFolder() {
+  // Without the loaded processed list every file in the folder would look new
+  if (!jobsLoaded || !appSettings.MONITOR_DRIVE || !appSettings.FOLDER_ID) return;
+  // A poll downloads files and can take longer than the interval; overlapping polls caused duplicate imports
+  if (isPollingDrive) return;
+  isPollingDrive = true;
+
+  try {
+    let since = dbWrapper.getAppState("drive_monitor_since");
+    if (!since) {
+      since = new Date().toISOString();
+      dbWrapper.setAppState("drive_monitor_since", since);
+      console.log(`[DRIVE MONITOR] Startpunkt gesetzt: Nur Dateien ab ${since} werden automatisch importiert.`);
+    }
+
+    const folderId = driveApi.isValidGoogleDriveId(appSettings.FOLDER_ID)
+      ? appSettings.FOLDER_ID
+      : await driveApi.findFolderId(appSettings.FOLDER_ID);
+    if (!folderId) return;
+
+    const drive = await driveApi.getClient();
+    const res = await drive.files.list({
+      q: `mimeType != 'application/vnd.google-apps.folder' and trashed = false and '${folderId}' in parents and createdTime > '${since}'`,
+      fields: "files(id, name, mimeType, size, createdTime, appProperties)",
+      orderBy: "createdTime",
+      pageSize: 50,
+    });
+
+    for (const file of res.data.files || []) {
+      if (processedDriveFiles.includes(file.id)) continue;
+
+      // Mark first and persist, so a crash or restart mid-download never imports the file twice
+      processedDriveFiles.push(file.id);
+      persistAppState();
+
+      const isKnown = Object.values(uploadJobs).some((j) => getJobDriveIds(j).includes(file.id));
+      if (isKnown) continue;
+
+      console.log(`[DRIVE MONITOR] Neue Datei in Quell-Ordner entdeckt: ${file.name} (ID: ${file.id})`);
+      const safeName = file.name.toLowerCase().endsWith(".pdf") ? file.name : `${file.name}.pdf`;
+      const localPath = path.join(DOWNLOADS_DIR, `${Date.now()}-${safeName}`);
+      const downloadRes = await drive.files.get({ fileId: file.id, alt: "media" }, { responseType: "stream" });
+      await pipeline(downloadRes.data, fs.createWriteStream(localPath));
+
+      addJobs([
+        {
+          id: generateJobId(),
+          originalName: file.name,
+          status: "pending",
+          source: "google_drive",
+          rawDriveId: file.id,
+          driveFileId: file.id,
+          isPrivate: file.appProperties?.isPrivate === "true",
+          inAiPipeline: true,
+          filePath: localPath,
+          uploadDate: new Date().toISOString(),
+        },
+      ]);
+    }
+  } catch (err) {
+    console.warn("[DRIVE MONITOR] Fehler beim Polling:", err.message);
+  } finally {
+    isPollingDrive = false;
+  }
+}
+
 function getJobDriveIds(job) {
   const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
   return [job.rawDriveId, job.driveFileId, sortedId].filter(Boolean).map((id) => String(id).replace(/^gdrive_/, ""));
@@ -897,6 +974,7 @@ function listBackups() {
 }
 
 module.exports = {
+  pollDriveSourceFolder,
   restoreJobsFromBackup,
   restoreJobs,
   mergeDriveState,
