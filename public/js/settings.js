@@ -836,7 +836,8 @@ export function initSettingsEvents() {
   const describeRestore = (r) =>
     `${r.restored} Belege ${r.dryRun ? "würden wiederhergestellt" : "wiederhergestellt"}` +
     ` · ${r.existing} bereits vorhanden · ${r.duplicates} Duplikate übersprungen` +
-    (r.missingFiles ? ` · ${r.missingFiles} ohne lokale PDF` : "") +
+    (r.relinkedFiles ? ` · ${r.relinkedFiles} PDFs im Download-Ordner gefunden` : "") +
+    (r.missingFiles ? ` · ${r.missingFiles} ohne lokale PDF (Vorschau kommt dann von Google Drive)` : "") +
     (r.unfinished ? ` · ${r.unfinished} waren nicht fertig verarbeitet (werden nicht erneut verarbeitet)` : "");
 
   document.getElementById("download-backup-btn")?.addEventListener("click", () => {
