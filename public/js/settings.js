@@ -636,10 +636,17 @@ export async function clearAppCacheAndStorage() {
   }
 }
 
-async function refreshQueueStatus() {
+let lastQueueStatus = null;
+
+// Times out so a busy server (or a browser connection queue full of thumbnail requests) never blocks the card
+async function refreshQueueStatus(timeoutMs = 8000) {
   const el = document.getElementById("admin-queue-status");
+  if (el) el.textContent = "Status wird geladen...";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const status = await apiRequest("/api/admin/queue");
+    const status = await apiRequest("/api/admin/queue", { signal: controller.signal });
+    lastQueueStatus = status;
     if (el) {
       el.textContent =
         status.pending || status.processing
@@ -648,8 +655,10 @@ async function refreshQueueStatus() {
     }
     return status;
   } catch (err) {
-    if (el) el.textContent = "Status nicht verfügbar.";
+    if (el) el.textContent = err.name === "AbortError" ? "Status nicht verfügbar (Server ausgelastet)." : "Status nicht verfügbar.";
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -693,18 +702,19 @@ export function initSettingsEvents() {
 
   document.getElementById("cancel-open-jobs-btn")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
-    const status = await refreshQueueStatus();
-    if (status && status.pending === 0) {
-      showToast("Keine offenen Jobs in der Warteschlange.", "info");
-      return;
-    }
-    const count = status ? `${status.pending} offene Jobs` : "Alle offenen Jobs";
-    if (!confirm(`${count} abbrechen?
-
-Sie werden nicht analysiert und als „Vom Admin abgebrochen“ markiert. Einzelne Jobs lassen sich später über „Erneut versuchen“ wieder starten.
-Eine gerade laufende Analyse wird noch beendet.`)) return;
+    // Do not wait for a fresh status here: on an overloaded server that request may hang
+    const status = lastQueueStatus;
+    const count = status?.pending ? `${status.pending} offene Jobs` : "Alle offenen Jobs";
+    const message =
+      `${count} abbrechen?\n\n` +
+      "Sie werden nicht analysiert und als „Vom Admin abgebrochen“ markiert. " +
+      "Einzelne Jobs lassen sich später über „Erneut versuchen“ wieder starten.\n" +
+      "Eine gerade laufende Analyse wird noch beendet.";
+    if (!confirm(message)) return;
 
     btn.disabled = true;
+    const statusEl = document.getElementById("admin-queue-status");
+    if (statusEl) statusEl.textContent = "Breche offene Jobs ab...";
     try {
       const result = await apiRequest("/api/admin/queue/cancel", { method: "POST" });
       showToast(`${result.cancelled} Jobs abgebrochen${result.processing ? " (laufende Analyse wird noch beendet)" : ""}.`, "success");
