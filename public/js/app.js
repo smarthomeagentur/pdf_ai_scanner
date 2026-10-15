@@ -17,6 +17,7 @@ import { saveImportFiles, isImageFile } from "./scanImportStore.js";
 // Expose globals for HTML event handlers
 window.openGooglePicker = openGooglePicker;
 window.openSettingsModal = openSettingsModal;
+window.refreshStatus = () => refreshStatus(true);
 window.openAdminLoginModal = openAdminLoginModal;
 window.saveAllSettings = saveAllSettings;
 window.openAccountingModal = openAccountingModal;

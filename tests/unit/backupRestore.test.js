@@ -77,7 +77,7 @@ test("backup restore", async (t) => {
     assert.equal(result.unfinished, 1);
 
     const pending = jobQueue.uploadJobs["restore-pending"];
-    assert.equal(pending.status, "error");
+    assert.equal(pending.status, "failed");
     assert.equal(pending.inAiPipeline, false);
     assert.ok(pending.restoredFromBackup);
     assert.equal(jobQueue.uploadJobs["restore-dup"], undefined);
@@ -151,4 +151,20 @@ test("backup export / import", async (t) => {
   await t.test("rejects data without jobs or settings", () => {
     assert.throws(() => restoreBackup({ foo: 1 }), /weder Belege noch Einstellungen/);
   });
+});
+
+test("cancel open jobs", async () => {
+  // Add pending jobs directly (addJobs would start the AI queue)
+  jobQueue.uploadJobs["cancel-a"] = { id: "cancel-a", originalName: "a.pdf", status: "pending", inAiPipeline: true };
+  jobQueue.uploadJobs["cancel-b"] = { id: "cancel-b", originalName: "b.pdf", status: "pending", inAiPipeline: true };
+  jobQueue.uploadJobs["cancel-done"] = { id: "cancel-done", originalName: "c.pdf", status: "completed" };
+
+  assert.ok(jobQueue.getQueueStatus().pending >= 2);
+  const result = jobQueue.cancelOpenJobs();
+  assert.ok(result.cancelled >= 2);
+  assert.equal(jobQueue.getQueueStatus().pending, 0);
+  assert.equal(jobQueue.uploadJobs["cancel-a"].status, "failed");
+  assert.equal(jobQueue.uploadJobs["cancel-a"].inAiPipeline, false);
+  assert.match(jobQueue.uploadJobs["cancel-a"].error, /abgebrochen/);
+  assert.equal(jobQueue.uploadJobs["cancel-done"].status, "completed");
 });

@@ -893,6 +893,18 @@
 
             <!-- TAB 5: System & Wartung -->
             <div id="settings-panel-system" class="settings-tab-panel" style="display: none;">
+              <div class="gdev-card" id="admin-queue-container">
+                <div class="gdev-card-title">
+                  <span>KI-Warteschlange</span>
+                </div>
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                  <span id="admin-queue-status" class="small text-muted">Status wird geladen...</span>
+                  <button id="cancel-open-jobs-btn" type="button" class="btn btn-sm btn-outline-danger d-flex align-items-center gap-1">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">cancel</span> Alle offenen Jobs abbrechen
+                  </button>
+                </div>
+              </div>
+
               <div class="gdev-card" id="admin-backup-container">
                 <div class="gdev-card-title">
                   <span>Backup & Wiederherstellung</span>
@@ -1586,7 +1598,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20261015_backup_v2_v100"></script>
+      <script type="module" src="/js/app.js?v=20261015_queue_cancel_v101"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

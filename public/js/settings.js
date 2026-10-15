@@ -636,6 +636,23 @@ export async function clearAppCacheAndStorage() {
   }
 }
 
+async function refreshQueueStatus() {
+  const el = document.getElementById("admin-queue-status");
+  try {
+    const status = await apiRequest("/api/admin/queue");
+    if (el) {
+      el.textContent =
+        status.pending || status.processing
+          ? `${status.pending} wartend · ${status.processing} in Analyse`
+          : "Keine offenen Jobs.";
+    }
+    return status;
+  } catch (err) {
+    if (el) el.textContent = "Status nicht verfügbar.";
+    return null;
+  }
+}
+
 export function initSettingsEvents() {
   document.getElementById("openSettingsBtn")?.addEventListener("click", openSettingsModal);
 
@@ -670,7 +687,34 @@ export function initSettingsEvents() {
       btn.classList.add("active");
       const activePanel = document.getElementById(`settings-panel-${tabTarget}`);
       if (activePanel) activePanel.style.display = "block";
+      if (tabTarget === "system") refreshQueueStatus();
     });
+  });
+
+  document.getElementById("cancel-open-jobs-btn")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const status = await refreshQueueStatus();
+    if (status && status.pending === 0) {
+      showToast("Keine offenen Jobs in der Warteschlange.", "info");
+      return;
+    }
+    const count = status ? `${status.pending} offene Jobs` : "Alle offenen Jobs";
+    if (!confirm(`${count} abbrechen?
+
+Sie werden nicht analysiert und als „Vom Admin abgebrochen“ markiert. Einzelne Jobs lassen sich später über „Erneut versuchen“ wieder starten.
+Eine gerade laufende Analyse wird noch beendet.`)) return;
+
+    btn.disabled = true;
+    try {
+      const result = await apiRequest("/api/admin/queue/cancel", { method: "POST" });
+      showToast(`${result.cancelled} Jobs abgebrochen${result.processing ? " (laufende Analyse wird noch beendet)" : ""}.`, "success");
+      refreshQueueStatus();
+      window.refreshStatus?.();
+    } catch (err) {
+      showToast("Fehler beim Abbrechen: " + err.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // Modular Accounting Accounts Events

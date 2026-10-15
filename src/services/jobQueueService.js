@@ -810,6 +810,40 @@ function retryJob(jobId) {
   return job;
 }
 
+const CANCELLED_MESSAGE = "Vom Admin abgebrochen.";
+
+function getQueueStatus() {
+  const jobs = Object.values(uploadJobs);
+  return {
+    pending: jobs.filter((j) => j.status === "pending").length,
+    processing: jobs.filter((j) => j.status === "processing").length,
+  };
+}
+
+/**
+ * Cancels all waiting jobs: they leave the queue and are marked failed (retry stays possible, a restart
+ * does not re-queue them). The job currently being analysed cannot be interrupted and finishes normally.
+ */
+function cancelOpenJobs() {
+  let cancelled = 0;
+  for (const job of Object.values(uploadJobs)) {
+    if (job.status !== "pending") continue;
+    job.status = "failed";
+    job.error = CANCELLED_MESSAGE;
+    job.inAiPipeline = false;
+    clickupCredentials.discardCredentials(job.id);
+    dbWrapper.insertOrReplaceJob(job, { save: false });
+    cancelled++;
+  }
+  uploadQueue.length = 0;
+  if (cancelled > 0) dbWrapper.saveToDisk();
+  persistAppState();
+
+  const { processing } = getQueueStatus();
+  console.log(`[QUEUE] ${cancelled} offene Jobs vom Admin abgebrochen (${processing} laufende Analyse wird noch beendet).`);
+  return { cancelled, processing };
+}
+
 let isPollingDrive = false;
 let jobsLoaded = false;
 
@@ -928,7 +962,7 @@ function restoreJobs(backupJobs, { dryRun = true, source = "Backup" } = {}) {
       job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
     if (wasUnfinished) {
       stats.unfinished++;
-      job.status = job.result ? "completed" : "error";
+      job.status = job.result ? "completed" : "failed";
       job.error = job.result ? null : "Aus Backup wiederhergestellt – Verarbeitung war nicht abgeschlossen.";
     }
     job.inAiPipeline = false;
@@ -974,6 +1008,8 @@ function listBackups() {
 }
 
 module.exports = {
+  getQueueStatus,
+  cancelOpenJobs,
   pollDriveSourceFolder,
   restoreJobsFromBackup,
   restoreJobs,

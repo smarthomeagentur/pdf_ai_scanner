@@ -1,7 +1,7 @@
 const express = require("express");
 const { requireAdmin } = require("../middleware/auth");
 const { createBackup, restoreBackup } = require("../services/backupService");
-const { listBackups, restoreJobsFromBackup } = require("../services/jobQueueService");
+const { listBackups, restoreJobsFromBackup, getQueueStatus, cancelOpenJobs } = require("../services/jobQueueService");
 
 const router = express.Router();
 
@@ -24,6 +24,19 @@ router.post("/api/admin/restore", requireAdmin, (req, res) => {
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+router.get("/api/admin/queue", requireAdmin, (req, res) => {
+  res.json({ success: true, ...getQueueStatus() });
+});
+
+// Cancels all waiting jobs; the job currently being analysed finishes normally
+router.post("/api/admin/queue/cancel", requireAdmin, (req, res) => {
+  try {
+    res.json({ success: true, ...cancelOpenJobs() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
