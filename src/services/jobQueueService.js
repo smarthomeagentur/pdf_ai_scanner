@@ -10,7 +10,7 @@ const { renderPdfToJpeg } = require("./fileRenderService");
 const { getClickUpClient } = require("./clickupService");
 const clickupCredentials = require("./clickupCredentialStore");
 const dbWrapper = require("../db/database");
-const { scanForBackups } = require("./backupScanService");
+const { scanForBackups, readBackupJobs } = require("./backupScanService");
 const { fixUmlauts, generateJobId } = require("../utils/textUtils");
 
 let uploadJobs = {};
@@ -807,7 +807,100 @@ function retryJob(jobId) {
   return job;
 }
 
+function getJobDriveIds(job) {
+  const sortedId = job.result?.webViewLink?.match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
+  return [job.rawDriveId, job.driveFileId, sortedId].filter(Boolean).map((id) => String(id).replace(/^gdrive_/, ""));
+}
+
+/**
+ * Adds jobs from a backup file that are missing in the current DB. Existing jobs are never
+ * overwritten, and restored jobs are never sent to the AI pipeline again.
+ */
+async function restoreJobsFromBackup(filePath, { dryRun = true } = {}) {
+  const backupJobs = await readBackupJobs(filePath);
+  return restoreJobs(backupJobs, { dryRun, source: filePath });
+}
+
+function restoreJobs(backupJobs, { dryRun = true, source = "Backup" } = {}) {
+  const currentDriveIds = new Set();
+  for (const job of Object.values(uploadJobs)) getJobDriveIds(job).forEach((id) => currentDriveIds.add(id));
+
+  const stats = { total: backupJobs.length, restored: 0, existing: 0, duplicates: 0, missingFiles: 0, unfinished: 0 };
+  const restoredAt = new Date().toISOString();
+
+  for (const backupJob of backupJobs) {
+    if (uploadJobs[backupJob.id]) {
+      stats.existing++;
+      continue;
+    }
+    const driveIds = getJobDriveIds(backupJob);
+    // Same Drive file already belongs to a current job (e.g. re-imported after the cleanup)
+    if (driveIds.some((id) => currentDriveIds.has(id))) {
+      stats.duplicates++;
+      continue;
+    }
+
+    const job = JSON.parse(JSON.stringify(backupJob));
+    if (!job.filePath || !fs.existsSync(job.filePath)) stats.missingFiles++;
+
+    // loadJobs() would re-queue these on the next start, so they must not keep their old state
+    const wasUnfinished =
+      job.status === "pending" ||
+      job.status === "processing" ||
+      job.inAiPipeline ||
+      job.error === "Verarbeitung durch Server-Neustart unterbrochen.";
+    if (wasUnfinished) {
+      stats.unfinished++;
+      job.status = job.result ? "completed" : "error";
+      job.error = job.result ? null : "Aus Backup wiederhergestellt – Verarbeitung war nicht abgeschlossen.";
+    }
+    job.inAiPipeline = false;
+    job.restoredFromBackup = { file: path.basename(source), at: restoredAt };
+
+    stats.restored++;
+    driveIds.forEach((id) => currentDriveIds.add(id));
+    if (dryRun) continue;
+
+    uploadJobs[job.id] = job;
+    dbWrapper.insertOrReplaceJob(job, { save: false });
+    // Keep the Drive monitor from importing these files again, keep hidden files hidden
+    if (job.rawDriveId && !processedDriveFiles.includes(job.rawDriveId)) processedDriveFiles.push(job.rawDriveId);
+    if (job.isHidden) driveIds.forEach((id) => !hiddenDriveFiles.includes(id) && hiddenDriveFiles.push(id));
+  }
+
+  if (!dryRun && stats.restored > 0) {
+    dbWrapper.saveToDisk();
+    persistAppState();
+  }
+  console.log(
+    `[BACKUP-RESTORE] ${dryRun ? "Probelauf" : "Wiederherstellung"} aus ${source}: ${stats.restored} wiederhergestellt, ` +
+      `${stats.existing} bereits vorhanden, ${stats.duplicates} Duplikate übersprungen, ${stats.missingFiles} ohne lokale PDF, ` +
+      `${stats.unfinished} unvollständig verarbeitet (von ${stats.total})`
+  );
+  return { dryRun, file: source, ...stats };
+}
+
+/** Adds Drive IDs from a backup to the processed/hidden lists (union, nothing is removed). */
+function mergeDriveState({ processedDriveFiles: processed = [], hiddenDriveFiles: hidden = [] } = {}, { dryRun = true } = {}) {
+  const newProcessed = processed.filter((id) => id && !processedDriveFiles.includes(id));
+  const newHidden = hidden.filter((id) => id && !hiddenDriveFiles.includes(id));
+  if (!dryRun && (newProcessed.length || newHidden.length)) {
+    processedDriveFiles.push(...newProcessed);
+    hiddenDriveFiles.push(...newHidden);
+    persistAppState();
+  }
+  return { processedDriveFiles: newProcessed.length, hiddenDriveFiles: newHidden.length };
+}
+
+function listBackups() {
+  return scanForBackups(new Set(Object.keys(uploadJobs)), { silent: true });
+}
+
 module.exports = {
+  restoreJobsFromBackup,
+  restoreJobs,
+  mergeDriveState,
+  listBackups,
   loadJobs,
   saveJobs,
   addJobs,
@@ -833,5 +926,8 @@ module.exports = {
   },
   get hiddenDriveFiles() {
     return hiddenDriveFiles;
+  },
+  get processedDriveFiles() {
+    return processedDriveFiles;
   },
 };

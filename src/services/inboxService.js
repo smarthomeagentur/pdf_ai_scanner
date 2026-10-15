@@ -147,6 +147,16 @@ function getAllSkipped() {
   return skippedEmails;
 }
 
+/** Adds skipped mails from a backup without touching existing entries; returns the number added. */
+function mergeSkipped(entries, { dryRun = true } = {}) {
+  const newIds = Object.keys(entries || {}).filter((id) => !skippedEmails[id]);
+  if (!dryRun && newIds.length) {
+    newIds.forEach((id) => (skippedEmails[id] = entries[id]));
+    saveSkippedEmails();
+  }
+  return newIds.length;
+}
+
 function addSkipped(id, mailData) {
   const mailId = id || (mailData && mailData.id);
   if (!mailId) throw new Error("Keine Mail-ID angegeben.");
@@ -167,6 +177,7 @@ module.exports = {
   loadSkippedEmails,
   saveSkippedEmails,
   getAllSkipped,
+  mergeSkipped,
   addSkipped,
   removeSkipped,
   exchangeCodeForGmailAccount,

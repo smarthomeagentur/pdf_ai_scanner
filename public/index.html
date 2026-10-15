@@ -906,6 +906,15 @@
                     <span class="material-symbols-outlined" style="font-size: 16px;">upload</span> Backup einspielen
                   </button>
                 </div>
+                <div class="mt-3">
+                  <div class="d-flex align-items-center justify-content-between gap-2 mb-1">
+                    <span class="small fw-medium">Gelöschte Belege aus Server-Backups wiederherstellen</span>
+                    <button id="scan-server-backups-btn" type="button" class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1">
+                      <span class="material-symbols-outlined" style="font-size: 16px;">search</span> Backups suchen
+                    </button>
+                  </div>
+                  <div id="server-backups-list" class="small text-muted"></div>
+                </div>
               </div>
 
               <div class="gdev-card">
@@ -1577,7 +1586,7 @@
         </div>
       </div>
 
-      <script type="module" src="/js/app.js?v=20261015_image_import_v98"></script>
+      <script type="module" src="/js/app.js?v=20261015_backup_v2_v100"></script>
       <script>
         if ("serviceWorker" in navigator) {
           window.addEventListener("load", () => {

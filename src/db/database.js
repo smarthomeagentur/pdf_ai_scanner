@@ -207,7 +207,7 @@ const dbWrapper = {
   initDatabase,
   saveDatabaseToDisk,
 
-  insertOrReplaceJob(job) {
+  insertOrReplaceJob(job, { save = true } = {}) {
     if (!db || !job || !job.id) return;
     const now = Date.now();
     const originalName = job.originalName || job.result?.full || "Dokument.pdf";
@@ -257,6 +257,10 @@ const dbWrapper = {
         now,
       ]
     );
+    if (save) saveDatabaseToDisk();
+  },
+
+  saveToDisk() {
     saveDatabaseToDisk();
   },
 

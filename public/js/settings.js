@@ -778,6 +778,13 @@ export function initSettingsEvents() {
     }
   });
 
+  const formatBackupDate = (ms) => (ms ? new Date(ms).toLocaleDateString("de-DE") : "?");
+  const describeRestore = (r) =>
+    `${r.restored} Belege ${r.dryRun ? "würden wiederhergestellt" : "wiederhergestellt"}` +
+    ` · ${r.existing} bereits vorhanden · ${r.duplicates} Duplikate übersprungen` +
+    (r.missingFiles ? ` · ${r.missingFiles} ohne lokale PDF` : "") +
+    (r.unfinished ? ` · ${r.unfinished} waren nicht fertig verarbeitet (werden nicht erneut verarbeitet)` : "");
+
   document.getElementById("download-backup-btn")?.addEventListener("click", () => {
     window.location.href = "/api/admin/backup";
   });
@@ -787,19 +794,108 @@ export function initSettingsEvents() {
   });
 
   document.getElementById("restore-file-input")?.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
+    input.value = "";
     if (!file) return;
     try {
-      const text = await file.text();
-      const json = JSON.parse(text);
-      await apiRequest("/api/admin/restore", {
-        method: "POST",
-        body: JSON.stringify(json),
-      });
-      showToast("Backup erfolgreich wiederhergestellt!", "success");
-      setTimeout(() => window.location.reload(), 1000);
+      const backup = JSON.parse(await file.text());
+      const restore = (options) =>
+        apiRequest("/api/admin/restore", { method: "POST", body: JSON.stringify({ backup, ...options }) });
+
+      // 1. Probelauf: zeigen, was ergänzt würde
+      const preview = await restore({ dryRun: true });
+      const created = preview.createdAt ? ` vom ${new Date(preview.createdAt).toLocaleString("de-DE")}` : "";
+      const lines = [preview.jobs ? describeRestore(preview.jobs) : "Keine Belege im Backup."];
+      if (preview.skippedEmails) lines.push(`${preview.skippedEmails} übersprungene E-Mails werden ergänzt.`);
+      lines.push("", "Vorhandene Belege werden nicht verändert.");
+      const hasChanges = (preview.jobs?.restored || 0) + (preview.skippedEmails || 0) + (preview.drive?.processedDriveFiles || 0) + (preview.drive?.hiddenDriveFiles || 0) > 0;
+      if (!hasChanges && !preview.hasSettings) {
+        showToast("Backup enthält nichts, was noch fehlt.", "info");
+        return;
+      }
+      if (hasChanges && !confirm(`Backup${created} einspielen?\n\n${lines.join("\n")}`)) return;
+      const includeSettings = preview.hasSettings && confirm("Einstellungen aus dem Backup ebenfalls übernehmen?\n\nDie aktuellen Einstellungen werden dabei überschrieben (API-Schlüssel sind nicht im Backup enthalten).");
+      if (!hasChanges && !includeSettings) return;
+
+      // 2. Echte Wiederherstellung
+      const result = await restore({ dryRun: false, includeSettings });
+      const parts = [];
+      if (result.jobs?.restored) parts.push(`${result.jobs.restored} Belege wiederhergestellt`);
+      if (result.settingsApplied) parts.push("Einstellungen übernommen");
+      showToast(parts.length ? parts.join(", ") + "." : "Backup eingespielt.", "success");
+      setTimeout(() => window.location.reload(), 1500);
     } catch (err) {
       showToast("Fehler beim Wiederherstellen: " + err.message, "error");
+    }
+  });
+
+  let serverBackups = [];
+
+  const renderServerBackups = () => {
+    const list = document.getElementById("server-backups-list");
+    if (!list) return;
+    if (serverBackups.length === 0) {
+      list.innerHTML = "Keine Backup-Dateien auf dem Server gefunden.";
+      return;
+    }
+    list.innerHTML = serverBackups
+      .map(
+        (b, i) => `
+        <div class="border rounded p-2 mb-2">
+          <div class="fw-medium text-dark text-break">${escapeHtml(b.name)}</div>
+          <div>${b.count} Belege · ${formatBackupDate(b.from)} – ${formatBackupDate(b.to)} · <strong>${b.missing} fehlen aktuell</strong></div>
+          <div class="text-break" style="font-size: 11px;">${escapeHtml(b.file)}</div>
+          <div class="d-flex gap-2 mt-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" data-backup-action="check" data-backup-index="${i}">Prüfen</button>
+            <button type="button" class="btn btn-sm btn-outline-success" data-backup-action="restore" data-backup-index="${i}" ${b.missing ? "" : "disabled"}>Fehlende wiederherstellen</button>
+          </div>
+          <div class="mt-1" data-backup-result="${i}"></div>
+        </div>`
+      )
+      .join("");
+  };
+
+  document.getElementById("scan-server-backups-btn")?.addEventListener("click", async () => {
+    const list = document.getElementById("server-backups-list");
+    if (list) list.innerHTML = '<span class="spinner-border spinner-border-sm me-1" style="width: 12px; height: 12px;"></span> Suche Backups...';
+    try {
+      const data = await apiRequest("/api/admin/backups");
+      serverBackups = data.backups || [];
+      renderServerBackups();
+    } catch (err) {
+      if (list) list.innerHTML = `<span class="text-danger">Fehler: ${escapeHtml(err.message)}</span>`;
+    }
+  });
+
+  document.getElementById("server-backups-list")?.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-backup-action]");
+    if (!btn) return;
+    const index = Number(btn.dataset.backupIndex);
+    const backup = serverBackups[index];
+    const resultBox = document.querySelector(`[data-backup-result="${index}"]`);
+    if (!backup) return;
+
+    const dryRun = btn.dataset.backupAction === "check";
+    if (!dryRun && !confirm(`${backup.missing} fehlende Belege aus "${backup.name}" wiederherstellen?\n\nVorhandene Belege werden nicht verändert.`)) return;
+
+    btn.disabled = true;
+    if (resultBox) resultBox.innerHTML = '<span class="spinner-border spinner-border-sm" style="width: 12px; height: 12px;"></span>';
+    try {
+      const result = await apiRequest("/api/admin/backups/restore", {
+        method: "POST",
+        body: JSON.stringify({ file: backup.file, dryRun }),
+      });
+      if (resultBox) resultBox.innerHTML = `<span class="${dryRun ? "text-dark" : "text-success"}">${escapeHtml(describeRestore(result))}</span>`;
+      if (!dryRun) {
+        showToast(`${result.restored} Belege wiederhergestellt.`, "success");
+        backup.missing = 0;
+        setTimeout(() => window.location.reload(), 1500);
+      }
+    } catch (err) {
+      if (resultBox) resultBox.innerHTML = `<span class="text-danger">Fehler: ${escapeHtml(err.message)}</span>`;
+    } finally {
+      btn.disabled = false;
     }
   });
 
