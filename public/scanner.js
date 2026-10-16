@@ -35,6 +35,7 @@ let importTotal = 0;
 let importOptions = {};
 let docImportName = null; // Dateiname des ersten Bildes im aktuellen Dokument
 let activeImportUploads = 0;
+let importLoading = false;
 
 // UI-Slider Handler
 let onnxSensitivity = 0.85;
@@ -2432,6 +2433,9 @@ if (stripFinishBtn) {
   });
 }
 
+const UPLOAD_MAX_SIDE_PX = 3508; // A4 bei 300 dpi
+const UPLOAD_JPEG_QUALITY = 0.85;
+
 function extractCroppedBlob() {
   return new Promise((resolve) => {
     try {
@@ -2457,6 +2461,11 @@ function extractCroppedBlob() {
       let heightA = Math.sqrt(Math.pow(trX - brX, 2) + Math.pow(trY - brY, 2));
       let heightB = Math.sqrt(Math.pow(tlX - blX, 2) + Math.pow(tlY - blY, 2));
       let maxHeight = Math.round(Math.max(heightA, heightB));
+
+      // Größere Bilder bringen der OCR nichts, verlängern aber den Upload (Proxy-Timeouts bei Mobilfunk)
+      const scale = Math.min(1, UPLOAD_MAX_SIDE_PX / Math.max(maxWidth, maxHeight));
+      maxWidth = Math.max(1, Math.round(maxWidth * scale));
+      maxHeight = Math.max(1, Math.round(maxHeight * scale));
 
       let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, ptsArray);
       let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
@@ -2489,11 +2498,11 @@ function extractCroppedBlob() {
           resolve(blob);
         },
         "image/jpeg",
-        0.95
+        UPLOAD_JPEG_QUALITY
       );
     } catch (e) {
       console.error("Fehler beim Croppen via OpenCV.JS, nutze Originalbild:", e);
-      reviewState.highResCanvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.95);
+      reviewState.highResCanvas.toBlob((blob) => resolve(blob), "image/jpeg", UPLOAD_JPEG_QUALITY);
     }
   });
 }
@@ -2612,18 +2621,19 @@ async function finishScanProcess(sendToAI) {
   }
 
   // Der asynchrone Upload-Prozess im Hintergrund
+  const scanHeaders = {};
   try {
-    const scanHeaders = {};
-    try {
-      const clickupApiKey = localStorage.getItem("scanner_clickup_api_key");
-      const clickupListId = localStorage.getItem("scanner_clickup_list_id");
-      if (sendToAI && clickupApiKey) scanHeaders["X-Clickup-Api-Key"] = clickupApiKey;
-      if (sendToAI && clickupListId) scanHeaders["X-Clickup-List-Id"] = clickupListId;
-    } catch (e) {}
-    const response = await fetch("/api/scan", {
-      method: "POST",
-      headers: scanHeaders,
-      body: formData,
+    const clickupApiKey = localStorage.getItem("scanner_clickup_api_key");
+    const clickupListId = localStorage.getItem("scanner_clickup_list_id");
+    if (sendToAI && clickupApiKey) scanHeaders["X-Clickup-Api-Key"] = clickupApiKey;
+    if (sendToAI && clickupListId) scanHeaders["X-Clickup-List-Id"] = clickupListId;
+  } catch (e) {}
+
+  inFlightUploads++;
+  try {
+    const response = await uploadScanWithRetry(formData, scanHeaders, (attempt) => {
+      const el = document.getElementById(toastId);
+      if (el) el.innerText = `🔄 Verbindung unterbrochen – Versuch ${attempt} von ${UPLOAD_MAX_ATTEMPTS}...`;
     });
 
     const toastEl = document.getElementById(toastId);
@@ -2677,24 +2687,102 @@ async function finishScanProcess(sendToAI) {
       }, 4000);
     }
   } catch (error) {
-    const toastEl = document.getElementById(toastId);
-    // Nur den Fehler-Toast anzeigen, wenn er existiert (also wenn nicht schon geschlossen)
-    if (toastEl) {
-      toastEl.innerText = "☁️ Im Hintergrund verarbeitet"; // Netzwerkfehler ist irreführend bei schnellem Verlassen der Seite (Fetch Aborting)
-      toastEl.style.background = "#E7E0EC";
-      toastEl.style.color = "#1C1B1F";
-      setTimeout(() => {
-        toastEl.style.opacity = "0";
-        setTimeout(() => toastEl.remove(), 300);
-      }, 3000);
-    }
+    // Upload endgültig gescheitert: Seiten behalten statt still zu verwerfen
+    console.warn("[Scanner] Upload nach mehreren Versuchen fehlgeschlagen:", error);
+    document.getElementById(toastId)?.remove();
+    if (importModeActive && !importLoading && !reviewState.highResCanvas) loader.style.display = "none";
+    failedUploads.push({ formData, headers: scanHeaders, pageCount: pagesToUpload.length });
+    renderFailedUploads();
   } finally {
+    inFlightUploads = Math.max(0, inFlightUploads - 1);
     if (importModeActive) {
       activeImportUploads = Math.max(0, activeImportUploads - 1);
       maybeLeaveImportMode();
     }
   }
 }
+
+// --- Upload mit Wiederholung bei Verbindungsabbrüchen ---
+const UPLOAD_MAX_ATTEMPTS = 3;
+const UPLOAD_RETRY_DELAYS_MS = [2000, 6000];
+let inFlightUploads = 0;
+let failedUploads = []; // [{ formData, headers, pageCount }]
+
+// Wiederholt bei Netzwerkfehlern und 5xx (z. B. Proxy-Timeout); 4xx-Antworten werden direkt zurückgegeben
+async function uploadScanWithRetry(formData, headers, onRetry) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      if (onRetry) onRetry(attempt);
+      await new Promise((r) => setTimeout(r, UPLOAD_RETRY_DELAYS_MS[attempt - 2] || 6000));
+    }
+    try {
+      const response = await fetch("/api/scan", { method: "POST", headers, body: formData });
+      if (response.status < 500 || attempt === UPLOAD_MAX_ATTEMPTS) return response;
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+function renderFailedUploads() {
+  let bar = document.getElementById("failedUploadsBar");
+  if (failedUploads.length === 0) {
+    if (bar) bar.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "failedUploadsBar";
+    bar.className = "position-fixed start-50 translate-middle-x d-flex align-items-center gap-2 px-3 py-2 shadow";
+    bar.style.cssText =
+      "bottom: 20px; z-index: 10000; max-width: 94vw; background: #FFDAD6; color: #410002; border-radius: 16px; font-size: 14px; font-weight: 500;";
+    document.body.appendChild(bar);
+  }
+  const pages = failedUploads.reduce((sum, f) => sum + f.pageCount, 0);
+  bar.innerHTML = `
+    <span>❌ ${failedUploads.length} Dokument(e) (${pages} Seite(n)) nicht hochgeladen</span>
+    <button type="button" class="btn btn-sm btn-danger" id="retryFailedUploadsBtn">Erneut hochladen</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" id="discardFailedUploadsBtn">Verwerfen</button>`;
+  bar.querySelector("#retryFailedUploadsBtn").addEventListener("click", retryFailedUploads);
+  bar.querySelector("#discardFailedUploadsBtn").addEventListener("click", () => {
+    if (!confirm("Nicht hochgeladene Dokumente endgültig verwerfen?")) return;
+    failedUploads = [];
+    renderFailedUploads();
+    maybeLeaveImportMode();
+  });
+}
+
+async function retryFailedUploads() {
+  const items = failedUploads.splice(0);
+  renderFailedUploads();
+  for (const item of items) {
+    inFlightUploads++;
+    if (importModeActive) activeImportUploads++;
+    try {
+      const response = await uploadScanWithRetry(item.formData, item.headers);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (err) {
+      console.warn("[Scanner] Erneuter Upload fehlgeschlagen:", err);
+      failedUploads.push(item);
+    } finally {
+      inFlightUploads = Math.max(0, inFlightUploads - 1);
+      if (importModeActive) activeImportUploads = Math.max(0, activeImportUploads - 1);
+    }
+  }
+  renderFailedUploads();
+  maybeLeaveImportMode();
+}
+
+// Warnen, bevor ein laufender oder gescheiterter Upload durch Verlassen der Seite verloren geht
+window.addEventListener("beforeunload", (e) => {
+  if (inFlightUploads > 0 || failedUploads.length > 0) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
 
 // --- Import-Modus: hochgeladene Bilder mit Kantenerkennung prüfen ---
 async function startImportFlow() {
@@ -2738,6 +2826,8 @@ async function loadImageToCanvas(blob) {
 }
 
 async function loadNextImport() {
+  // Während das nächste Bild geladen/analysiert wird, darf die Seite nicht zur Übersicht springen
+  importLoading = true;
   while (importQueue.length > 0) {
     const entry = importQueue.shift();
     const position = importTotal - importQueue.length;
@@ -2759,6 +2849,7 @@ async function loadNextImport() {
       }
       if (scanPagesArray.length === 0) docImportName = entry.name || null;
       loader.style.display = "none";
+      importLoading = false;
       showManualReview(canvas, corners, hasRealCorners);
       updateImportAddPageButton();
       return true;
@@ -2769,6 +2860,7 @@ async function loadNextImport() {
     }
   }
   loader.style.display = "none";
+  importLoading = false;
   maybeLeaveImportMode();
   return false;
 }
@@ -2795,11 +2887,24 @@ async function uploadImportFileDirectly(entry) {
 }
 
 // Zurück zur Übersicht, sobald alle Bilder geprüft und alle Uploads abgeschlossen sind
+function canLeaveImportMode() {
+  return (
+    importModeActive &&
+    !importLoading &&
+    importQueue.length === 0 &&
+    !reviewState.highResCanvas &&
+    scanPagesArray.length === 0 &&
+    activeImportUploads === 0 &&
+    inFlightUploads === 0 &&
+    failedUploads.length === 0
+  );
+}
+
 function maybeLeaveImportMode() {
-  if (!importModeActive) return;
-  if (importQueue.length > 0 || reviewState.highResCanvas || scanPagesArray.length > 0 || activeImportUploads > 0) return;
+  if (!canLeaveImportMode()) return;
+  // Zustand kann sich in der Wartezeit ändern (z. B. neuer Upload), daher erneut prüfen
   setTimeout(() => {
-    window.location.href = "/";
+    if (canLeaveImportMode()) window.location.href = "/";
   }, 600);
 }
 
