@@ -1167,7 +1167,7 @@ function renderInboxList() {
                 <span class="material-symbols-outlined" style="font-size: 14px;">account_balance</span>
                 <span>Auto-Upload Buchhaltung:</span>
               </span>
-              <select class="form-select form-select-sm inbox-att-accounting-select py-0" data-mail-id="${escapeHtml(mail.id)}" data-att-idx="${idx}" style="width: auto; max-width: 260px; font-size: 11.5px; height: 26px; border-radius: 6px; cursor: pointer;" title="Ziel-Buchhaltungssoftware nach KI-Verarbeitung">
+              <select class="form-select form-select-sm inbox-att-accounting-select" data-mail-id="${escapeHtml(mail.id)}" data-att-idx="${idx}" title="Ziel-Buchhaltungssoftware nach KI-Verarbeitung">
                 ${optionsHtml}
               </select>
               ${autoBadgeHtml}
