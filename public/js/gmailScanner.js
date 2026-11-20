@@ -10,7 +10,11 @@ let inboxActiveEmails = [];
 let inboxSkippedEmails = [];
 let selectedInboxMessageIds = new Set();
 let selectedInboxFileIndices = new Map(); // mailId -> Set of selected attachment indices
-let selectedInboxAccountingTargets = new Map(); // `${mailId}::${attIdx}` -> { accountId, autoDetected, reason }
+let selectedInboxAccountingTargets = new Map(); // `${mailId}::${attIdx}` -> { accountId, autoDetected, reason, manuallySelected, pdfChecked, pdfChecking }
+let gmailAttachmentBlobCache = new Map(); // `${mailId}::${attIdx}` -> Blob
+let pdfQuickCheckQueue = [];
+let pdfQuickCheckActive = 0;
+const PDF_QUICK_CHECK_CONCURRENCY = 2;
 let currentInboxSubtab = "detected";
 let isProcessingInboxBatch = false;
 
@@ -872,76 +876,86 @@ function updateInboxBatchButton() {
   batchBtn.disabled = totalFiles === 0 || isProcessingInboxBatch;
 }
 
-function buildAccountMatchTokens(account) {
-  const rawName = String(account?.name || "").toLowerCase();
+function escapeRegexClient(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildBoundaryRegexClient(phrase) {
+  const parts = String(phrase)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(escapeRegexClient);
+  if (parts.length === 0) return null;
+  return new RegExp(`(?<![a-z0-9äöüß])${parts.join("\\s+")}(?![a-z0-9äöüß])`, "i");
+}
+
+function buildAccountMatchPatterns(account) {
+  const rawName = String(account?.name || "").trim();
   const stripped = rawName
+    .toLowerCase()
     .replace(/\((.*?)\)/g, " ")
     .replace(/\b(gmbh|ug|haftungsbeschränkt|haftungsbeschraenkt|ag|gbr|kg|ohg|co|ek|e\.k\.|inc|ltd|llc|studios)\b/g, " ")
     .replace(/[^a-z0-9äöüß]+/g, " ")
     .trim();
   const compact = stripped.replace(/\s+/g, "");
-  const tokens = new Set();
-  if (stripped.length >= 3) tokens.add(stripped);
-  if (compact.length >= 3) tokens.add(compact);
-  const words = stripped.split(/\s+/).filter((w) => w.length >= 4 && !["the", "der", "die", "das", "und", "for", "von"].includes(w));
-  words.forEach((w) => tokens.add(w));
+  const phrases = new Set();
+  if (rawName.length >= 3) phrases.add(rawName);
+  if (stripped.length >= 3) phrases.add(stripped);
+  if (compact.length >= 3) phrases.add(compact);
   const idLower = String(account?.id || "").toLowerCase();
   if (idLower.length >= 3 && !idLower.startsWith("acc_")) {
-    tokens.add(idLower);
+    phrases.add(idLower);
   }
-  return Array.from(tokens);
+  return Array.from(phrases)
+    .map(buildBoundaryRegexClient)
+    .filter(Boolean);
 }
 
 /**
  * Fast client-side pre-detection of the target accounting account for a mail attachment.
- * Checks receiving mailbox / To / Delivered-To, attachment filename, subject, snippet, and sender.
+ * Uses word-boundary matching so e.g. "The Wire UG" never false-matches "wirewire".
  */
 function preDetectAccountingTarget(mail, attachment, accounts) {
   if (!Array.isArray(accounts) || accounts.length === 0) {
     return { accountId: "none", autoDetected: false, reason: "" };
   }
 
-  const recipientHaystack = `${mail.accountEmail || ""} ${mail.toRaw || ""} ${mail.deliveredTo || ""}`.toLowerCase();
-  const recipientCompact = recipientHaystack.replace(/[^a-z0-9äöüß]+/g, "");
-  const fileHaystack = String(attachment?.filename || "").toLowerCase();
-  const fileCompact = fileHaystack.replace(/[^a-z0-9äöüß]+/g, "");
-  const subjectHaystack = String(mail.subject || "").toLowerCase();
-  const subjectCompact = subjectHaystack.replace(/[^a-z0-9äöüß]+/g, "");
-  const snippetHaystack = String(mail.snippet || "").toLowerCase();
-  const snippetCompact = snippetHaystack.replace(/[^a-z0-9äöüß]+/g, "");
-  const senderHaystack = `${mail.fromName || ""} ${mail.fromEmail || ""}`.toLowerCase();
-  const senderCompact = senderHaystack.replace(/[^a-z0-9äöüß]+/g, "");
+  const recipientHaystack = `${mail.accountEmail || ""} ${mail.toRaw || ""} ${mail.deliveredTo || ""}`;
+  const fileHaystack = String(attachment?.filename || "");
+  const subjectHaystack = String(mail.subject || "");
+  const snippetHaystack = String(mail.snippet || "");
+  const senderHaystack = `${mail.fromName || ""} ${mail.fromEmail || ""}`;
 
-  const matchesIn = (tokens, text, compact) =>
-    tokens.some((tok) => text.includes(tok) || compact.includes(tok.replace(/\s+/g, "")));
+  const matchesIn = (patterns, text) => patterns.some((re) => re.test(text));
 
   let best = null;
   let secondBestScore = 0;
 
   for (const acc of accounts) {
-    const tokens = buildAccountMatchTokens(acc);
-    if (tokens.length === 0) continue;
+    const patterns = buildAccountMatchPatterns(acc);
+    if (patterns.length === 0) continue;
 
     let score = 0;
     let topReason = "";
 
-    if (matchesIn(tokens, recipientHaystack, recipientCompact)) {
+    if (matchesIn(patterns, recipientHaystack)) {
       score += 10;
       topReason = topReason || "Postfach";
     }
-    if (matchesIn(tokens, fileHaystack, fileCompact)) {
+    if (matchesIn(patterns, fileHaystack)) {
       score += 6;
       topReason = topReason || "Dateiname";
     }
-    if (matchesIn(tokens, subjectHaystack, subjectCompact)) {
+    if (matchesIn(patterns, subjectHaystack)) {
       score += 5;
       topReason = topReason || "Betreff";
     }
-    if (matchesIn(tokens, snippetHaystack, snippetCompact)) {
+    if (matchesIn(patterns, snippetHaystack)) {
       score += 3;
       topReason = topReason || "Mail-Text";
     }
-    if (matchesIn(tokens, senderHaystack, senderCompact)) {
+    if (matchesIn(patterns, senderHaystack)) {
       score += 2;
       topReason = topReason || "Absender";
     }
@@ -971,9 +985,123 @@ function getAttachmentAccountingTarget(mail, attIdx, accounts) {
       return existing;
     }
   }
-  const detected = preDetectAccountingTarget(mail, (mail.attachments || [])[attIdx], accounts);
+  const detected = {
+    ...preDetectAccountingTarget(mail, (mail.attachments || [])[attIdx], accounts),
+    manuallySelected: false,
+    pdfChecked: false,
+    pdfChecking: false,
+  };
   selectedInboxAccountingTargets.set(key, detected);
   return detected;
+}
+
+function updateAttachmentAccountingRowDom(mailId, attIdx, target) {
+  const selector = `.inbox-att-accounting-select[data-mail-id="${CSS.escape(mailId)}"][data-att-idx="${attIdx}"]`;
+  const selectEl = document.querySelector(selector);
+  if (!selectEl) return;
+
+  if (!target.manuallySelected && selectEl.value !== target.accountId) {
+    selectEl.value = target.accountId || "none";
+  }
+
+  const row = selectEl.parentElement;
+  if (!row) return;
+  const oldBadge = row.querySelector(".inbox-att-auto-badge");
+  if (oldBadge) oldBadge.remove();
+
+  if (target.pdfChecking) {
+    row.insertAdjacentHTML(
+      "beforeend",
+      `<span class="badge bg-light text-secondary border inbox-att-auto-badge d-inline-flex align-items-center gap-1" style="font-size: 10px; font-weight: 500;"><span class="spinner-border spinner-border-sm" style="width: 9px; height: 9px;"></span> Prüfe PDF...</span>`
+    );
+  } else if (target.autoDetected && target.accountId !== "none") {
+    const isPdf = target.reason === "PDF-Inhalt";
+    const badgeClass = isPdf
+      ? "bg-success-subtle text-success border border-success-subtle"
+      : "bg-info-subtle text-info-emphasis border border-info-subtle";
+    const tip = target.matchedText
+      ? `Im PDF gefunden: "${target.matchedText}"`
+      : `Automatisch vorerkannt über ${target.reason}`;
+    row.insertAdjacentHTML(
+      "beforeend",
+      `<span class="badge ${badgeClass} inbox-att-auto-badge" style="font-size: 10px; font-weight: 500;" title="${escapeHtml(tip)}">✨ Vorerkannt (${escapeHtml(target.reason)})</span>`
+    );
+  }
+}
+
+function enqueuePdfQuickCheck(mail, attIdx, accounts) {
+  if (!state.isAdmin || !Array.isArray(accounts) || accounts.length === 0) return;
+  const key = `${mail.id}::${attIdx}`;
+  const target = getAttachmentAccountingTarget(mail, attIdx, accounts);
+  if (target.pdfChecked || target.pdfChecking || target.manuallySelected) return;
+
+  target.pdfChecking = true;
+  selectedInboxAccountingTargets.set(key, target);
+  pdfQuickCheckQueue.push({ mail, attIdx, accounts });
+  processPdfQuickCheckQueue();
+}
+
+async function processPdfQuickCheckQueue() {
+  while (pdfQuickCheckActive < PDF_QUICK_CHECK_CONCURRENCY && pdfQuickCheckQueue.length > 0) {
+    const task = pdfQuickCheckQueue.shift();
+    if (!task) break;
+    pdfQuickCheckActive++;
+    runSinglePdfQuickCheck(task)
+      .catch(() => {})
+      .finally(() => {
+        pdfQuickCheckActive--;
+        processPdfQuickCheckQueue();
+      });
+  }
+}
+
+async function runSinglePdfQuickCheck({ mail, attIdx, accounts }) {
+  const key = `${mail.id}::${attIdx}`;
+  const att = (mail.attachments || [])[attIdx];
+  const target = selectedInboxAccountingTargets.get(key);
+  if (!att || !target) return;
+
+  try {
+    const gmailAccounts = getStoredGmailAccounts();
+    const gmailAcc = gmailAccounts.find((a) => a.id === mail.accountId || a.email === mail.accountEmail) || gmailAccounts[0];
+    if (!gmailAcc) return;
+
+    const blob = await getGmailAttachmentBlob(gmailAcc, mail.id, att, attIdx);
+    const formData = new FormData();
+    formData.append("file", blob, att.filename || "Anhang.pdf");
+    // Only send non-sensitive metadata (id, name, provider) — never credentials!
+    formData.append(
+      "accounts",
+      JSON.stringify(accounts.map((a) => ({ id: a.id, name: a.name, provider: a.provider })))
+    );
+
+    const res = await apiRequest("/api/inbox/quick-detect", {
+      method: "POST",
+      body: formData,
+    });
+
+    const latest = selectedInboxAccountingTargets.get(key);
+    if (!latest) return;
+    latest.pdfChecking = false;
+    latest.pdfChecked = true;
+
+    if (!latest.manuallySelected && res && res.success && res.accountId) {
+      latest.accountId = res.accountId;
+      latest.autoDetected = true;
+      latest.reason = res.reason || "PDF-Inhalt";
+      latest.matchedText = res.matchedText || "";
+    }
+    selectedInboxAccountingTargets.set(key, latest);
+    updateAttachmentAccountingRowDom(mail.id, attIdx, latest);
+  } catch (err) {
+    const latest = selectedInboxAccountingTargets.get(key);
+    if (latest) {
+      latest.pdfChecking = false;
+      latest.pdfChecked = true;
+      selectedInboxAccountingTargets.set(key, latest);
+      updateAttachmentAccountingRowDom(mail.id, attIdx, latest);
+    }
+  }
 }
 
 function renderInboxList() {
@@ -1012,6 +1140,9 @@ function renderInboxList() {
         let accountingRowHtml = "";
         if (!isSkippedTab && isAttChecked && accountingAccounts.length > 0) {
           const target = getAttachmentAccountingTarget(mail, idx, accountingAccounts);
+          if (!target.pdfChecked && !target.pdfChecking && !target.manuallySelected) {
+            enqueuePdfQuickCheck(mail, idx, accountingAccounts);
+          }
           const optionsHtml = [
             `<option value="none" ${target.accountId === "none" ? "selected" : ""}>Kein Buchhaltungs-Sync</option>`,
             ...accountingAccounts.map((acc) => {
@@ -1019,10 +1150,19 @@ function renderInboxList() {
               return `<option value="${escapeHtml(acc.id)}" ${target.accountId === acc.id ? "selected" : ""}>${escapeHtml(acc.name)} (${pLabel})</option>`;
             }),
           ].join("");
-          const autoBadgeHtml =
-            target.autoDetected && target.accountId !== "none"
-              ? `<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle inbox-att-auto-badge" style="font-size: 10px; font-weight: 500;" title="Automatisch vorerkannt über ${escapeHtml(target.reason)}">✨ Vorerkannt (${escapeHtml(target.reason)})</span>`
-              : "";
+          let autoBadgeHtml = "";
+          if (target.pdfChecking) {
+            autoBadgeHtml = `<span class="badge bg-light text-secondary border inbox-att-auto-badge d-inline-flex align-items-center gap-1" style="font-size: 10px; font-weight: 500;"><span class="spinner-border spinner-border-sm" style="width: 9px; height: 9px;"></span> Prüfe PDF...</span>`;
+          } else if (target.autoDetected && target.accountId !== "none") {
+            const isPdf = target.reason === "PDF-Inhalt";
+            const badgeClass = isPdf
+              ? "bg-success-subtle text-success border border-success-subtle"
+              : "bg-info-subtle text-info-emphasis border border-info-subtle";
+            const tip = target.matchedText
+              ? `Im PDF gefunden: "${target.matchedText}"`
+              : `Automatisch vorerkannt über ${target.reason}`;
+            autoBadgeHtml = `<span class="badge ${badgeClass} inbox-att-auto-badge" style="font-size: 10px; font-weight: 500;" title="${escapeHtml(tip)}">✨ Vorerkannt (${escapeHtml(target.reason)})</span>`;
+          }
 
           accountingRowHtml = `
             <div class="d-flex align-items-center gap-2 flex-wrap mt-2 pt-2 border-top w-100" style="border-color: rgba(13, 110, 253, 0.16) !important; font-size: 11.5px;">
@@ -1140,6 +1280,9 @@ function renderInboxList() {
           accountId: sel.value || "none",
           autoDetected: false,
           reason: "",
+          manuallySelected: true,
+          pdfChecked: true,
+          pdfChecking: false,
         });
         const badge = sel.parentElement?.querySelector(".inbox-att-auto-badge");
         if (badge) badge.remove();
@@ -1239,7 +1382,7 @@ async function processSingleInboxEmail(mail, btnElement = null) {
     formData.append("source", "gmail");
 
     for (const { att, idx } of selectedPairs) {
-      const blob = await getGmailAttachmentBlob(account, mail.id, att);
+      const blob = await getGmailAttachmentBlob(account, mail.id, att, idx);
       formData.append("files", blob, att.filename || "Anhang.pdf");
       if (accountingAccounts.length > 0) {
         const target = getAttachmentAccountingTarget(mail, idx, accountingAccounts);
@@ -1335,23 +1478,32 @@ function base64UrlToUint8Array(base64Url) {
   return bytes;
 }
 
-async function getGmailAttachmentBlob(account, messageId, attachment) {
-  if (attachment.data) {
-    const bytes = base64UrlToUint8Array(attachment.data);
-    return new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
+async function getGmailAttachmentBlob(account, messageId, attachment, attIdx = null) {
+  const cacheKey = attIdx !== null ? `${messageId}::${attIdx}` : `${messageId}::${attachment.attachmentId || attachment.filename || ""}`;
+  if (gmailAttachmentBlobCache.has(cacheKey)) {
+    return gmailAttachmentBlobCache.get(cacheKey);
   }
 
-  const tokenCheck = await ensureAccountTokenValid(account);
-  const token = tokenCheck.valid ? tokenCheck.accessToken : account.accessToken;
+  let blob;
+  if (attachment.data) {
+    const bytes = base64UrlToUint8Array(attachment.data);
+    blob = new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
+  } else {
+    const tokenCheck = await ensureAccountTokenValid(account);
+    const token = tokenCheck.valid ? tokenCheck.accessToken : account.accessToken;
 
-  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachment.attachmentId}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Fehler beim Herunterladen des Anhangs (${res.status})`);
-  const data = await res.json();
-  const bytes = base64UrlToUint8Array(data.data);
-  return new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
+    const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachment.attachmentId}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Fehler beim Herunterladen des Anhangs (${res.status})`);
+    const data = await res.json();
+    const bytes = base64UrlToUint8Array(data.data);
+    blob = new Blob([bytes], { type: attachment.mimeType || "application/pdf" });
+  }
+
+  gmailAttachmentBlobCache.set(cacheKey, blob);
+  return blob;
 }
 
 export async function openInboxPdfPreview(mailOrId, attIndex = 0) {

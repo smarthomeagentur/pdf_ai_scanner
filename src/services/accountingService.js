@@ -406,11 +406,119 @@ async function transferDocumentToAccounting({ job, account, fileBuffer }) {
   };
 }
 
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildBoundaryRegex(phrase) {
+  const parts = String(phrase)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(escapeRegex);
+  if (parts.length === 0) return null;
+  return new RegExp(`(?<![a-z0-9äöüß])${parts.join("\\s+")}(?![a-z0-9äöüß])`, "i");
+}
+
+/**
+ * Fast, word-boundary-aware company detection from extracted PDF text.
+ * Never splits multi-word names into ambiguous single words (e.g. "The Wire" never matches "wirewire").
+ */
+function detectAccountFromText(text, accounts = []) {
+  if (!text || typeof text !== "string" || !Array.isArray(accounts) || accounts.length === 0) {
+    return null;
+  }
+
+  const normalizedText = text.replace(/\r\n/g, "\n");
+  const headerSlice = normalizedText.slice(0, 1800);
+
+  let best = null;
+  let secondBestScore = 0;
+
+  for (const acc of accounts) {
+    if (!acc || !acc.id || !acc.name) continue;
+    const fullName = String(acc.name).trim();
+    const core = normalizeCompanyCore(fullName);
+    const compact = core.replace(/\s+/g, "");
+    if (compact.length < 3) continue;
+
+    let score = 0;
+    let matchedText = "";
+
+    const fullRe = buildBoundaryRegex(fullName);
+    if (fullRe) {
+      const mHeader = headerSlice.match(fullRe);
+      if (mHeader) {
+        score += 40;
+        matchedText = matchedText || mHeader[0];
+      } else {
+        const mBody = normalizedText.match(fullRe);
+        if (mBody) {
+          score += 25;
+          matchedText = matchedText || mBody[0];
+        }
+      }
+    }
+
+    const coreRe = buildBoundaryRegex(core);
+    if (coreRe) {
+      const mHeader = headerSlice.match(coreRe);
+      if (mHeader) {
+        score += 25;
+        matchedText = matchedText || mHeader[0];
+      } else {
+        const mBody = normalizedText.match(coreRe);
+        if (mBody) {
+          score += 15;
+          matchedText = matchedText || mBody[0];
+        }
+      }
+    }
+
+    if (compact !== core) {
+      const compactRe = buildBoundaryRegex(compact);
+      if (compactRe) {
+        const mHeader = headerSlice.match(compactRe);
+        if (mHeader) {
+          score += 15;
+          matchedText = matchedText || mHeader[0];
+        } else {
+          const mBody = normalizedText.match(compactRe);
+          if (mBody) {
+            score += 10;
+            matchedText = matchedText || mBody[0];
+          }
+        }
+      }
+    }
+
+    if (score > 0) {
+      if (!best || score > best.score) {
+        if (best) secondBestScore = Math.max(secondBestScore, best.score);
+        best = { account: acc, score, matchedText: matchedText || fullName };
+      } else {
+        secondBestScore = Math.max(secondBestScore, score);
+      }
+    }
+  }
+
+  if (best && best.score > secondBestScore) {
+    return {
+      accountId: best.account.id,
+      accountName: best.account.name,
+      matchedText: best.matchedText,
+      score: best.score,
+    };
+  }
+  return null;
+}
+
 module.exports = {
   fetchLexofficeWithRetry,
   searchLexofficeVouchers,
   matchLexofficeList,
   matchAccountByCompanyName,
+  detectAccountFromText,
   compressPdfBufferIfNeeded,
   checkAccountForDuplicate,
   transferDocumentToAccounting,
