@@ -1,5 +1,8 @@
 const express = require("express");
-const { requireAppAuth } = require("../middleware/auth");
+const multer = require("multer");
+const pdfParse = require("pdf-parse");
+const { requireAppAuth, requireAdmin } = require("../middleware/auth");
+const { detectAccountFromText } = require("../services/accountingService");
 const {
   getAllSkipped,
   addSkipped,
@@ -10,6 +13,10 @@ const {
 } = require("../services/inboxService");
 
 const router = express.Router();
+const memoryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+});
 
 router.get("/api/inbox/skipped", requireAppAuth, (req, res) => {
   res.json({ success: true, skipped: getAllSkipped() });
@@ -64,6 +71,60 @@ router.delete("/api/inbox/auth/account/:email", requireAppAuth, (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Fast in-memory PDF text quick-check to pre-detect the target accounting company (no AI, no disk write)
+router.post("/api/inbox/quick-detect", requireAdmin, memoryUpload.single("file"), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer || req.file.buffer.length === 0) {
+      return res.status(400).json({ success: false, error: "Keine PDF-Datei erhalten." });
+    }
+
+    let accounts = [];
+    if (typeof req.body?.accounts === "string" && req.body.accounts.trim()) {
+      try {
+        const parsed = JSON.parse(req.body.accounts);
+        if (Array.isArray(parsed)) {
+          accounts = parsed
+            .filter((a) => a && a.id && a.name)
+            .map((a) => ({ id: String(a.id), name: String(a.name), provider: a.provider }));
+        }
+      } catch (e) {}
+    }
+
+    if (accounts.length === 0) {
+      return res.json({ success: true, accountId: null });
+    }
+
+    let extractedText = "";
+    try {
+      const pdfData = await pdfParse(req.file.buffer, { max: 2 });
+      extractedText = pdfData && typeof pdfData.text === "string" ? pdfData.text : "";
+    } catch (parseErr) {
+      return res.json({ success: true, accountId: null, textExtracted: false });
+    }
+
+    if (!extractedText.trim()) {
+      return res.json({ success: true, accountId: null, textExtracted: false });
+    }
+
+    const match = detectAccountFromText(extractedText, accounts);
+    if (!match) {
+      return res.json({ success: true, accountId: null, textExtracted: true });
+    }
+
+    return res.json({
+      success: true,
+      accountId: match.accountId,
+      accountName: match.accountName,
+      matchedText: match.matchedText,
+      reason: "PDF-Inhalt",
+      textExtracted: true,
+    });
+  } catch (err) {
+    console.error("[INBOX QUICK-DETECT] Fehler:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

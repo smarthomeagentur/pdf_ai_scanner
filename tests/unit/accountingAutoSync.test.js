@@ -10,7 +10,11 @@ const {
   hasConfig,
   discardConfig,
 } = require("../../src/services/accountingCredentialStore");
-const { matchAccountByCompanyName, transferDocumentToAccounting } = require("../../src/services/accountingService");
+const {
+  matchAccountByCompanyName,
+  detectAccountFromText,
+  transferDocumentToAccounting,
+} = require("../../src/services/accountingService");
 
 const SAMPLE_ACCOUNTS = [
   {
@@ -99,6 +103,39 @@ test("Unit - matchAccountByCompanyName", async (t) => {
     assert.equal(matchAccountByCompanyName("Daniel (Privat)", SAMPLE_ACCOUNTS), null);
     assert.equal(matchAccountByCompanyName("Unbekannt", SAMPLE_ACCOUNTS), null);
     assert.equal(matchAccountByCompanyName("", SAMPLE_ACCOUNTS), null);
+  });
+});
+
+test("Unit - detectAccountFromText (PDF Quick Check)", async (t) => {
+  await t.test("detects The Wire UG in PDF billing address even when info@wirewire.de appears", () => {
+    const pdfText = `
+      IPS Karton.eu - Rechnung 26182323
+      Rechnungsadresse:
+      The Wire UG (haftungsbeschränkt)
+      Musterstraße 12, 12345 Musterstadt
+      Kontakt: info@wirewire.de
+      Gesamtbetrag: 64,26 EUR
+    `;
+    const result = detectAccountFromText(pdfText, SAMPLE_ACCOUNTS);
+    assert.ok(result);
+    assert.equal(result.accountId, "acc_1795181217140_mskrz");
+  });
+
+  await t.test("does not false-match The Wire UG on wirewire GmbH", () => {
+    const pdfText = `
+      Rechnung an:
+      wirewire GmbH
+      info@wirewire.de
+      Betrag: 120,00 EUR
+    `;
+    const result = detectAccountFromText(pdfText, SAMPLE_ACCOUNTS);
+    assert.ok(result);
+    assert.equal(result.accountId, "acc_1");
+  });
+
+  await t.test("returns null when no configured company is mentioned", () => {
+    const result = detectAccountFromText("Allgemeiner Brief ohne Firmenbezug", SAMPLE_ACCOUNTS);
+    assert.equal(result, null);
   });
 });
 
