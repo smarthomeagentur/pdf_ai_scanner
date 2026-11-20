@@ -1,15 +1,15 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const { execFile } = require("child_process");
 const { requireAdmin } = require("../middleware/auth");
 const { appSettings } = require("../config/settings");
-const { DOWNLOADS_DIR, getPythonPath, COMPRESS_SCRIPT } = require("../config/paths");
+const { DOWNLOADS_DIR } = require("../config/paths");
 const { getJob, saveJobs } = require("../services/jobQueueService");
 const { renderPdfToJpeg, getJobPdfBuffer } = require("../services/fileRenderService");
 const {
   fetchLexofficeWithRetry,
   searchLexofficeVouchers,
+  transferDocumentToAccounting,
   butlerApi,
 } = require("../services/accountingService");
 
@@ -323,151 +323,42 @@ router.post(["/api/accounting/transfer", "/api/lexoffice/transfer"], requireAdmi
   }
 
   try {
-    let fileBuffer = await getJobPdfBuffer(job);
+    const fileBuffer = await getJobPdfBuffer(job);
     if (!fileBuffer || fileBuffer.length === 0) {
       return res.status(400).json({ success: false, error: "Datei ist nicht mehr auf dem Server oder Google Drive vorhanden." });
     }
 
-    let fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
-    if (!fileName.toLowerCase().endsWith(".pdf")) fileName += ".pdf";
+    const mergedAccount = {
+      id: accountId,
+      name: accountName,
+      provider,
+      credentials: {
+        ...creds,
+        apiKey: creds.apiKey || reqApiKey,
+        client: creds.client || reqClient,
+        secret: creds.secret || reqSecret,
+        key: creds.key || reqKey,
+      },
+    };
 
-    const MAX_BYTES = 3.5 * 1024 * 1024;
-    if (fileBuffer && fileBuffer.length > MAX_BYTES) {
-      const tempIn = path.join(DOWNLOADS_DIR, `compress_in_${Date.now()}.pdf`);
-      const tempOut = path.join(DOWNLOADS_DIR, `compress_out_${Date.now()}.pdf`);
-      try {
-        await fs.promises.writeFile(tempIn, fileBuffer);
-        await new Promise((resolve, reject) => {
-          execFile(
-            getPythonPath(),
-            [COMPRESS_SCRIPT, tempIn, tempOut],
-            { timeout: 45000, killSignal: "SIGKILL" },
-            (error) => {
-              if (error) reject(error);
-              else resolve();
-            }
-          );
-        });
-        if (fs.existsSync(tempOut)) {
-          fileBuffer = await fs.promises.readFile(tempOut);
-        }
-      } catch (compressErr) {
-      } finally {
-        if (fs.existsSync(tempIn)) fs.promises.unlink(tempIn).catch(() => {});
-        if (fs.existsSync(tempOut)) fs.promises.unlink(tempOut).catch(() => {});
-      }
-    }
+    const result = await transferDocumentToAccounting({
+      job,
+      account: mergedAccount,
+      fileBuffer,
+    });
 
-    if (provider === "buchhaltungsbutler") {
-      const client = (creds.client || reqClient || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
-      const secret = (creds.secret || reqSecret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
-      const key = (creds.key || reqKey || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
-
-      if (!client || !secret || !key) {
-        return res.status(400).json({
-          success: false,
-          error: `BuchhaltungsButler Zugangsdaten für ${accountName} fehlen.`,
-        });
-      }
-
-      const butlerRes = await butlerApi.uploadReceipt({
-        fileBuffer,
-        fileName,
-        client,
-        secret,
-        key,
-        type: "expense",
-      });
-
-      if (!butlerRes.success) {
-        return res.status(500).json({
-          success: false,
-          error: butlerRes.error || "Fehler beim Upload zu BuchhaltungsButler.",
-        });
-      }
-
-      if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
-      job.lexofficeTransfers[accountId] = {
-        provider: "buchhaltungsbutler",
-        transferredAt: butlerRes.transferredAt,
-        fileId: butlerRes.fileId,
-        lexofficeFileId: butlerRes.fileId,
-        accountId,
-        company: accountName,
-      };
-      job.targetCompany = accountId;
-      saveJobs();
-
-      return res.json({
-        success: true,
-        provider: "buchhaltungsbutler",
-        providerName: "BuchhaltungsButler",
-        fileId: butlerRes.fileId,
-        lexofficeFileId: butlerRes.fileId,
-        transferredAt: butlerRes.transferredAt,
-        company: accountName,
-        accountId,
-      });
-    } else {
-      // Lexoffice
-      const apiKey = (creds.apiKey || reqApiKey || appSettings[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] || process.env[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] || "").trim();
-
-      if (!apiKey) {
-        return res.status(400).json({
-          success: false,
-          error: `Kein Lexoffice API-Key für ${accountName} angegeben.`,
-        });
-      }
-
-      const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
-      const pre = Buffer.from(
-        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: application/pdf\r\n\r\n`
-      );
-      const post = Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\nvoucher\r\n--${boundary}--\r\n`);
-      const bodyBuffer = Buffer.concat([pre, fileBuffer, post]);
-
-      const lexRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/files", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": `multipart/form-data; boundary=${boundary}`,
-          Accept: "application/json",
-        },
-        body: bodyBuffer,
-      });
-
-      if (!lexRes.ok) {
-        const errText = await lexRes.text();
-        return res.status(lexRes.status).json({
-          success: false,
-          error: `Lexoffice API Fehler (${lexRes.status}): ${errText}`,
-        });
-      }
-
-      const lexData = await lexRes.json();
-      if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
-      job.lexofficeTransfers[accountId] = {
-        provider: "lexoffice",
-        transferredAt: new Date().toISOString(),
-        fileId: lexData.id,
-        lexofficeFileId: lexData.id,
-        accountId,
-        company: accountName,
-      };
-      job.targetCompany = accountId;
-      saveJobs();
-
-      return res.json({
-        success: true,
-        provider: "lexoffice",
-        providerName: "Lexoffice",
-        fileId: lexData.id,
-        lexofficeFileId: lexData.id,
-        transferredAt: job.lexofficeTransfers[accountId].transferredAt,
-        company: accountName,
-        accountId,
+    if (!result.success) {
+      return res.status(result.statusCode || 500).json({
+        success: false,
+        error: result.error || "Fehler bei der Übertragung.",
       });
     }
+
+    if (job.accountingAutoSync && job.accountingAutoSync.status !== "synced") {
+      delete job.accountingAutoSync;
+    }
+    saveJobs();
+    return res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || "Fehler bei der Übertragung." });
   }

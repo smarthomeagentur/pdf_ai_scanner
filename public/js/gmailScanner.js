@@ -2,7 +2,7 @@
  * Client-Side Gmail / Workmail Inbox Scanner (Zero-Trust)
  */
 import { escapeHtml, formatDateDisplay, formatFileSize, showToast, debugLog } from "./utils.js";
-import { STORAGE_KEYS, getClientSecret, setClientSecret, state } from "./state.js";
+import { STORAGE_KEYS, getClientSecret, setClientSecret, getAccountingAccounts, encodeAccountingAccountsHeader, state } from "./state.js";
 import { apiRequest } from "./api.js";
 
 let inboxAccounts = [];
@@ -10,6 +10,7 @@ let inboxActiveEmails = [];
 let inboxSkippedEmails = [];
 let selectedInboxMessageIds = new Set();
 let selectedInboxFileIndices = new Map(); // mailId -> Set of selected attachment indices
+let selectedInboxAccountingTargets = new Map(); // `${mailId}::${attIdx}` -> { accountId, autoDetected, reason }
 let currentInboxSubtab = "detected";
 let isProcessingInboxBatch = false;
 
@@ -636,6 +637,8 @@ async function fetchAccountEmailsDirect(account, query) {
 
       const subject = getHeader("Subject") || "(Kein Betreff)";
       const fromRaw = getHeader("From") || "Unbekannt";
+      const toRaw = getHeader("To") || "";
+      const deliveredTo = getHeader("Delivered-To") || "";
       let fromName = fromRaw;
       let fromEmail = fromRaw;
       const emailMatch = fromRaw.match(/^(.*?)\s*<(.+?)>$/);
@@ -669,6 +672,8 @@ async function fetchAccountEmailsDirect(account, query) {
         fromRaw,
         fromName,
         fromEmail,
+        toRaw,
+        deliveredTo,
         date: dateIso,
         snippet: msg.snippet || "",
         attachments: allFoundPdfs,
@@ -867,12 +872,117 @@ function updateInboxBatchButton() {
   batchBtn.disabled = totalFiles === 0 || isProcessingInboxBatch;
 }
 
+function buildAccountMatchTokens(account) {
+  const rawName = String(account?.name || "").toLowerCase();
+  const stripped = rawName
+    .replace(/\((.*?)\)/g, " ")
+    .replace(/\b(gmbh|ug|haftungsbeschränkt|haftungsbeschraenkt|ag|gbr|kg|ohg|co|ek|e\.k\.|inc|ltd|llc|studios)\b/g, " ")
+    .replace(/[^a-z0-9äöüß]+/g, " ")
+    .trim();
+  const compact = stripped.replace(/\s+/g, "");
+  const tokens = new Set();
+  if (stripped.length >= 3) tokens.add(stripped);
+  if (compact.length >= 3) tokens.add(compact);
+  const words = stripped.split(/\s+/).filter((w) => w.length >= 4 && !["the", "der", "die", "das", "und", "for", "von"].includes(w));
+  words.forEach((w) => tokens.add(w));
+  const idLower = String(account?.id || "").toLowerCase();
+  if (idLower.length >= 3 && !idLower.startsWith("acc_")) {
+    tokens.add(idLower);
+  }
+  return Array.from(tokens);
+}
+
+/**
+ * Fast client-side pre-detection of the target accounting account for a mail attachment.
+ * Checks receiving mailbox / To / Delivered-To, attachment filename, subject, snippet, and sender.
+ */
+function preDetectAccountingTarget(mail, attachment, accounts) {
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    return { accountId: "none", autoDetected: false, reason: "" };
+  }
+
+  const recipientHaystack = `${mail.accountEmail || ""} ${mail.toRaw || ""} ${mail.deliveredTo || ""}`.toLowerCase();
+  const recipientCompact = recipientHaystack.replace(/[^a-z0-9äöüß]+/g, "");
+  const fileHaystack = String(attachment?.filename || "").toLowerCase();
+  const fileCompact = fileHaystack.replace(/[^a-z0-9äöüß]+/g, "");
+  const subjectHaystack = String(mail.subject || "").toLowerCase();
+  const subjectCompact = subjectHaystack.replace(/[^a-z0-9äöüß]+/g, "");
+  const snippetHaystack = String(mail.snippet || "").toLowerCase();
+  const snippetCompact = snippetHaystack.replace(/[^a-z0-9äöüß]+/g, "");
+  const senderHaystack = `${mail.fromName || ""} ${mail.fromEmail || ""}`.toLowerCase();
+  const senderCompact = senderHaystack.replace(/[^a-z0-9äöüß]+/g, "");
+
+  const matchesIn = (tokens, text, compact) =>
+    tokens.some((tok) => text.includes(tok) || compact.includes(tok.replace(/\s+/g, "")));
+
+  let best = null;
+  let secondBestScore = 0;
+
+  for (const acc of accounts) {
+    const tokens = buildAccountMatchTokens(acc);
+    if (tokens.length === 0) continue;
+
+    let score = 0;
+    let topReason = "";
+
+    if (matchesIn(tokens, recipientHaystack, recipientCompact)) {
+      score += 10;
+      topReason = topReason || "Postfach";
+    }
+    if (matchesIn(tokens, fileHaystack, fileCompact)) {
+      score += 6;
+      topReason = topReason || "Dateiname";
+    }
+    if (matchesIn(tokens, subjectHaystack, subjectCompact)) {
+      score += 5;
+      topReason = topReason || "Betreff";
+    }
+    if (matchesIn(tokens, snippetHaystack, snippetCompact)) {
+      score += 3;
+      topReason = topReason || "Mail-Text";
+    }
+    if (matchesIn(tokens, senderHaystack, senderCompact)) {
+      score += 2;
+      topReason = topReason || "Absender";
+    }
+
+    if (score > 0) {
+      if (!best || score > best.score) {
+        if (best) secondBestScore = Math.max(secondBestScore, best.score);
+        best = { accountId: acc.id, score, reason: topReason };
+      } else {
+        secondBestScore = Math.max(secondBestScore, score);
+      }
+    }
+  }
+
+  if (best && best.score > secondBestScore) {
+    return { accountId: best.accountId, autoDetected: true, reason: best.reason };
+  }
+  return { accountId: "none", autoDetected: false, reason: "" };
+}
+
+function getAttachmentAccountingTarget(mail, attIdx, accounts) {
+  const key = `${mail.id}::${attIdx}`;
+  if (selectedInboxAccountingTargets.has(key)) {
+    const existing = selectedInboxAccountingTargets.get(key);
+    // Validate that the chosen account still exists
+    if (existing.accountId === "none" || accounts.some((a) => a.id === existing.accountId)) {
+      return existing;
+    }
+  }
+  const detected = preDetectAccountingTarget(mail, (mail.attachments || [])[attIdx], accounts);
+  selectedInboxAccountingTargets.set(key, detected);
+  return detected;
+}
+
 function renderInboxList() {
   const container = document.getElementById("inbox-email-list");
   const emptyContainer = document.getElementById("inbox-empty-container");
   if (!container) return;
 
   const visibleEmails = getVisibleInboxEmails();
+  const accountingAccounts = state.isAdmin ? getAccountingAccounts() : [];
 
   if (visibleEmails.length === 0) {
     container.style.setProperty("display", "none", "important");
@@ -899,21 +1009,53 @@ function renderInboxList() {
     const attPillsHtml = attachments
       .map((att, idx) => {
         const isAttChecked = selectedIndices.has(idx);
+        let accountingRowHtml = "";
+        if (!isSkippedTab && isAttChecked && accountingAccounts.length > 0) {
+          const target = getAttachmentAccountingTarget(mail, idx, accountingAccounts);
+          const optionsHtml = [
+            `<option value="none" ${target.accountId === "none" ? "selected" : ""}>Kein Buchhaltungs-Sync</option>`,
+            ...accountingAccounts.map((acc) => {
+              const pLabel = acc.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
+              return `<option value="${escapeHtml(acc.id)}" ${target.accountId === acc.id ? "selected" : ""}>${escapeHtml(acc.name)} (${pLabel})</option>`;
+            }),
+          ].join("");
+          const autoBadgeHtml =
+            target.autoDetected && target.accountId !== "none"
+              ? `<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle inbox-att-auto-badge" style="font-size: 10px; font-weight: 500;" title="Automatisch vorerkannt über ${escapeHtml(target.reason)}">✨ Vorerkannt (${escapeHtml(target.reason)})</span>`
+              : "";
+
+          accountingRowHtml = `
+            <div class="d-flex align-items-center gap-2 flex-wrap mt-2 pt-2 border-top w-100" style="border-color: rgba(13, 110, 253, 0.16) !important; font-size: 11.5px;">
+              <span class="d-inline-flex align-items-center gap-1 text-primary fw-medium" style="white-space: nowrap;">
+                <span class="material-symbols-outlined" style="font-size: 14px;">account_balance</span>
+                <span>Auto-Upload Buchhaltung:</span>
+              </span>
+              <select class="form-select form-select-sm inbox-att-accounting-select py-0" data-mail-id="${escapeHtml(mail.id)}" data-att-idx="${idx}" style="width: auto; max-width: 260px; font-size: 11.5px; height: 26px; border-radius: 6px; cursor: pointer;" title="Ziel-Buchhaltungssoftware nach KI-Verarbeitung">
+                ${optionsHtml}
+              </select>
+              ${autoBadgeHtml}
+            </div>
+          `;
+        }
+
         return `
-          <div class="inbox-att-item rounded-3 p-2 d-flex align-items-center justify-content-between gap-2 shadow-xs mb-1 ${isAttChecked ? "att-selected" : ""}" style="width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;">
-            <div class="d-flex align-items-center gap-2 flex-grow-1" style="min-width: 0; max-width: calc(100% - 85px);">
-              ${!isSkippedTab ? `
-                <input type="checkbox" class="form-check-input att-select-cb flex-shrink-0" data-mail-id="${mail.id}" data-att-idx="${idx}" ${isAttChecked ? "checked" : ""} style="cursor: pointer; width: 16px; height: 16px; margin: 0;" title="Diese Datei auswählen" />
-              ` : ""}
-              <div class="preview-att-btn d-flex align-items-center gap-1 text-truncate flex-grow-1" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; min-width: 0;" title="Klicken für Beleg-Vorschau: ${escapeHtml(att.filename)}">
-                <span class="material-symbols-outlined text-danger flex-shrink-0" style="font-size: 18px;">picture_as_pdf</span>
-                <span class="fw-medium text-dark text-truncate d-inline-block" style="font-size: 12px; min-width: 0;">${escapeHtml(att.filename)}</span>
+          <div class="inbox-att-item rounded-3 p-2 d-flex flex-column shadow-xs mb-1 ${isAttChecked ? "att-selected" : ""}" style="width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0;">
+            <div class="d-flex align-items-center justify-content-between gap-2 w-100" style="min-width: 0;">
+              <div class="d-flex align-items-center gap-2 flex-grow-1" style="min-width: 0; max-width: calc(100% - 85px);">
+                ${!isSkippedTab ? `
+                  <input type="checkbox" class="form-check-input att-select-cb flex-shrink-0" data-mail-id="${mail.id}" data-att-idx="${idx}" ${isAttChecked ? "checked" : ""} style="cursor: pointer; width: 16px; height: 16px; margin: 0;" title="Diese Datei auswählen" />
+                ` : ""}
+                <div class="preview-att-btn d-flex align-items-center gap-1 text-truncate flex-grow-1" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; min-width: 0;" title="Klicken für Beleg-Vorschau: ${escapeHtml(att.filename)}">
+                  <span class="material-symbols-outlined text-danger flex-shrink-0" style="font-size: 18px;">picture_as_pdf</span>
+                  <span class="fw-medium text-dark text-truncate d-inline-block" style="font-size: 12px; min-width: 0;">${escapeHtml(att.filename)}</span>
+                </div>
+              </div>
+              <div class="preview-att-btn d-flex align-items-center gap-1 flex-shrink-0 text-muted small" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; font-size: 11px; white-space: nowrap;" title="Vorschau öffnen">
+                <span>(${formatFileSize(att.size)})</span>
+                <span class="material-symbols-outlined text-primary" style="font-size: 15px;">visibility</span>
               </div>
             </div>
-            <div class="preview-att-btn d-flex align-items-center gap-1 flex-shrink-0 text-muted small" data-mail-id="${mail.id}" data-att-idx="${idx}" style="cursor: pointer; font-size: 11px; white-space: nowrap;" title="Vorschau öffnen">
-              <span>(${formatFileSize(att.size)})</span>
-              <span class="material-symbols-outlined text-primary" style="font-size: 15px;">visibility</span>
-            </div>
+            ${accountingRowHtml}
           </div>
         `;
       })
@@ -988,6 +1130,22 @@ function renderInboxList() {
       });
     });
 
+    card.querySelectorAll(".inbox-att-accounting-select").forEach((sel) => {
+      sel.addEventListener("click", (e) => e.stopPropagation());
+      sel.addEventListener("change", (e) => {
+        e.stopPropagation();
+        const attIdx = parseInt(sel.getAttribute("data-att-idx"), 10) || 0;
+        const key = `${mail.id}::${attIdx}`;
+        selectedInboxAccountingTargets.set(key, {
+          accountId: sel.value || "none",
+          autoDetected: false,
+          reason: "",
+        });
+        const badge = sel.parentElement?.querySelector(".inbox-att-auto-badge");
+        if (badge) badge.remove();
+      });
+    });
+
     card.querySelectorAll(".preview-att-btn").forEach((pBtn) => {
       pBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1055,8 +1213,10 @@ async function unskipInboxEmail(mailId) {
 
 async function processSingleInboxEmail(mail, btnElement = null) {
   const selectedIndices = getSelectedFileIndicesForMail(mail);
-  const targetAttachments = (mail.attachments || []).filter((_, idx) => selectedIndices.has(idx));
-  if (targetAttachments.length === 0) {
+  const selectedPairs = (mail.attachments || [])
+    .map((att, idx) => ({ att, idx }))
+    .filter(({ idx }) => selectedIndices.has(idx));
+  if (selectedPairs.length === 0) {
     showToast("Keine Dateien für diese E-Mail ausgewählt.", "warning");
     return;
   }
@@ -1071,22 +1231,41 @@ async function processSingleInboxEmail(mail, btnElement = null) {
     const account = accounts.find((a) => a.id === mail.accountId || a.email === mail.accountEmail) || accounts[0];
     if (!account) throw new Error("Kein Google-Konto verknüpft.");
 
+    const accountingAccounts = state.isAdmin ? getAccountingAccounts() : [];
+    const accountingTargets = [];
+
     const formData = new FormData();
     formData.append("gmailMessageId", mail.id);
     formData.append("source", "gmail");
 
-    for (const att of targetAttachments) {
+    for (const { att, idx } of selectedPairs) {
       const blob = await getGmailAttachmentBlob(account, mail.id, att);
       formData.append("files", blob, att.filename || "Anhang.pdf");
+      if (accountingAccounts.length > 0) {
+        const target = getAttachmentAccountingTarget(mail, idx, accountingAccounts);
+        accountingTargets.push(target.accountId || "none");
+      }
+    }
+
+    const requestHeaders = {};
+    const syncedCount = accountingTargets.filter((t) => t && t !== "none").length;
+    if (accountingAccounts.length > 0) {
+      formData.append("accountingTargets", JSON.stringify(accountingTargets));
+      const encodedAccounts = encodeAccountingAccountsHeader();
+      if (encodedAccounts) {
+        requestHeaders["X-Accounting-Accounts"] = encodedAccounts;
+      }
     }
 
     const data = await apiRequest("/api/upload", {
       method: "POST",
+      headers: requestHeaders,
       body: formData,
     });
 
     if (data.success) {
-      showToast(`${targetAttachments.length} PDF-Anhang/Anhänge zur Pipeline hinzugefügt!`, "success");
+      const syncHint = syncedCount > 0 ? ` (${syncedCount}× Auto-Sync zur Buchhaltung)` : "";
+      showToast(`${selectedPairs.length} PDF-Anhang/Anhänge zur Pipeline hinzugefügt${syncHint}!`, "success");
 
       // Auto-archive if enabled
       const archiveCb = document.getElementById("inbox-archive-toggle");

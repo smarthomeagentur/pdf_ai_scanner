@@ -9,6 +9,12 @@ const { findDuplicatesForJob } = require("./duplicateService");
 const { renderPdfToJpeg } = require("./fileRenderService");
 const { getClickUpClient } = require("./clickupService");
 const clickupCredentials = require("./clickupCredentialStore");
+const accountingCredentials = require("./accountingCredentialStore");
+const {
+  matchAccountByCompanyName,
+  checkAccountForDuplicate,
+  transferDocumentToAccounting,
+} = require("./accountingService");
 const dbWrapper = require("../db/database");
 const { scanForBackups, readBackupJobs } = require("./backupScanService");
 const { startAutoBackup } = require("./autoBackupService");
@@ -450,7 +456,9 @@ async function processSingleJob(jobId) {
       } catch (thumbErr) {}
     }
 
-    const clickupPdfBuffer = clickupCredentials.hasCredentials(jobId)
+    const needsAutoPdfBuffer =
+      clickupCredentials.hasCredentials(jobId) || accountingCredentials.hasConfig(jobId);
+    const autoTransferPdfBuffer = needsAutoPdfBuffer
       ? await fs.promises.readFile(job.filePath).catch(() => null)
       : null;
 
@@ -471,7 +479,8 @@ async function processSingleJob(jobId) {
     job.error = null;
     job.inAiPipeline = false;
 
-    await autoTransferToClickUp(job, clickupPdfBuffer, driveFile);
+    await autoTransferToClickUp(job, autoTransferPdfBuffer, driveFile);
+    await autoTransferToAccounting(job, autoTransferPdfBuffer);
   } catch (err) {
     console.error(`[WEB] Error processing job ${jobId}:`, err);
     job.status = "failed";
@@ -479,6 +488,7 @@ async function processSingleJob(jobId) {
     job.inAiPipeline = false;
   } finally {
     clickupCredentials.discardCredentials(jobId);
+    accountingCredentials.discardConfig(jobId);
     persistJob(job);
     persistAppState();
   }
@@ -524,6 +534,118 @@ async function autoTransferToClickUp(job, pdfBuffer, driveFile) {
   }
 }
 
+async function autoTransferToAccounting(job, pdfBuffer) {
+  const config = accountingCredentials.takeConfig(job.id);
+  if (!config || config.skipAutoSync) return;
+  if (!pdfBuffer || pdfBuffer.length === 0) return;
+  if (job.lexofficeTransfers && Object.keys(job.lexofficeTransfers).length > 0) return;
+
+  const accounts = Array.isArray(config.accounts) ? config.accounts : [];
+  if (accounts.length === 0) return;
+
+  const res = job.result || {};
+  let targetAccount;
+
+  if (config.explicitAccountId) {
+    targetAccount = accounts.find((a) => a.id === config.explicitAccountId) || null;
+    if (!targetAccount) {
+      console.warn(`[ACCOUNTING] Ausgewählter Mandant ${config.explicitAccountId} für Job ${job.id} nicht gefunden.`);
+      return;
+    }
+  } else {
+    if (appSettings.ACCOUNTING_AUTO_SYNC === false) return;
+
+    const isPrivateDoc =
+      job.isPrivate ||
+      (res.company || "").toLowerCase().includes("privat") ||
+      (res.company || "").toLowerCase().includes("daniel") ||
+      (res.category || "").toLowerCase() === "privat";
+    if (isPrivateDoc) {
+      console.log(`[ACCOUNTING] Job ${job.id} ist privat – automatischer Buchhaltungs-Sync übersprungen.`);
+      return;
+    }
+
+    const isInvoiceDoc =
+      res.isInvoice === true ||
+      String(res.category || "").toLowerCase() === "rechnungen";
+    if (!isInvoiceDoc) {
+      console.log(`[ACCOUNTING] Job ${job.id} wurde nicht als Rechnung erkannt – automatischer Buchhaltungs-Sync übersprungen.`);
+      return;
+    }
+
+    targetAccount = matchAccountByCompanyName(res.company, accounts);
+    if (!targetAccount) {
+      console.log(`[ACCOUNTING] Job ${job.id}: Unternehmen "${res.company || "-"}" konnte keinem Buchhaltungs-Mandanten eindeutig zugeordnet werden.`);
+      return;
+    }
+  }
+
+  const providerName = targetAccount.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
+  const accountName = targetAccount.name || targetAccount.id;
+
+  try {
+    // Live duplicate check in target accounting system before uploading
+    const dupCheck = await checkAccountForDuplicate({ job, account: targetAccount });
+    if (dupCheck && dupCheck.found && Array.isArray(dupCheck.matches) && dupCheck.matches.length > 0) {
+      const topMatch = dupCheck.matches[0];
+      const matchReasons = Array.isArray(topMatch.matchReasons) ? topMatch.matchReasons.join(", ") : "";
+      job.accountingAutoSync = {
+        status: "skipped_duplicate",
+        accountId: targetAccount.id,
+        accountName,
+        provider: targetAccount.provider,
+        providerName,
+        matchId: topMatch.id || null,
+        reason: matchReasons || `Übereinstimmender Beleg bereits in ${providerName} vorhanden.`,
+        checkedAt: new Date().toISOString(),
+      };
+      console.log(`[ACCOUNTING] Auto-Sync für Job ${job.id} übersprungen (Duplikat in ${providerName} / ${accountName}): ${job.accountingAutoSync.reason}`);
+      return;
+    }
+
+    const transferRes = await transferDocumentToAccounting({
+      job,
+      account: targetAccount,
+      fileBuffer: pdfBuffer,
+    });
+
+    if (transferRes.success) {
+      job.accountingAutoSync = {
+        status: "synced",
+        accountId: targetAccount.id,
+        accountName,
+        provider: targetAccount.provider,
+        providerName,
+        fileId: transferRes.fileId,
+        syncedAt: transferRes.transferredAt,
+      };
+      console.log(`[ACCOUNTING] Job ${job.id} automatisch an ${providerName} (${accountName}) übertragen (ID: ${transferRes.fileId}).`);
+    } else {
+      job.accountingAutoSync = {
+        status: "error",
+        accountId: targetAccount.id,
+        accountName,
+        provider: targetAccount.provider,
+        providerName,
+        error: transferRes.error || "Übertragung fehlgeschlagen",
+        checkedAt: new Date().toISOString(),
+      };
+      console.error(`[ACCOUNTING] Auto-Sync für Job ${job.id} fehlgeschlagen (${providerName} / ${accountName}):`, transferRes.error);
+    }
+  } catch (err) {
+    job.accountingAutoSync = {
+      status: "error",
+      accountId: targetAccount.id,
+      accountName,
+      provider: targetAccount.provider,
+      providerName,
+      error: err.message || "Unbekannter Fehler",
+      checkedAt: new Date().toISOString(),
+    };
+    console.error(`[ACCOUNTING] Auto-Sync Exception für Job ${job.id}:`, err.message || err);
+  }
+}
+
 async function processQueue() {
   if (isProcessingQueue) return;
   isProcessingQueue = true;
@@ -538,11 +660,12 @@ async function processQueue() {
   isProcessingQueue = false;
 }
 
-function addJobs(newJobs, clickupAutoTransferCredentials = null) {
+function addJobs(newJobs, clickupAutoTransferCredentials = null, accountingAutoSyncConfigs = null) {
   clickupCredentials.storeCredentials(
     newJobs.map((job) => job.id),
     clickupAutoTransferCredentials
   );
+  accountingCredentials.storeConfig(accountingAutoSyncConfigs);
   for (const job of newJobs) {
     uploadJobs[job.id] = job;
     uploadQueue.push(job.id);

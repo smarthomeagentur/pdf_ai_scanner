@@ -7,6 +7,7 @@ const { upload } = require("../middleware/upload");
 const { DOWNLOADS_DIR, getPythonPath, SCANNER_SCRIPT } = require("../config/paths");
 const { addJobs } = require("../services/jobQueueService");
 const { extractAutoTransferCredentials } = require("../services/clickupCredentialStore");
+const { extractAccountingAutoSync } = require("../services/accountingCredentialStore");
 const { generateJobId } = require("../utils/textUtils");
 
 const router = express.Router();
@@ -84,7 +85,7 @@ router.post("/api/scan", upload.array("images", 50), async (req, res) => {
         filePath: outputPdfPath,
         uploadDate: new Date().toISOString(),
       };
-      addJobs([createdJob], extractAutoTransferCredentials(req));
+      addJobs([createdJob], extractAutoTransferCredentials(req), extractAccountingAutoSync(req, [createdJob]));
     }
 
     res.set("X-File-Name", path.basename(outputPdfPath));

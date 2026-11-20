@@ -19,6 +19,7 @@ const {
   saveJobs,
 } = require("../services/jobQueueService");
 const { extractAutoTransferCredentials } = require("../services/clickupCredentialStore");
+const { extractAccountingAutoSync } = require("../services/accountingCredentialStore");
 const { getOrGenerateThumbnailPath, renderPdfToJpeg } = require("../services/fileRenderService");
 const { normalizeAlphaNum } = require("../services/duplicateService");
 const { fixUmlauts, generateJobId } = require("../utils/textUtils");
@@ -55,7 +56,7 @@ router.post("/api/upload", uploadLimiter, upload.array("files"), (req, res) => {
     };
   });
 
-  addJobs(jobs, extractAutoTransferCredentials(req));
+  addJobs(jobs, extractAutoTransferCredentials(req), extractAccountingAutoSync(req, jobs));
   res.json({ success: true, jobs });
 });
 

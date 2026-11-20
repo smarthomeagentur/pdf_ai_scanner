@@ -80,6 +80,7 @@ export function renderJobsList(jobs = state.jobs, force = false) {
       j.isPrivate,
       j.suspectedDuplicate,
       Object.keys(j.lexofficeTransfers || {}).join(","),
+      j.accountingAutoSync?.status || "",
     ]),
   });
 
@@ -220,8 +221,17 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     let lexofficeBadgeHtml = "";
     if (isLexTransferred) {
       const comp = transferredCompanies[0];
-      const provider = lexTransfers[comp]?.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
-      lexofficeBadgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 7px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;">✓ ${provider} (${comp})</span>`;
+      const info = lexTransfers[comp] || {};
+      const provider = info.provider === "buchhaltungsbutler" ? "BuchhaltungsButler" : "Lexoffice";
+      const label = info.company || comp;
+      lexofficeBadgeHtml = `<span style="background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; padding: 2px 7px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;">✓ ${escapeHtml(provider)} (${escapeHtml(label)})</span>`;
+    } else if (job.accountingAutoSync?.status === "skipped_duplicate") {
+      const syncInfo = job.accountingAutoSync;
+      const tip = syncInfo.reason ? `Auto-Sync übersprungen: ${syncInfo.reason}` : "Übereinstimmender Beleg bereits in Buchhaltung vorhanden";
+      lexofficeBadgeHtml = `<span class="btn-manual-lexoffice-sync" data-job-id="${job.id}" title="${escapeHtml(tip)}" style="cursor: pointer; background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 2px 7px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;">⚠ ${escapeHtml(syncInfo.providerName || "Buchhaltung")}: Duplikat übersprungen</span>`;
+    } else if (job.accountingAutoSync?.status === "error") {
+      const syncInfo = job.accountingAutoSync;
+      lexofficeBadgeHtml = `<span class="btn-manual-lexoffice-sync" data-job-id="${job.id}" title="${escapeHtml(syncInfo.error || "Auto-Sync fehlgeschlagen")}" style="cursor: pointer; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; padding: 2px 7px; border-radius: 12px; font-size: 10.5px; vertical-align: middle; display: inline-flex; align-items: center; gap: 3px; font-weight: 600;">⚠ Auto-Sync Fehler</span>`;
     }
 
     // 3. Duplicate status

@@ -140,20 +140,6 @@ export function initRechnungenEvents() {
   if (selectProvider) {
     selectProvider.addEventListener("change", toggleProviderFields);
   }
-
-  // Event Delegation for Table Action Buttons
-  if (rechnungenList) {
-    rechnungenList.addEventListener("click", async (e) => {
-      const lexBtn = e.target.closest(".rechnung-lex-btn");
-      if (lexBtn) {
-        const jobId = lexBtn.getAttribute("data-job-id");
-        if (jobId) {
-          openAccountingModal(jobId);
-        }
-        return;
-      }
-    });
-  }
 }
 
 export function initAccountingEvents() {
@@ -238,6 +224,13 @@ export function initAccountingEvents() {
 export function closeLexofficeModal() {
   const lexSyncModal = document.getElementById("lexoffice-sync-modal");
   if (lexSyncModal) lexSyncModal.style.display = "none";
+  const lexModalSubmitBtn = document.getElementById("lex-modal-submit-btn");
+  const lexModalCancelBtn = document.getElementById("lex-modal-cancel-btn");
+  if (lexModalSubmitBtn) {
+    lexModalSubmitBtn.disabled = false;
+    lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span id="lex-modal-submit-text">Upload starten</span>`;
+  }
+  if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
   currentLexJobId = null;
   currentLexCheckData = null;
   currentSelectedLexCompany = "thewire";
@@ -752,6 +745,7 @@ async function handleLexModalSubmit() {
   if (!currentLexJobId) return;
   const jobId = currentLexJobId;
   const accounts = getAccountingAccounts();
+  const companyKey = currentSelectedLexCompany || (accounts[0]?.id || "thewire");
   const targetAccount = accounts.find((a) => a.id === companyKey) || {
     id: companyKey,
     name: companyKey,
@@ -767,7 +761,7 @@ async function handleLexModalSubmit() {
 
   if (lexModalSubmitBtn) {
     lexModalSubmitBtn.disabled = true;
-    lexModalSubmitBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span>Wird übertragen...</span>`;
+    lexModalSubmitBtn.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> <span id="lex-modal-submit-text">Wird übertragen...</span>`;
   }
   if (lexModalCancelBtn) lexModalCancelBtn.disabled = true;
 
@@ -789,16 +783,17 @@ async function handleLexModalSubmit() {
         companyKey,
         account: targetAccount,
         force: isForce,
-        apiKey: companyKey === "polyxo" ? creds.polyxoApiKey : creds.wirewireApiKey,
-        client: creds.thewireClient,
-        secret: creds.thewireSecret,
-        key: creds.thewireKey,
+        apiKey: targetAccount.credentials?.apiKey || (companyKey === "polyxo" ? creds.polyxoApiKey : creds.wirewireApiKey),
+        client: targetAccount.credentials?.client || creds.thewireClient,
+        secret: targetAccount.credentials?.secret || creds.thewireSecret,
+        key: targetAccount.credentials?.key || creds.thewireKey,
       }),
     });
 
     if (data.success) {
       showToast(`✓ Beleg erfolgreich an ${providerName} (${accountName}) übertragen!`, "success");
       closeLexofficeModal();
+      if (window.refreshStatus) window.refreshStatus();
       if (window.loadRechnungenView) window.loadRechnungenView();
     } else {
       if (lexModalStatusContainer) {
@@ -811,7 +806,7 @@ async function handleLexModalSubmit() {
       }
       if (lexModalSubmitBtn) {
         lexModalSubmitBtn.disabled = false;
-        lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined">cloud_upload</span> <span>Erneut versuchen</span>`;
+        lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span id="lex-modal-submit-text">Erneut versuchen</span>`;
       }
       if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
     }
@@ -826,7 +821,7 @@ async function handleLexModalSubmit() {
     }
     if (lexModalSubmitBtn) {
       lexModalSubmitBtn.disabled = false;
-      lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined">cloud_upload</span> <span>Erneut versuchen</span>`;
+      lexModalSubmitBtn.innerHTML = `<span class="material-symbols-outlined" style="font-size: 18px;">cloud_upload</span> <span id="lex-modal-submit-text">Erneut versuchen</span>`;
     }
     if (lexModalCancelBtn) lexModalCancelBtn.disabled = false;
   }
