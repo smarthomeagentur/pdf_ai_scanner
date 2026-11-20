@@ -914,14 +914,14 @@ function buildAccountMatchPatterns(account) {
 
 /**
  * Fast client-side pre-detection of the target accounting account for a mail attachment.
- * Uses word-boundary matching so e.g. "The Wire UG" never false-matches "wirewire".
+ * Checks only mail content & attachment metadata (filename, subject, snippet, sender) —
+ * never the receiving mailbox, since multiple companies can arrive in the same inbox.
  */
 function preDetectAccountingTarget(mail, attachment, accounts) {
   if (!Array.isArray(accounts) || accounts.length === 0) {
     return { accountId: "none", autoDetected: false, reason: "" };
   }
 
-  const recipientHaystack = `${mail.accountEmail || ""} ${mail.toRaw || ""} ${mail.deliveredTo || ""}`;
   const fileHaystack = String(attachment?.filename || "");
   const subjectHaystack = String(mail.subject || "");
   const snippetHaystack = String(mail.snippet || "");
@@ -939,10 +939,6 @@ function preDetectAccountingTarget(mail, attachment, accounts) {
     let score = 0;
     let topReason = "";
 
-    if (matchesIn(patterns, recipientHaystack)) {
-      score += 10;
-      topReason = topReason || "Postfach";
-    }
     if (matchesIn(patterns, fileHaystack)) {
       score += 6;
       topReason = topReason || "Dateiname";
@@ -952,7 +948,7 @@ function preDetectAccountingTarget(mail, attachment, accounts) {
       topReason = topReason || "Betreff";
     }
     if (matchesIn(patterns, snippetHaystack)) {
-      score += 3;
+      score += 4;
       topReason = topReason || "Mail-Text";
     }
     if (matchesIn(patterns, senderHaystack)) {
@@ -1094,6 +1090,7 @@ async function runSinglePdfQuickCheck({ mail, attIdx, accounts }) {
     selectedInboxAccountingTargets.set(key, latest);
     updateAttachmentAccountingRowDom(mail.id, attIdx, latest);
   } catch (err) {
+    console.warn("[INBOX QUICK-DETECT] PDF-Prüfung fehlgeschlagen:", err.message || err);
     const latest = selectedInboxAccountingTargets.get(key);
     if (latest) {
       latest.pdfChecking = false;
