@@ -2,7 +2,7 @@
  * Main Frontend Coordinator & Bootstrapping
  */
 import { apiRequest } from "./api.js";
-import { state, getAllClientCredentials } from "./state.js";
+import { state, getAllClientCredentials, encodeAccountingAccountsHeader } from "./state.js";
 import { showToast, escapeHtml, formatDateDisplay, formatCurrency, formatFileSize } from "./utils.js";
 import { initGooglePickerApi, openGooglePicker } from "./drivePicker.js";
 import { initDeepSearch, updateAllFilterCounts } from "./deepSearch.js";
@@ -198,6 +198,8 @@ async function uploadFiles(files) {
     const headers = {};
     if (creds.clickupApiKey) headers["X-Clickup-Api-Key"] = creds.clickupApiKey;
     if (creds.clickupListId) headers["X-Clickup-List-Id"] = creds.clickupListId;
+    const accountingHeader = encodeAccountingAccountsHeader();
+    if (accountingHeader) headers["X-Accounting-Accounts"] = accountingHeader;
     const res = await fetch("/api/upload", {
       method: "POST",
       headers,

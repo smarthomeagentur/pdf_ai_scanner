@@ -166,6 +166,24 @@ export function deleteAccountingAccountById(id) {
   return accounts;
 }
 
+/**
+ * Encodes configured accounting accounts as UTF-8 Base64 JSON for the X-Accounting-Accounts header.
+ * Returns "" if no accounts are configured.
+ */
+export function encodeAccountingAccountsHeader() {
+  try {
+    const accounts = getAccountingAccounts();
+    if (!Array.isArray(accounts) || accounts.length === 0) return "";
+    const json = JSON.stringify(accounts);
+    const bytes = new TextEncoder().encode(json);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  } catch (e) {
+    return "";
+  }
+}
+
 export function findJobInState(jobId) {
   if (!jobId) return null;
   const strId = String(jobId);

@@ -2627,6 +2627,30 @@ async function finishScanProcess(sendToAI) {
     const clickupListId = localStorage.getItem("scanner_clickup_list_id");
     if (sendToAI && clickupApiKey) scanHeaders["X-Clickup-Api-Key"] = clickupApiKey;
     if (sendToAI && clickupListId) scanHeaders["X-Clickup-List-Id"] = clickupListId;
+
+    if (sendToAI) {
+      let rawAccounts = localStorage.getItem("scanner_accounting_accounts_v1");
+      if (!rawAccounts) {
+        const migrated = [];
+        const bClient = localStorage.getItem("scanner_buttler_key_thewire_client");
+        const bSecret = localStorage.getItem("scanner_buttler_key_thewire_secret");
+        const bKey = localStorage.getItem("scanner_buttler_key_thewire_key");
+        if (bClient || bSecret || bKey) {
+          migrated.push({ id: "thewire", name: "The Wire UG", provider: "buchhaltungsbutler", credentials: { client: bClient || "", secret: bSecret || "", key: bKey || "" } });
+        }
+        const lexW = localStorage.getItem("scanner_lexoffice_key_wirewire");
+        if (lexW) migrated.push({ id: "wirewire", name: "wirewire GmbH", provider: "lexoffice", credentials: { apiKey: lexW } });
+        const lexP = localStorage.getItem("scanner_lexoffice_key_polyxo");
+        if (lexP) migrated.push({ id: "polyxo", name: "Polyxo Studios GmbH", provider: "lexoffice", credentials: { apiKey: lexP } });
+        if (migrated.length > 0) rawAccounts = JSON.stringify(migrated);
+      }
+      if (rawAccounts) {
+        const bytes = new TextEncoder().encode(rawAccounts);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        scanHeaders["X-Accounting-Accounts"] = btoa(binary);
+      }
+    }
   } catch (e) {}
 
   inFlightUploads++;

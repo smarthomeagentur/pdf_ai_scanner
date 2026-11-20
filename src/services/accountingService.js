@@ -1,5 +1,10 @@
+const fs = require("fs");
+const path = require("path");
+const { execFile } = require("child_process");
 const butlerApi = require("./butlerService");
 const { normalizeAlphaNum } = require("./duplicateService");
+const { DOWNLOADS_DIR, getPythonPath, COMPRESS_SCRIPT } = require("../config/paths");
+const { appSettings } = require("../config/settings");
 
 async function fetchLexofficeWithRetry(url, options, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
@@ -136,9 +141,278 @@ async function searchLexofficeVouchers(apiKey, { invoiceNumber, fileName, amount
   }
 }
 
+function normalizeCompanyCore(name) {
+  if (!name) return "";
+  return String(name)
+    .toLowerCase()
+    .replace(/\((.*?)\)/g, " ")
+    .replace(/\b(gmbh|ug|haftungsbeschränkt|haftungsbeschraenkt|ag|gbr|kg|ohg|co|ek|e\.k\.|inc|ltd|llc|studios)\b/g, " ")
+    .replace(/[^a-z0-9äöüß]+/g, " ")
+    .trim();
+}
+
+function matchAccountByCompanyName(companyName, accounts = []) {
+  if (!companyName || !Array.isArray(accounts) || accounts.length === 0) return null;
+  const rawLower = String(companyName).toLowerCase().trim();
+  if (!rawLower || rawLower === "-" || rawLower === "unbekannt" || rawLower === "unknown" || rawLower.includes("privat")) {
+    return null;
+  }
+
+  const targetCore = normalizeCompanyCore(rawLower);
+  const targetCompact = targetCore.replace(/\s+/g, "");
+  if (targetCompact.length < 3) return null;
+
+  // 1. Exact match on full lowercased name, id, or normalized core
+  for (const acc of accounts) {
+    const accNameLower = String(acc.name || "").toLowerCase().trim();
+    const accIdLower = String(acc.id || "").toLowerCase().trim();
+    const accCore = normalizeCompanyCore(accNameLower);
+    const accCompact = accCore.replace(/\s+/g, "");
+    if (
+      accNameLower === rawLower ||
+      accIdLower === rawLower ||
+      (accCore && accCore === targetCore) ||
+      (accCompact && accCompact === targetCompact)
+    ) {
+      return acc;
+    }
+  }
+
+  // 2. Unambiguous substring match
+  const partialMatches = accounts.filter((acc) => {
+    const accCore = normalizeCompanyCore(acc.name || "");
+    const accCompact = accCore.replace(/\s+/g, "");
+    const accIdCompact = String(acc.id || "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+    if (accCompact.length >= 3 && (targetCompact.includes(accCompact) || accCompact.includes(targetCompact))) {
+      return true;
+    }
+    if (accIdCompact.length >= 3 && !accIdCompact.startsWith("acc") && (targetCompact.includes(accIdCompact) || accIdCompact.includes(targetCompact))) {
+      return true;
+    }
+    return false;
+  });
+
+  return partialMatches.length === 1 ? partialMatches[0] : null;
+}
+
+async function compressPdfBufferIfNeeded(fileBuffer) {
+  const MAX_BYTES = 3.5 * 1024 * 1024;
+  if (!fileBuffer || fileBuffer.length <= MAX_BYTES) return fileBuffer;
+
+  const tempIn = path.join(DOWNLOADS_DIR, `compress_in_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.pdf`);
+  const tempOut = path.join(DOWNLOADS_DIR, `compress_out_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.pdf`);
+  try {
+    await fs.promises.writeFile(tempIn, fileBuffer);
+    await new Promise((resolve, reject) => {
+      execFile(
+        getPythonPath(),
+        [COMPRESS_SCRIPT, tempIn, tempOut],
+        { timeout: 45000, killSignal: "SIGKILL" },
+        (error) => {
+          if (error) reject(error);
+          else resolve();
+        }
+      );
+    });
+    if (fs.existsSync(tempOut)) {
+      return await fs.promises.readFile(tempOut);
+    }
+  } catch (compressErr) {
+    console.warn("[ACCOUNTING] PDF-Komprimierung fehlgeschlagen, nutze Original:", compressErr.message);
+  } finally {
+    if (fs.existsSync(tempIn)) fs.promises.unlink(tempIn).catch(() => {});
+    if (fs.existsSync(tempOut)) fs.promises.unlink(tempOut).catch(() => {});
+  }
+  return fileBuffer;
+}
+
+async function checkAccountForDuplicate({ job, account }) {
+  const accountId = account.id || account.companyKey || "unknown";
+  const provider = account.provider || (accountId === "thewire" ? "buchhaltungsbutler" : "lexoffice");
+  const creds = account.credentials || {};
+  const invNum = job.result?.invoiceNumber && job.result?.invoiceNumber !== "none" ? job.result.invoiceNumber : "";
+  const fName = job.result?.full || job.originalName || "";
+  const amountCents = job.result?.invoiceAmmount !== undefined ? job.result.invoiceAmmount : job.invoiceAmmount;
+  const docDate = job.result?.documentDate || "";
+  const compName = job.result?.company || "";
+
+  if (provider === "buchhaltungsbutler") {
+    const client = (creds.client || creds.thewireClient || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+    const secret = (creds.secret || creds.thewireSecret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+    const key = (creds.key || creds.thewireKey || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+    if (!client || !secret || !key) return { found: false, matches: [] };
+    return await (butlerApi.searchDocuments || butlerApi.searchReceipts)({
+      client,
+      secret,
+      key,
+      invoiceNumber: invNum,
+      fileName: fName,
+      amountInCents: amountCents,
+      documentDate: docDate,
+      company: compName,
+    });
+  }
+
+  const apiKey = (
+    creds.apiKey ||
+    creds.wirewireApiKey ||
+    creds.polyxoApiKey ||
+    appSettings[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] ||
+    process.env[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] ||
+    ""
+  ).trim();
+  if (!apiKey) return { found: false, matches: [] };
+  return await searchLexofficeVouchers(apiKey, {
+    invoiceNumber: invNum,
+    fileName: fName,
+    amountInCents: amountCents,
+    documentDate: docDate,
+    company: compName,
+  });
+}
+
+async function transferDocumentToAccounting({ job, account, fileBuffer }) {
+  const accountId = account.id || account.companyKey || "unknown";
+  const accountName = account.name || accountId;
+  const provider = account.provider || (accountId === "thewire" ? "buchhaltungsbutler" : "lexoffice");
+  const creds = account.credentials || {};
+
+  if (!fileBuffer || fileBuffer.length === 0) {
+    return { success: false, statusCode: 400, error: "Datei ist nicht mehr auf dem Server oder Google Drive vorhanden." };
+  }
+
+  let fileName = (job.result && job.result.full ? job.result.full : job.originalName) || "Dokument.pdf";
+  if (!fileName.toLowerCase().endsWith(".pdf")) fileName += ".pdf";
+
+  const preparedBuffer = await compressPdfBufferIfNeeded(fileBuffer);
+
+  if (provider === "buchhaltungsbutler") {
+    const client = (creds.client || appSettings.BUTTLER_KEY_THEWIRE_CLIENT || process.env.BUTTLER_KEY_THEWIRE_CLIENT || "").trim();
+    const secret = (creds.secret || appSettings.BUTTLER_KEY_THEWIRE_SECRET || process.env.BUTTLER_KEY_THEWIRE_SECRET || "").trim();
+    const key = (creds.key || appSettings.BUTTLER_KEY_THEWIRE_KEY || process.env.BUTTLER_KEY_THEWIRE_KEY || "").trim();
+
+    if (!client || !secret || !key) {
+      return {
+        success: false,
+        statusCode: 400,
+        error: `BuchhaltungsButler Zugangsdaten für ${accountName} fehlen.`,
+      };
+    }
+
+    const butlerRes = await butlerApi.uploadReceipt({
+      fileBuffer: preparedBuffer,
+      fileName,
+      client,
+      secret,
+      key,
+      type: "expense",
+    });
+
+    if (!butlerRes.success) {
+      return {
+        success: false,
+        statusCode: 500,
+        error: butlerRes.error || "Fehler beim Upload zu BuchhaltungsButler.",
+      };
+    }
+
+    if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+    job.lexofficeTransfers[accountId] = {
+      provider: "buchhaltungsbutler",
+      transferredAt: butlerRes.transferredAt,
+      fileId: butlerRes.fileId,
+      lexofficeFileId: butlerRes.fileId,
+      accountId,
+      company: accountName,
+    };
+    job.targetCompany = accountId;
+
+    return {
+      success: true,
+      provider: "buchhaltungsbutler",
+      providerName: "BuchhaltungsButler",
+      fileId: butlerRes.fileId,
+      lexofficeFileId: butlerRes.fileId,
+      transferredAt: butlerRes.transferredAt,
+      company: accountName,
+      accountId,
+    };
+  }
+
+  // Lexoffice
+  const apiKey = (
+    creds.apiKey ||
+    appSettings[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] ||
+    process.env[`LEXOFFICE_KEY_${String(accountId).toUpperCase()}`] ||
+    ""
+  ).trim();
+
+  if (!apiKey) {
+    return {
+      success: false,
+      statusCode: 400,
+      error: `Kein Lexoffice API-Key für ${accountName} angegeben.`,
+    };
+  }
+
+  const boundary = "----WebKitFormBoundary" + Math.random().toString(36).substring(2);
+  const pre = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: application/pdf\r\n\r\n`
+  );
+  const post = Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\nvoucher\r\n--${boundary}--\r\n`);
+  const bodyBuffer = Buffer.concat([pre, preparedBuffer, post]);
+
+  const lexRes = await fetchLexofficeWithRetry("https://api.lexoffice.io/v1/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      Accept: "application/json",
+    },
+    body: bodyBuffer,
+  });
+
+  if (!lexRes.ok) {
+    const errText = await lexRes.text();
+    return {
+      success: false,
+      statusCode: lexRes.status,
+      error: `Lexoffice API Fehler (${lexRes.status}): ${errText}`,
+    };
+  }
+
+  const lexData = await lexRes.json();
+  const transferredAt = new Date().toISOString();
+  if (!job.lexofficeTransfers) job.lexofficeTransfers = {};
+  job.lexofficeTransfers[accountId] = {
+    provider: "lexoffice",
+    transferredAt,
+    fileId: lexData.id,
+    lexofficeFileId: lexData.id,
+    accountId,
+    company: accountName,
+  };
+  job.targetCompany = accountId;
+
+  return {
+    success: true,
+    provider: "lexoffice",
+    providerName: "Lexoffice",
+    fileId: lexData.id,
+    lexofficeFileId: lexData.id,
+    transferredAt,
+    company: accountName,
+    accountId,
+  };
+}
+
 module.exports = {
   fetchLexofficeWithRetry,
   searchLexofficeVouchers,
   matchLexofficeList,
+  matchAccountByCompanyName,
+  compressPdfBufferIfNeeded,
+  checkAccountForDuplicate,
+  transferDocumentToAccounting,
   butlerApi,
 };

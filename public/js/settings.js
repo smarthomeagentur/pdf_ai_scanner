@@ -463,6 +463,9 @@ function populateSettingsForm(settings = {}) {
   const filterPrivCb = document.getElementById("clickup-filter-private");
   if (filterPrivCb) filterPrivCb.checked = settings.CLICKUP_FILTER_PRIVATE !== false;
 
+  const accountingAutoSyncCb = document.getElementById("accounting-auto-sync");
+  if (accountingAutoSyncCb) accountingAutoSyncCb.checked = settings.ACCOUNTING_AUTO_SYNC !== false;
+
   const debugCb = document.getElementById("debug-logs-checkbox");
   if (debugCb) debugCb.checked = isDebugEnabled();
 }
@@ -480,6 +483,7 @@ export async function saveAllSettings() {
     const scanQuery = getVal("gmail-scan-query-input") || "in:inbox filename:pdf";
     const autoTask = document.getElementById("clickup-auto-task")?.checked !== false;
     const filterPrivate = document.getElementById("clickup-filter-private")?.checked !== false;
+    const accountingAutoSync = document.getElementById("accounting-auto-sync")?.checked !== false;
     const debugEnabled = document.getElementById("debug-logs-checkbox")?.checked !== false;
 
     debugLog("SETTINGS", "Saving settings to server...", {
@@ -506,6 +510,7 @@ export async function saveAllSettings() {
         GMAIL_SCAN_QUERY: scanQuery,
         CLICKUP_AUTO_TASK: autoTask,
         CLICKUP_FILTER_PRIVATE: filterPrivate,
+        ACCOUNTING_AUTO_SYNC: accountingAutoSync,
       }),
     });
 
