@@ -10,10 +10,7 @@ const {
   hasConfig,
   discardConfig,
 } = require("../../src/services/accountingCredentialStore");
-const {
-  matchAccountByCompanyName,
-  transferDocumentToAccounting,
-} = require("../../src/services/accountingService");
+const { matchAccountByCompanyName, transferDocumentToAccounting } = require("../../src/services/accountingService");
 
 const SAMPLE_ACCOUNTS = [
   {
