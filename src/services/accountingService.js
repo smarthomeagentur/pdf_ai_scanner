@@ -420,9 +420,26 @@ function buildBoundaryRegex(phrase) {
   return new RegExp(`(?<![a-z0-9äöüß])${parts.join("\\s+")}(?![a-z0-9äöüß])`, "i");
 }
 
+const SHIPPING_LABEL_RE = /(lieferanschrift|lieferadresse|versandadresse|warenempfänger|shipping\s*address|delivery\s*address|ship\s*to)\s*:?/gi;
+const BILLING_LABEL_RE = /(rechnungsanschrift|rechnungsadresse|rechnungsempfänger|billing\s*address|invoice\s*to|bill\s*to)\s*:?/gi;
+
+function isInsideSectionAfterLabel(text, matchIndex, labelRegex, windowChars = 220) {
+  if (matchIndex < 0) return false;
+  const lookbackStart = Math.max(0, matchIndex - windowChars);
+  const before = text.slice(lookbackStart, matchIndex);
+  labelRegex.lastIndex = 0;
+  let lastLabelEnd = -1;
+  let m;
+  while ((m = labelRegex.exec(before)) !== null) {
+    lastLabelEnd = m.index + m[0].length;
+  }
+  return lastLabelEnd >= 0;
+}
+
 /**
  * Fast, word-boundary-aware company detection from extracted PDF text.
  * Never splits multi-word names into ambiguous single words (e.g. "The Wire" never matches "wirewire").
+ * Distinguishes billing address from shipping address ("Lieferanschrift").
  */
 function detectAccountFromText(text, accounts = []) {
   if (!text || typeof text !== "string" || !Array.isArray(accounts) || accounts.length === 0) {
@@ -430,7 +447,7 @@ function detectAccountFromText(text, accounts = []) {
   }
 
   const normalizedText = text.replace(/\r\n/g, "\n");
-  const headerSlice = normalizedText.slice(0, 1800);
+  const headerSlice = normalizedText.slice(0, 2200);
 
   let best = null;
   let secondBestScore = 0;
@@ -444,6 +461,7 @@ function detectAccountFromText(text, accounts = []) {
 
     let score = 0;
     let matchedText = "";
+    let firstMatchIdx = -1;
 
     const fullRe = buildBoundaryRegex(fullName);
     if (fullRe) {
@@ -451,11 +469,13 @@ function detectAccountFromText(text, accounts = []) {
       if (mHeader) {
         score += 40;
         matchedText = matchedText || mHeader[0];
+        firstMatchIdx = mHeader.index;
       } else {
         const mBody = normalizedText.match(fullRe);
         if (mBody) {
           score += 25;
           matchedText = matchedText || mBody[0];
+          firstMatchIdx = mBody.index;
         }
       }
     }
@@ -466,11 +486,13 @@ function detectAccountFromText(text, accounts = []) {
       if (mHeader) {
         score += 25;
         matchedText = matchedText || mHeader[0];
+        if (firstMatchIdx === -1) firstMatchIdx = mHeader.index;
       } else {
         const mBody = normalizedText.match(coreRe);
         if (mBody) {
           score += 15;
           matchedText = matchedText || mBody[0];
+          if (firstMatchIdx === -1) firstMatchIdx = mBody.index;
         }
       }
     }
@@ -482,13 +504,25 @@ function detectAccountFromText(text, accounts = []) {
         if (mHeader) {
           score += 15;
           matchedText = matchedText || mHeader[0];
+          if (firstMatchIdx === -1) firstMatchIdx = mHeader.index;
         } else {
           const mBody = normalizedText.match(compactRe);
           if (mBody) {
             score += 10;
             matchedText = matchedText || mBody[0];
+            if (firstMatchIdx === -1) firstMatchIdx = mBody.index;
           }
         }
+      }
+    }
+
+    if (score > 0 && firstMatchIdx >= 0) {
+      // Penalize matches that appear right under a shipping address ("Lieferanschrift:")
+      // and boost matches under an explicit billing address ("Rechnungsadresse:")
+      if (isInsideSectionAfterLabel(normalizedText, firstMatchIdx, SHIPPING_LABEL_RE, 180)) {
+        score -= 35;
+      } else if (isInsideSectionAfterLabel(normalizedText, firstMatchIdx, BILLING_LABEL_RE, 180)) {
+        score += 20;
       }
     }
 

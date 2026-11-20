@@ -133,6 +133,25 @@ test("Unit - detectAccountFromText (PDF Quick Check)", async (t) => {
     assert.equal(result.accountId, "acc_1");
   });
 
+  await t.test("prefers billing address over Lieferanschrift when two configured companies appear", () => {
+    const pdfText = `
+      IPS Karton.eu, Tuchmacherallee 6, 03130 Spremberg, Deutschland
+      The Wire UG (haftungsbeschränkt)
+      Herr Daniel B
+      Reudnitzer Str. 1
+      04103 Leipzig
+      Deutschland
+      Lieferanschrift:
+      Polyxo Studios GmbH
+      Herr Rabe G
+      Mond 92a
+      01122 Bauer
+    `;
+    const result = detectAccountFromText(pdfText, SAMPLE_ACCOUNTS);
+    assert.ok(result);
+    assert.equal(result.accountId, "acc_1795181217140_mskrz");
+  });
+
   await t.test("returns null when no configured company is mentioned", () => {
     const result = detectAccountFromText("Allgemeiner Brief ohne Firmenbezug", SAMPLE_ACCOUNTS);
     assert.equal(result, null);
