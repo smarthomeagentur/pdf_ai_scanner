@@ -137,15 +137,15 @@ test("Unit - detectAccountFromText (PDF Quick Check)", async (t) => {
     const pdfText = `
       IPS Karton.eu, Tuchmacherallee 6, 03130 Spremberg, Deutschland
       The Wire UG (haftungsbeschränkt)
-      Herr Daniel Böber
+      Herr Daniel B
       Reudnitzer Str. 1
       04103 Leipzig
       Deutschland
       Lieferanschrift:
       Polyxo Studios GmbH
-      Herr Robert Gühne
-      Rosenstraße 92a
-      01159 Dresden
+      Herr Rabe G
+      Mond 92a
+      01122 Bauer
     `;
     const result = detectAccountFromText(pdfText, SAMPLE_ACCOUNTS);
     assert.ok(result);
