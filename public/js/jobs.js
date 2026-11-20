@@ -296,7 +296,7 @@ export function renderJobsList(jobs = state.jobs, force = false) {
     const webViewLink = res.webViewLink || job.webViewLink || (job.filePath ? `/api/jobs/${job.id}/file` : "#");
     const thumbUrl = `/api/thumbnail/${job.id}?v=${job.aiPipelineCompletedAt || job.uploadDate || 1}`;
     const previewHtml = `
-      <a href="javascript:void(0)" onclick="openDocPreview('${job.id}'); return false;" data-job-id="${job.id}" class="pdf-preview-container" title="Beleg öffnen">
+      <a href="javascript:void(0)" data-job-id="${job.id}" class="pdf-preview-container" title="Beleg öffnen">
         <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
       </a>`;
 
@@ -742,17 +742,41 @@ let currentPdfPageNum = 1;
 let currentPdfScale = 1.0;
 let isRenderingPdf = false;
 let renderPendingPage = null;
+let currentPdfRenderTask = null;
+let currentPdfLoadingTask = null;
+let previewRequestId = 0;
 
-async function renderPdfPage(num) {
-  if (!currentPdfDoc) return;
+async function cancelActivePdfRender() {
+  if (currentPdfRenderTask) {
+    const taskToCancel = currentPdfRenderTask;
+    currentPdfRenderTask = null;
+    try {
+      taskToCancel.cancel();
+      await taskToCancel.promise;
+    } catch (e) {
+      // Expected RenderingCancelledException
+    }
+  }
+}
+
+async function renderPdfPage(num, reqId = previewRequestId) {
+  if (!currentPdfDoc || reqId !== previewRequestId) return;
+  await cancelActivePdfRender();
+  if (!currentPdfDoc || reqId !== previewRequestId) return;
+
   isRenderingPdf = true;
   const canvas = document.getElementById("doc-preview-canvas");
   const pageInfo = document.getElementById("doc-preview-page-info");
   const zoomLevel = document.getElementById("doc-preview-zoom-level");
-  if (!canvas) return;
+  if (!canvas) {
+    isRenderingPdf = false;
+    return;
+  }
 
   try {
     const page = await currentPdfDoc.getPage(num);
+    if (!currentPdfDoc || reqId !== previewRequestId) return;
+
     const container = document.getElementById("doc-preview-canvas-container");
     const containerWidth = container ? Math.max(280, container.clientWidth - 24) : 600;
 
@@ -761,18 +785,28 @@ async function renderPdfPage(num) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     const viewport = page.getViewport({ scale: fitScale * dpr });
 
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
     canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
     canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+    canvas.style.maxWidth = currentPdfScale > 1.01 ? "none" : "100%";
     canvas.style.display = "block";
 
     const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
     const renderContext = {
       canvasContext: ctx,
       viewport: viewport,
     };
-    await page.render(renderContext).promise;
+    const renderTask = page.render(renderContext);
+    currentPdfRenderTask = renderTask;
+    await renderTask.promise;
+    if (currentPdfRenderTask === renderTask) {
+      currentPdfRenderTask = null;
+    }
+    if (reqId !== previewRequestId) return;
 
     if (pageInfo) {
       pageInfo.innerText = `Seite ${num} / ${currentPdfDoc.numPages}`;
@@ -786,13 +820,15 @@ async function renderPdfPage(num) {
     if (prevBtn) prevBtn.disabled = num <= 1;
     if (nextBtn) nextBtn.disabled = num >= currentPdfDoc.numPages;
   } catch (err) {
-    console.warn("[PDF.js] Render Error:", err);
+    if (err?.name !== "RenderingCancelledException") {
+      console.warn("[PDF.js] Render Error:", err);
+    }
   } finally {
     isRenderingPdf = false;
-    if (renderPendingPage !== null) {
+    if (renderPendingPage !== null && reqId === previewRequestId && currentPdfDoc) {
       const p = renderPendingPage;
       renderPendingPage = null;
-      renderPdfPage(p);
+      renderPdfPage(p, reqId);
     }
   }
 }
@@ -801,12 +837,23 @@ function queueRenderPage(num) {
   if (isRenderingPdf) {
     renderPendingPage = num;
   } else {
-    renderPdfPage(num);
+    renderPdfPage(num, previewRequestId);
   }
 }
 
 export async function openDocPreview(jobId) {
   debugLog("PREVIEW", "openDocPreview called for jobId:", jobId);
+  const reqId = ++previewRequestId;
+  renderPendingPage = null;
+  await cancelActivePdfRender();
+  if (currentPdfLoadingTask) {
+    try {
+      currentPdfLoadingTask.destroy();
+    } catch (e) {}
+    currentPdfLoadingTask = null;
+  }
+  currentPdfDoc = null;
+
   const modal = document.getElementById("doc-preview-modal");
   const canvas = document.getElementById("doc-preview-canvas");
   const fallbackImg = document.getElementById("doc-preview-fallback-img");
@@ -867,30 +914,43 @@ export async function openDocPreview(jobId) {
         url: fileUrl,
         withCredentials: true,
       });
+      currentPdfLoadingTask = loadingTask;
 
       const pdf = await loadingTask.promise;
+      if (reqId !== previewRequestId) {
+        try {
+          pdf.destroy();
+        } catch (e) {}
+        return;
+      }
+      currentPdfLoadingTask = null;
       currentPdfDoc = pdf;
       currentPdfPageNum = 1;
       currentPdfScale = 1.0;
 
       if (loading) loading.style.setProperty("display", "none", "important");
       if (toolbar) toolbar.style.setProperty("display", "flex", "important");
-      await renderPdfPage(1);
+      await renderPdfPage(1, reqId);
       return;
     } catch (pdfErr) {
+      if (reqId !== previewRequestId) return;
       console.warn("[PREVIEW] PDF.js render failed, trying thumbnail fallback:", pdfErr);
     }
   }
+
+  if (reqId !== previewRequestId) return;
 
   // Method 2: High-Resolution Server Thumbnail Fallback
   try {
     const thumbUrl = `/api/thumbnail/${jobId}?v=${Date.now()}`;
     if (fallbackImg) {
       fallbackImg.onload = () => {
+        if (reqId !== previewRequestId) return;
         if (loading) loading.style.setProperty("display", "none", "important");
         fallbackImg.style.display = "block";
       };
       fallbackImg.onerror = () => {
+        if (reqId !== previewRequestId) return;
         // Method 3: Iframe Fallback
         if (loading) loading.style.setProperty("display", "none", "important");
         if (iframe) {
@@ -901,6 +961,7 @@ export async function openDocPreview(jobId) {
       fallbackImg.src = thumbUrl;
     }
   } catch (e) {
+    if (reqId !== previewRequestId) return;
     if (loading) loading.style.setProperty("display", "none", "important");
     if (iframe) {
       iframe.style.display = "block";
@@ -910,6 +971,15 @@ export async function openDocPreview(jobId) {
 }
 
 export function closeDocPreview() {
+  previewRequestId++;
+  renderPendingPage = null;
+  cancelActivePdfRender();
+  if (currentPdfLoadingTask) {
+    try {
+      currentPdfLoadingTask.destroy();
+    } catch (e) {}
+    currentPdfLoadingTask = null;
+  }
   const modal = document.getElementById("doc-preview-modal");
   const iframe = document.getElementById("doc-preview-iframe");
   const canvas = document.getElementById("doc-preview-canvas");

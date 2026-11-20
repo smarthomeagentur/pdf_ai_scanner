@@ -79,15 +79,6 @@ export function initRechnungenEvents() {
         return;
       }
 
-      const previewLink = e.target.closest(".rechnung-preview-link");
-      if (previewLink) {
-        const jobId = previewLink.getAttribute("data-job-id");
-        if (jobId) {
-          openDocPreview(jobId);
-        }
-        return;
-      }
-
       const detailsBtn = e.target.closest(".rechnung-details-btn");
       if (detailsBtn) {
         const card = detailsBtn.closest(".card, .job-item");
@@ -1162,7 +1153,7 @@ function createRechnungCard(job, searchQuery = "") {
 
   const thumbUrl = `/api/thumbnail/${job.id}?v=${job.aiPipelineCompletedAt || job.uploadDate || 1}`;
   const previewHtml = `
-    <a href="javascript:void(0)" onclick="openDocPreview('${job.id}'); return false;" data-job-id="${job.id}" class="pdf-preview-container rechnung-preview-link" title="Beleg öffnen">
+    <a href="javascript:void(0)" data-job-id="${job.id}" class="pdf-preview-container rechnung-preview-link" title="Beleg öffnen">
       <img src="${thumbUrl}" loading="lazy" alt="Vorschau" class="pdf-preview-img" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'60\\' height=\\'80\\' viewBox=\\'0 0 60 80\\'><rect width=\\'60\\' height=\\'80\\' fill=\\'%23eee\\'/><text x=\\'50%\\' y=\\'50%\\' dominant-baseline=\\'middle\\' text-anchor=\\'middle\\' fill=\\'%23aaa\\' font-size=\\'12\\'>PDF</text></svg>';">
     </a>`;
 
